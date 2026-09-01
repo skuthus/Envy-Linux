@@ -60,7 +60,26 @@
             <!-- Only for a note still waiting in Inbox/. Reviewing one is a
                  decision — file it or bin it — so both are one click away. -->
             <span id="fleeting-actions" class="hidden">
-              <button id="fleeting-submit" type="button">Submit Note</button>
+              <!-- A split control: a plain click files to The Index root, the
+                   arrow offers a folder — so "where does this belong?" is one
+                   gesture. The arrow is hidden while subfolders are off. -->
+              <span id="fleeting-submit-group">
+                <button
+                  id="fleeting-submit"
+                  type="button"
+                  title="Click to file into The Index; use the menu to file into a folder"
+                >
+                  Submit Note
+                </button>
+                <button
+                  id="fleeting-submit-menu"
+                  type="button"
+                  aria-label="File into a folder"
+                  title="File into a folder"
+                >
+                  ▾
+                </button>
+              </span>
               <button id="fleeting-delete" type="button" class="destructive">
                 Delete Note
               </button>

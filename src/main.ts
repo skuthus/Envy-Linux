@@ -1902,15 +1902,61 @@ async function moveToNextFleeting(actedOnId: string) {
   }
 }
 
-document.getElementById('fleeting-submit')!.onclick = async () => {
+/// Files the open fleeting note — into The Index root, or straight into a
+/// folder. The note is resolved at click time, never captured by the menu:
+/// a submit auto-advances to the next capture, and a captured id would file
+/// the note that just left rather than the one on screen (the Mac's 1.8.6
+/// bug). Either way the same advance-to-the-next-capture flow follows.
+async function submitFleeting(subfolder: string | null) {
   if (!openNoteId) return
   const id = openNoteId
   cancelPendingSave()
   await save()
-  const filed = await invoke<NoteDto>('submit_from_inbox', { id })
+  let filed: NoteDto
+  try {
+    filed = await invoke<NoteDto>('submit_from_inbox', { id, subfolder })
+  } catch (err) {
+    void alertModal(typeof err === 'string' ? err : 'Could not file that note.')
+    return
+  }
   // Filing moves the file out of Inbox/, so the id changes.
   migratePin(id, filed.id)
   await moveToNextFleeting(id)
+}
+
+const fleetingSubmitMenuEl = document.getElementById('fleeting-submit-menu') as HTMLButtonElement
+
+/// Submit's dropdown offers the same folders Move to does; a plain button when
+/// subfolder scanning is off, since folders don't exist then.
+function applyFleetingSubmitShape() {
+  document
+    .getElementById('fleeting-submit-group')!
+    .classList.toggle('no-folders', !settings.includeSubfolders)
+}
+
+document.getElementById('fleeting-submit')!.onclick = () => void submitFleeting(null)
+
+/// The arrow half of Submit: The Index, then every folder with its colour —
+/// the same list Move to offers. Dropped below the button, not at the pointer,
+/// so it reads as the button's own menu.
+fleetingSubmitMenuEl.onclick = async () => {
+  if (!openNoteId) return
+  let folders: string[] = []
+  try {
+    folders = await invoke<string[]>('list_subfolders')
+  } catch (err) {
+    console.error('could not list folders', err)
+  }
+  const colors = folderColors()
+  const items: MenuItemSpec[] = [
+    { label: 'The Index', swatch: null, run: () => submitFleeting(null) },
+  ]
+  if (folders.length) items.push({ label: '', separator: true })
+  for (const f of folders) {
+    items.push({ label: f, swatch: colors[f] ?? null, run: () => submitFleeting(f) })
+  }
+  const r = fleetingSubmitMenuEl.getBoundingClientRect()
+  openContextMenu(r.left, r.bottom + 2, items)
 }
 
 document.getElementById('fleeting-delete')!.onclick = async () => {
@@ -2216,6 +2262,7 @@ async function openNote(id: string) {
   // Reviewing a fleeting note is a decision — file it or bin it — so the two
   // actions appear only while looking at one.
   fleetingActionsEl.classList.toggle('hidden', !(note.isInbox && settings.inboxEnabled))
+  applyFleetingSubmitShape()
   templateActionsEl.classList.add('hidden')
   emptyEl.classList.add('hidden')
   view.dispatch({
@@ -4125,6 +4172,8 @@ el<HTMLInputElement>('setting-subfolders').onchange = async (e) => {
   saveSetting('indexIncludeSubfolders', settings.includeSubfolders)
   await invoke('set_include_subfolders', { include: settings.includeSubfolders })
   await runSearch()
+  // Submit's folder arrow exists only while folders are listed.
+  applyFleetingSubmitShape()
   // Folder colours only mean anything once folders are listed, so the pane
   // follows the toggle rather than waiting for Settings to be reopened.
   await renderFolderColorSettings()

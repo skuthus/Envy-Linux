@@ -1576,6 +1576,22 @@ body.popout-window {
   white-space: nowrap;
 }
 #fleeting-actions button:hover { background: color-mix(in srgb, var(--envy-marker) 20%, transparent); }
+/* Submit is a split control: the label and the arrow are two buttons drawn as
+   one capsule, joined at a shared inner rule. The arrow goes away entirely
+   while subfolders are off — there are no folders to offer then. */
+#fleeting-submit-group { display: inline-flex; }
+#fleeting-submit-group #fleeting-submit {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+#fleeting-submit-group #fleeting-submit-menu {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  border-left: none;
+  padding: 3px 6px;
+}
+#fleeting-submit-group.no-folders #fleeting-submit { border-radius: 6px; }
+#fleeting-submit-group.no-folders #fleeting-submit-menu { display: none; }
 #fleeting-actions button.destructive {
   color: var(--envy-due-overdue);
   border-color: color-mix(in srgb, var(--envy-due-overdue) 55%, transparent);
