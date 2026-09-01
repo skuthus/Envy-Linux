@@ -1660,6 +1660,8 @@ body.popout-window {
   line-height: var(--envy-line-height, 24px);
   -webkit-text-stroke: var(--envy-font-embolden) currentColor;
   padding: 12px 16px 40vh;
+  /* Long fenced lines scroll inside their panel, not the whole note. */
+  overflow-x: hidden;
 }
 /* Real Bold is already heavier; the Regular hairline would fatten it twice. */
 .envy-bold, .envy-h1, .envy-h2 {
@@ -1717,10 +1719,14 @@ body.popout-window {
    because monospace faces run visually larger at the same px. */
 .envy-code, .envy-code-block {
   font-family: var(--envy-mono-family);
-  font-size: 0.92em;
+  font-size: 0.925em;
   background: var(--envy-code-background);
 }
-.envy-code { border-radius: 0; padding: 1px 3px; }
+.envy-code {
+  border-radius: 0.3em;
+  padding: 0.125em 0.4em;
+  white-space: nowrap;
+}
 .envy-code-block { border-radius: 0; }
 
 /* --- Links --------------------------------------------------------------- */
@@ -2050,4 +2056,68 @@ body.popout-window {
 .envy-md-table mark {
   background: var(--envy-highlight);
   color: var(--envy-highlight-text);
+}
+
+/* --- Fenced code ---------------------------------------------------------
+   GFM fences, rendered as a code panel when the cursor is outside them —
+   the same look the Omarchy manual's `<pre><code>` has: full-width, padded,
+   rounded, no fence markers, overflow-x for long lines. Chrome lives on the
+   wrap because WebKit flattens a real `<pre>` inside the editor.
+
+   The panel is pinned to the editor width (ResizeObserver in the widget, plus
+   `contain: inline-size` here) so a long line cannot stretch `.cm-content`
+   and pan the whole note. Overflow lives only on this wrap. The thumb is
+   painted even without hover: the overlay-until-hover rule on `*` would hide
+   the only way to read a long line. */
+.cm-editor .envy-md-pre-wrap {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  contain: inline-size;
+  margin: 1em 0;
+  padding: 1em 1.25em;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  background: color-mix(in srgb, var(--envy-code-background) 85%, var(--envy-background));
+  border-radius: 0.5em;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--envy-marker) 85%, transparent)
+    color-mix(in srgb, var(--envy-marker) 22%, transparent);
+}
+.cm-editor .envy-md-pre-wrap::-webkit-scrollbar {
+  height: 10px;
+  width: 10px;
+}
+.cm-editor .envy-md-pre-wrap::-webkit-scrollbar-track {
+  background: color-mix(in srgb, var(--envy-marker) 28%, transparent);
+}
+.cm-editor .envy-md-pre-wrap::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--envy-marker) 90%, var(--envy-text));
+  background-clip: border-box;
+  border: none;
+  border-radius: 0;
+}
+.cm-editor .envy-md-pre {
+  display: block;
+  width: max-content;
+  min-width: 100%;
+  margin: 0;
+  padding: 0;
+  background: none;
+  font-family: var(--envy-mono-family);
+  font-size: 0.925em;
+  line-height: 1.5;
+  white-space: pre;
+}
+.cm-editor .envy-md-pre code {
+  background: none;
+  border-radius: 0;
+  padding: 0;
+  font-family: inherit;
+  font-size: 100%;
+  color: var(--envy-text);
+  white-space: pre;
 }

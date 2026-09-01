@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { createMiniNoteEditor, type MiniNoteEditor } from './mininote'
 import { resolveDueToken, urgencyFor } from './due'
 import { findTableBlocks, type TableBlock } from './tables'
+import { findFencedBlocks, type FenceBlock } from './fences'
 
 // --- Embeds -----------------------------------------------------------------
 
@@ -870,10 +871,10 @@ function buildDecorations(view: EditorView): DecorationSet {
       spans.push([start, end])
     }
   }
-  // A replaced table is a block widget covering those lines. Marks inside the
-  // same range fight the replacement (CodeMirror drops one or both), so punch
-  // the tables out of the scan before any inline pass runs.
-  punchOut(spans, replacedTableRanges(view.state))
+  // Replaced tables and fences are block widgets covering those lines. Marks
+  // inside the same range fight the replacement (CodeMirror drops one or both),
+  // so punch them out of the scan before any inline pass runs.
+  punchOut(spans, replacedBlockRanges(view.state))
 
   for (const [base, spanEnd] of spans) {
     const text = doc.sliceString(base, spanEnd)
@@ -1242,27 +1243,30 @@ function punchOut(spans: Array<[number, number]>, holes: Array<[number, number]>
   }
 }
 
-function replacedTableRanges(state: EditorState): Array<[number, number]> {
+function replacedBlockRanges(state: EditorState): Array<[number, number]> {
   if (state.field(plainTextField, false)) return []
   const out: Array<[number, number]> = []
   for (const block of findTableBlocks(state.doc)) {
-    if (shouldReplaceTable(state, block)) out.push([block.from, block.to])
+    if (shouldReplaceRange(state, block.from, block.to)) out.push([block.from, block.to])
+  }
+  for (const block of findFencedBlocks(state.doc)) {
+    if (shouldReplaceRange(state, block.from, block.to)) out.push([block.from, block.to])
   }
   return out
 }
 
-function shouldReplaceTable(state: EditorState, block: TableBlock): boolean {
+function shouldReplaceRange(state: EditorState, from: number, to: number): boolean {
   if (state.field(plainTextField, false)) return false
-  // Unfocused: always the HTML table, matching the rest of the styler's
+  // Unfocused: always the HTML widget, matching the rest of the styler's
   // "reveal markup only while the caret is in it" rule. A StateField cannot
   // read `view.hasFocus`, so `editorFocusedField` is the stand-in.
   if (!state.field(editorFocusedField, false)) return true
-  return !selectionOverlapsTable(state, block.from, block.to)
+  return !selectionOverlapsRange(state, from, to)
 }
 
-/// `[from, to)` overlap. An empty caret at `to` (the line after the table)
+/// `[from, to)` overlap. An empty caret at `to` (the line after the block)
 /// is outside it, so the widget stays up.
-function selectionOverlapsTable(state: EditorState, from: number, to: number): boolean {
+function selectionOverlapsRange(state: EditorState, from: number, to: number): boolean {
   for (const r of state.selection.ranges) {
     if (r.empty) {
       if (r.head >= from && r.head < to) return true
@@ -1397,9 +1401,117 @@ function buildTableDecorations(state: EditorState): DecorationSet {
   if (state.field(plainTextField, false)) return Decoration.none
   const ranges: Range<Decoration>[] = []
   for (const block of findTableBlocks(state.doc)) {
-    if (!shouldReplaceTable(state, block)) continue
+    if (!shouldReplaceRange(state, block.from, block.to)) continue
     ranges.push(
       Decoration.replace({ widget: new TableWidget(block), block: true }).range(block.from, block.to),
+    )
+  }
+  return Decoration.set(ranges, true)
+}
+
+/// Fenced code, as the same HTML the Omarchy manual produces: `<pre><code>`
+/// with the language class, no fence markers. Click to put the caret in the
+/// source and edit.
+class FenceWidget extends WidgetType {
+  constructor(readonly block: FenceBlock) {
+    super()
+  }
+  eq(other: FenceWidget) {
+    return other.block.src === this.block.src && other.block.from === this.block.from
+  }
+  get estimatedHeight() {
+    const lines = this.block.body ? this.block.body.split('\n').length : 1
+    return 32 + lines * 22
+  }
+  toDOM(view: EditorView) {
+    // A `div`, not `<pre>`: WebKit flattens `<pre>` inside CodeMirror's
+    // contenteditable, which is why a real pre never kept its padding or
+    // fill. The wrap is the panel; the inner div is `white-space: pre`.
+    const wrap = document.createElement('div')
+    wrap.className = 'envy-md-pre-wrap'
+    const pre = document.createElement('div')
+    pre.className = 'envy-md-pre'
+    const code = document.createElement('code')
+    if (this.block.lang) code.className = `language-${this.block.lang}`
+    code.textContent = this.block.body
+    pre.append(code)
+    wrap.append(pre)
+    // Pin the panel to the editor's content width so a long line cannot
+    // stretch `.cm-content` and turn the whole note into a horizontal
+    // scroller. ResizeObserver keeps it honest when the pane is dragged.
+    const fit = () => {
+      const w = view.contentDOM.clientWidth
+      if (w > 0) wrap.style.width = `${w}px`
+    }
+    fit()
+    const ro = new ResizeObserver(fit)
+    ro.observe(view.contentDOM)
+    fenceFitters.set(wrap, ro)
+    wrap.onmousedown = (e) => {
+      const t = e.currentTarget as HTMLElement
+      // Clicks on the overflow scrollbar have to scroll, not collapse the
+      // widget back to source.
+      if (e.offsetX >= t.clientWidth || e.offsetY >= t.clientHeight) return
+      e.preventDefault()
+      view.dispatch({ selection: { anchor: this.block.bodyFrom }, scrollIntoView: true })
+      view.focus()
+    }
+    wrap.addEventListener(
+      'wheel',
+      (e) => {
+        const dx = e.shiftKey && e.deltaX === 0 ? e.deltaY : e.deltaX
+        if (dx === 0) return
+        const max = wrap.scrollWidth - wrap.clientWidth
+        if (max <= 0) return
+        const next = Math.min(max, Math.max(0, wrap.scrollLeft + dx))
+        if (next === wrap.scrollLeft) return
+        wrap.scrollLeft = next
+        e.preventDefault()
+        e.stopPropagation()
+      },
+      { passive: false },
+    )
+    return wrap
+  }
+  destroy(dom: HTMLElement) {
+    const ro = fenceFitters.get(dom)
+    if (ro) {
+      ro.disconnect()
+      fenceFitters.delete(dom)
+    }
+  }
+  ignoreEvent(event: Event) {
+    if (event.type === 'mousedown' || event.type === 'click' || event.type === 'scroll') return true
+    // Horizontal wheel stays on the panel; vertical wheel still scrolls the note.
+    if (event.type === 'wheel') {
+      const e = event as WheelEvent
+      return e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)
+    }
+    return false
+  }
+}
+
+const fenceFitters = new WeakMap<HTMLElement, ResizeObserver>()
+
+const fenceDecorations = StateField.define<DecorationSet>({
+  create: (state) => buildFenceDecorations(state),
+  update(value, tr) {
+    const modeChanged = tr.effects.some(
+      (e) => e.is(setPlainText) || e.is(restyle) || e.is(setEditorFocused),
+    )
+    if (!tr.docChanged && !tr.selection && !modeChanged) return value.map(tr.changes)
+    return buildFenceDecorations(tr.state)
+  },
+  provide: (f) => EditorView.decorations.from(f),
+})
+
+function buildFenceDecorations(state: EditorState): DecorationSet {
+  if (state.field(plainTextField, false)) return Decoration.none
+  const ranges: Range<Decoration>[] = []
+  for (const block of findFencedBlocks(state.doc)) {
+    if (!shouldReplaceRange(state, block.from, block.to)) continue
+    ranges.push(
+      Decoration.replace({ widget: new FenceWidget(block), block: true }).range(block.from, block.to),
     )
   }
   return Decoration.set(ranges, true)
@@ -1485,12 +1597,13 @@ const stylerPlugin = ViewPlugin.fromClass(
 )
 
 /// The whole styling layer: inline marks from a view plugin (viewport-scoped,
-/// because that's where the cost is) and embed/table blocks from state fields
-/// (because CodeMirror requires it).
+/// because that's where the cost is) and embed/table/fence blocks from state
+/// fields (because CodeMirror requires it).
 export const envyStyler = [
   editorFocusedField,
   EditorView.focusChangeEffect.of((_state, focusing) => setEditorFocused.of(focusing)),
   embedDecorations,
   tableDecorations,
+  fenceDecorations,
   stylerPlugin,
 ]

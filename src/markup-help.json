@@ -29,11 +29,11 @@
   "entries": [
    {
     "syntax": "`code`",
-    "description": "Inline code with a subtle background"
+    "description": "Inline code — a rounded chip, like the Omarchy manual"
    },
    {
     "syntax": "```\ncode block\n```",
-    "description": "Fenced code block — monospaced, and markdown syntax inside it is left alone"
+    "description": "Fenced code block — shown as a real code panel (like the Omarchy manual) until you click into it to edit. Markdown inside the fence is left alone."
    }
   ]
  },

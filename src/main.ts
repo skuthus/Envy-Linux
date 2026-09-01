@@ -215,7 +215,7 @@ const view = new EditorView({
           // marker follow. Without this, clicking the empty space beside an
           // image snaps to the marker line and "opens" the file, which for a
           // missing one throws an OS "cannot find" error.
-          if ((event.target as HTMLElement | null)?.closest('.envy-image-embed, .envy-embed, .envy-md-table-wrap')) {
+          if ((event.target as HTMLElement | null)?.closest('.envy-image-embed, .envy-embed, .envy-md-table-wrap, .envy-md-pre-wrap')) {
             return false
           }
           const pos = v.posAtCoords({ x: event.clientX, y: event.clientY })

@@ -115,7 +115,7 @@ const view = new EditorView({
         mousedown: (event, v) => {
           if (event.button !== 0) return false
           // Clicks inside a rendered embed belong to the widget, not a follow.
-          if ((event.target as HTMLElement | null)?.closest('.envy-image-embed, .envy-embed, .envy-md-table-wrap')) {
+          if ((event.target as HTMLElement | null)?.closest('.envy-image-embed, .envy-embed, .envy-md-table-wrap, .envy-md-pre-wrap')) {
             return false
           }
           const pos = v.posAtCoords({ x: event.clientX, y: event.clientY })
