@@ -234,9 +234,27 @@ const view = new EditorView({
           // Clicking a due date retires it, or brings it back. Checked before
           // links because the two never overlap, and before the modifier gate
           // because retiring a date is a plain click.
-          if (!event.ctrlKey && !event.altKey && toggleDueToken(v, pos)) {
-            event.preventDefault()
-            return true
+          //
+          // Guarded on the pointer's real x/y, like the wiki-link marker below:
+          // a date that ends a line has empty space to its right that
+          // posAtCoords snaps to the token's end, so without this a click well
+          // past the date would cross it off. Only a click actually over the
+          // token toggles it.
+          const dueToken = event.ctrlKey || event.altKey ? null : dueTokenAt(v.state.doc.toString(), pos)
+          if (dueToken) {
+            const a = v.coordsAtPos(dueToken.from, 1)
+            const b = v.coordsAtPos(dueToken.to, -1)
+            const onToken =
+              a &&
+              b &&
+              event.clientX >= a.left - 2 &&
+              event.clientX <= b.right + 2 &&
+              event.clientY >= Math.min(a.top, b.top) - 2 &&
+              event.clientY <= Math.max(a.bottom, b.bottom) + 2
+            if (onToken && toggleDueToken(v, pos)) {
+              event.preventDefault()
+              return true
+            }
           }
 
           // In-note jumps happen on a plain click, no modifier — there's
