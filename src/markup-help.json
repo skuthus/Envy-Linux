@@ -50,7 +50,7 @@
    },
    {
     "syntax": "| A | B |\n| --- | --- |\n| 1 | 2 |",
-    "description": "Table — header, a dash delimiter, then rows. Shown as a real table (like the Omarchy manual) until you click into it to edit. Enter adds a row, Tab moves between cells."
+    "description": "Table — header, a dash delimiter, then rows. Insert one with Ctrl+Shift+T, from the editor's right-click menu, or by typing /table and pressing Tab; pasting tab- or comma-separated rows makes one too. It renders as a real table (like the Omarchy manual) and the cells are editable in place: click one and type, Tab or Enter for the next cell or a new row, and the toolbar above the table adds or removes rows and columns, sets a column's alignment, or drops back to the raw pipes."
    }
   ]
  },

@@ -146,6 +146,12 @@ body.popout-window {
   color: var(--envy-marker);
   pointer-events: none;
 }
+/* A slash command names what Tab would do, since the grey text alone ("table")
+   wouldn't say that anything is about to be built. */
+.cm-ghost-hint {
+  opacity: 0.75;
+  font-style: italic;
+}
 
 #search {
   flex: 1;
@@ -2074,8 +2080,16 @@ body.popout-window {
   display: block;
   width: fit-content;
   max-width: 100%;
-  overflow-x: auto;
   margin: 1em 0;
+}
+/* The scroller is inside the wrap rather than being it. `overflow-x: auto`
+   forces `overflow-y` to auto as well, which would clip the toolbar; keeping
+   the overflow on an inner element leaves the toolbar free to sit above the
+   table without a second stacking layer. */
+.envy-md-table-scroll {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
 }
 .envy-md-table {
   border-collapse: collapse;
@@ -2108,6 +2122,72 @@ body.popout-window {
 .envy-md-table mark {
   background: var(--envy-highlight);
   color: var(--envy-highlight-text);
+}
+
+/* --- Editing a table in place ---------------------------------------------
+   Every cell is a one-line `contenteditable` that shows formatted markdown at
+   rest and its raw source while focused. The focus ring is drawn inside the
+   cell (a box-shadow, not an outline) so it can't push the table's layout
+   around mid-edit. */
+.envy-md-table th[contenteditable],
+.envy-md-table td[contenteditable] {
+  min-width: 2.5em;
+  outline: none;
+  cursor: text;
+  white-space: pre-wrap;
+}
+/* An empty cell has no line box of its own, which would leave nothing to
+   click on; the generated box gives it a row's height without putting a
+   character into the cell's text. */
+.envy-md-table th:empty::after,
+.envy-md-table td:empty::after {
+  content: '';
+  display: inline-block;
+  min-height: 1.2em;
+  vertical-align: text-bottom;
+}
+.envy-md-table th:focus,
+.envy-md-table td:focus {
+  box-shadow: inset 0 0 0 var(--envy-focus-thickness) var(--envy-link);
+  background: color-mix(in srgb, var(--envy-link) 12%, transparent);
+}
+
+/* The toolbar sits in the flow above the table, shown only while a cell has
+   focus. In the flow rather than floating over the note: the wrap is
+   `fit-content`, so a bar wider than a narrow table widens the wrap (up to the
+   pane) and then wraps onto a second line, instead of overhanging the pane
+   edge where the buttons couldn't be reached. */
+.envy-table-toolbar {
+  display: none;
+}
+.envy-md-table-wrap.editing .envy-table-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin-bottom: 4px;
+  max-width: 100%;
+}
+.envy-table-btn {
+  font-family: var(--envy-mono-family);
+  font-size: 11px;
+  line-height: 1.4;
+  padding: 1px 6px;
+  border: 1px solid color-mix(in srgb, var(--envy-marker) 55%, transparent);
+  border-radius: var(--envy-radius);
+  background: var(--envy-title-bar-background);
+  color: var(--envy-text);
+  cursor: default;
+  white-space: nowrap;
+}
+.envy-table-btn:hover {
+  background: color-mix(in srgb, var(--envy-link) 22%, transparent);
+}
+.envy-table-btn.destructive {
+  color: var(--envy-due-overdue);
+}
+.envy-table-btn.armed {
+  background: color-mix(in srgb, var(--envy-due-overdue) 22%, transparent);
+  border-color: var(--envy-due-overdue);
 }
 
 /* --- Fenced code ---------------------------------------------------------

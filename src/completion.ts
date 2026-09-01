@@ -11,6 +11,10 @@
 //! - **Tag**: a `#` at a word boundary with an all-tag-body fragment after it
 //!   and no tag character under the caret, completes against tags most-used
 //!   first.
+//! - **Slash command**: a `/` at the start of a line or after a space, with a
+//!   command name being typed after it. Unlike the other two this does not
+//!   complete to text — Tab runs the command, which replaces the `/word` with
+//!   whatever it inserts (today: `/table`).
 //!
 //! An *open* `[[` commits to link completion — it never falls through to a tag.
 //! The tag rule only applies when there is no open `[[` on the line.
@@ -26,6 +30,7 @@ import {
 } from '@codemirror/view'
 import { type EditorState, Facet, Prec } from '@codemirror/state'
 import { invoke } from '@tauri-apps/api/core'
+import { insertTable } from './tables'
 
 /// The suggestion pools, read fresh each time so they track edits and moves
 /// without the extension having to be reconfigured. `titles` is note titles
@@ -75,9 +80,46 @@ function blocksTagStart(ch: string): boolean {
   return /[A-Za-z0-9_#]/.test(ch)
 }
 
-/// The remainder to show after the caret, or null. A pure function of the
-/// state, so the plugin and the accept command agree on exactly one answer.
-function ghostRemainder(state: EditorState): string | null {
+/// A command offered by typing `/name`. `run` gets the range the `/name`
+/// occupies, so it replaces what was typed rather than leaving it behind.
+interface SlashCommand {
+  name: string
+  label: string
+  run: (view: EditorView, from: number, to: number) => boolean
+}
+
+const SLASH_COMMANDS: SlashCommand[] = [
+  {
+    name: 'table',
+    label: 'Insert table',
+    run: (view, from, to) => {
+      // Two transactions rather than one: the skeleton's own command decides
+      // how much blank line it needs, and it can only see that once the
+      // `/table` it replaces is gone. Both are `input`, so one undo covers
+      // them.
+      view.dispatch({
+        changes: { from, to, insert: '' },
+        selection: { anchor: from },
+        userEvent: 'input',
+      })
+      return insertTable(view)
+    },
+  },
+]
+
+/// What the ghost layer is offering: the grey text to draw after the caret,
+/// an optional label naming the action, and the command to run if there is
+/// one. A pure function of the state, so the plugin and the accept command
+/// agree on exactly one answer.
+interface GhostSuggestion {
+  text: string
+  label?: string
+  command?: SlashCommand
+  from?: number
+  to?: number
+}
+
+function ghostSuggestion(state: EditorState): GhostSuggestion | null {
   const sel = state.selection.main
   if (!sel.empty) return null
   const pos = sel.head
@@ -106,7 +148,34 @@ function ghostRemainder(state: EditorState): string | null {
       const match = sources.titles.find(
         (t) => t.toLowerCase().startsWith(lowered) && t.length > query.length,
       )
-      return match ? match.slice(query.length) : null
+      return match ? { text: match.slice(query.length) } : null
+    }
+  }
+
+  // --- Slash command -----------------------------------------------------
+  // After the link rule, which commits to an open `[[` — a `/` inside one is
+  // part of a path, not a command.
+  // At least one letter typed: a bare `/` is a slash far more often than it is
+  // the start of a command, and offering on it would put a table one stray Tab
+  // away from every path and date.
+  const slash = /(^|\s)\/([A-Za-z]+)$/.exec(before)
+  if (slash) {
+    // Mid-word: the caret has to sit at the end of what was typed, or this is
+    // an old command being edited rather than a new one being written.
+    const charAfter = state.doc.sliceString(pos, pos + 1)
+    if (!/[A-Za-z]/.test(charAfter)) {
+      const fragment = slash[2].toLowerCase()
+      const command = SLASH_COMMANDS.find((c) => c.name.startsWith(fragment))
+      if (command) {
+        const from = pos - fragment.length - 1
+        return {
+          text: command.name.slice(fragment.length),
+          label: command.label,
+          command,
+          from,
+          to: pos,
+        }
+      }
     }
   }
 
@@ -130,22 +199,37 @@ function ghostRemainder(state: EditorState): string | null {
   const match = sources.tags.find(
     (t) => t.startsWith(lowered) && t.length > fragment.length,
   )
-  return match ? match.slice(fragment.length) : null
+  return match ? { text: match.slice(fragment.length) } : null
+}
+
+/// The remainder alone, for the tests and anything that only wants the text.
+function ghostRemainder(state: EditorState): string | null {
+  return ghostSuggestion(state)?.text || null
 }
 
 /// The grey suffix drawn at the caret. An `atomic`-free widget with `side: 1`
 /// so it sits after the cursor without becoming part of the document.
 class GhostWidget extends WidgetType {
-  constructor(readonly text: string) {
+  constructor(
+    readonly text: string,
+    readonly label: string,
+  ) {
     super()
   }
   eq(other: GhostWidget) {
-    return other.text === this.text
+    return other.text === this.text && other.label === this.label
   }
   toDOM() {
     const span = document.createElement('span')
     span.className = 'cm-ghost-completion'
     span.textContent = this.text
+    // A command names what Tab would do; a plain completion is its own label.
+    if (this.label) {
+      const hint = document.createElement('span')
+      hint.className = 'cm-ghost-hint'
+      hint.textContent = ` ${this.label} ⇥`
+      span.append(hint)
+    }
     return span
   }
   ignoreEvent() {
@@ -156,9 +240,9 @@ class GhostWidget extends WidgetType {
 const ghostPlugin = ViewPlugin.fromClass(
   class {
     decorations: DecorationSet
-    /// The suffix currently shown, so the accept command can insert it without
-    /// recomputing (and can be sure it inserts exactly what is on screen).
-    remainder: string | null = null
+    /// What is currently shown, so the accept command acts on exactly that
+    /// rather than recomputing and possibly disagreeing with the screen.
+    suggestion: GhostSuggestion | null = null
 
     constructor(view: EditorView) {
       this.decorations = this.build(view)
@@ -173,25 +257,40 @@ const ghostPlugin = ViewPlugin.fromClass(
     }
 
     build(view: EditorView): DecorationSet {
-      this.remainder = null
+      this.suggestion = null
       if (!view.hasFocus) return Decoration.none
-      const text = ghostRemainder(view.state)
-      if (!text) return Decoration.none
-      this.remainder = text
+      const found = ghostSuggestion(view.state)
+      // A command whose name is fully typed has no remainder left to draw, but
+      // its label still has to say that Tab will do something.
+      if (!found || (!found.text && !found.label)) return Decoration.none
+      this.suggestion = found
       const pos = view.state.selection.main.head
       return Decoration.set([
-        Decoration.widget({ widget: new GhostWidget(text), side: 1 }).range(pos),
+        Decoration.widget({
+          widget: new GhostWidget(found.text, found.label ?? ''),
+          side: 1,
+        }).range(pos),
       ])
     }
   },
   { decorations: (v) => v.decorations },
 )
 
-/// Inserts the visible ghost at the caret. Returns false when there is none, so
-/// Tab and the Right arrow keep their normal meaning the rest of the time.
-function acceptGhost(view: EditorView): boolean {
+/// Inserts the visible ghost at the caret — or runs it, when it is a command.
+/// Returns false when there is none, so Tab and the Right arrow keep their
+/// normal meaning the rest of the time.
+///
+/// `allowCommand` is false for the Right arrow: moving the caret right should
+/// never build a table, whereas Tab is the deliberate "take it" gesture.
+function acceptGhost(view: EditorView, allowCommand = true): boolean {
   const plugin = view.plugin(ghostPlugin)
-  const remainder = plugin?.remainder
+  const found = plugin?.suggestion
+  if (!found) return false
+  if (found.command) {
+    if (!allowCommand) return false
+    return found.command.run(view, found.from!, found.to!)
+  }
+  const remainder = found.text
   if (!remainder) return false
   const pos = view.state.selection.main.head
   view.dispatch({
@@ -209,7 +308,7 @@ function acceptGhost(view: EditorView): boolean {
 const ghostKeymap = Prec.highest(
   keymap.of([
     { key: 'Tab', run: acceptGhost },
-    { key: 'ArrowRight', run: acceptGhost },
+    { key: 'ArrowRight', run: (v) => acceptGhost(v, false) },
   ]),
 )
 

@@ -20,7 +20,8 @@ import { makeEmbedHost } from './embed-host'
 import { openImageMenu, renameAttachmentFlow } from './image-menu'
 import { setPromptFocusReturn } from './prompt-modal'
 import { listEditing } from './lists'
-import { tableEditing } from './tables'
+import { insertTable, tableEditing } from './tables'
+import { matches as matchesShortcut } from './shortcuts'
 import {
   editorCompletion,
   completionSources,
@@ -305,6 +306,13 @@ applyPopoverZoom()
 window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     void flush().then(hide)
+    return
+  }
+  // The one editor action this window shares with the main one — read through
+  // the registry, so a remap there applies here too.
+  if (noteId && matchesShortcut('insertTable', e)) {
+    e.preventDefault()
+    insertTable(view)
     return
   }
   if (!e.ctrlKey || e.altKey || e.shiftKey) return

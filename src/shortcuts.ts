@@ -31,6 +31,7 @@ export type ShortcutId =
   | 'unpinFromTray'
   | 'keepOnTop'
   | 'insertImage'
+  | 'insertTable'
 
 export interface ShortcutSpec {
   id: ShortcutId
@@ -62,6 +63,10 @@ export const SHORTCUT_SPECS: ShortcutSpec[] = [
   // WebView2 devtools chord. Ctrl+Alt+I keeps the "I for image" mnemonic and
   // sits with the other Ctrl+Alt editor actions (Extract, pins). Remappable.
   { id: 'insertImage', label: 'Insert Image', default: 'Ctrl+Alt+I' },
+  // Ctrl+Shift+T is free: Ctrl+Alt+T is "Pin to Tray" and Ctrl+Alt+Shift+T is
+  // "Keep on Top", and nothing else in the list (or in the webview — there are
+  // no tabs to reopen here) claims the plain Shift variant. Remappable.
+  { id: 'insertTable', label: 'Insert Table', default: 'Ctrl+Shift+T' },
   { id: 'deleteNote', label: 'Delete Note', default: 'Ctrl+Backspace' },
   { id: 'restoreDeletedNote', label: 'Restore Deleted Note', default: 'Ctrl+Shift+Backspace' },
   { id: 'togglePin', label: 'Pin/Unpin Note', default: 'Ctrl+Alt+P' },

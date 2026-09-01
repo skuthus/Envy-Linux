@@ -409,6 +409,48 @@ function toggleEmphasis(marker: string): Command {
   }
 }
 
+/// The same toggle, over a plain string rather than a document: returns the
+/// new text and where the selection should end up, or null when there is
+/// nothing to wrap. For the editable table cells in styler.ts, which hold one
+/// cell's raw markdown in a `contenteditable` rather than a slice of the
+/// document — the rule (wrap, or unwrap when the marker is already flush
+/// against the selection, with the same lone-star guard) is deliberately the
+/// one above, so Ctrl+B means the same thing inside a table as outside it.
+export function emphasisEdit(
+  text: string,
+  from: number,
+  to: number,
+  marker: string,
+): { text: string; from: number; to: number } | null {
+  if (from >= to) return null
+  const len = marker.length
+  const isLoneStar = (at: number, checkingBefore: boolean) => {
+    if (marker !== '*') return true
+    const neighbour = checkingBefore ? at - 1 : at + len
+    if (neighbour < 0 || neighbour >= text.length) return true
+    return text[neighbour] !== '*'
+  }
+  const beforeAt = from - len
+  const hasBefore =
+    beforeAt >= 0 && text.slice(beforeAt, from) === marker && isLoneStar(beforeAt, true)
+  const hasAfter =
+    to + len <= text.length && text.slice(to, to + len) === marker && isLoneStar(to, false)
+  if (hasBefore && hasAfter) {
+    const inner = text.slice(from, to)
+    return {
+      text: text.slice(0, beforeAt) + inner + text.slice(to + len),
+      from: beforeAt,
+      to: beforeAt + inner.length,
+    }
+  }
+  const selected = text.slice(from, to)
+  return {
+    text: text.slice(0, from) + marker + selected + marker + text.slice(to),
+    from: from + len,
+    to: to + len,
+  }
+}
+
 /// Translates a binding string like "Ctrl+Shift+B" into CodeMirror's own key
 /// notation, so the same registry drives both the window handler and the
 /// editor's keymap.

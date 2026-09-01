@@ -39,7 +39,13 @@ import {
 } from './input'
 import { editorCompletion, completionSources, ghostRemainderForTest } from './completion'
 import { listEditing, listContinuation, isListLine, renumberEdits } from './lists'
-import { tableEditing } from './tables'
+import {
+  delimitedToTable,
+  insertTable,
+  padTableSource,
+  serializeTableRow,
+  tableEditing,
+} from './tables'
 import { installSmoothScroll, cancelSmoothScroll } from './smooth-scroll'
 import { applyStoredAppearance, enviousDark, initAppearance } from './theme'
 import { createMiniNoteEditor, type MiniNoteEditor } from './mininote'
@@ -1096,6 +1102,7 @@ editorEl.addEventListener('contextmenu', (e) => {
         label: 'Insert Image…',
         run: () => void openImagePicker((name) => insertImageReference(name, view)),
       },
+      { label: 'Insert Table', run: () => void insertTable(view) },
     ])
     return
   }
@@ -4245,6 +4252,9 @@ const SHORTCUT_HANDLERS: Partial<Record<ShortcutId, () => void>> = {
       void openImagePicker((name) => insertImageReference(name, view))
     }
   },
+  insertTable: () => {
+    if (openNoteId || openTemplatePath) insertTable(view)
+  },
   focusNextArea: () => {
     if (document.activeElement === searchInput) view.focus()
     else searchInput.focus()
@@ -5315,6 +5325,14 @@ async function boot() {
   dueTokenAt,
   toggleDueToken,
   changedRange,
+  // The pure table functions: row serialisation (with escaped pipes), the
+  // re-pad that lines the columns up on the way out of a table, and the
+  // TSV/CSV sniff behind the paste handler. There is no JS test runner in this
+  // repo, so these are exercised from the webview console like the rest.
+  insertTable,
+  serializeTableRow,
+  padTableSource,
+  delimitedToTable,
   selectSingle,
   selectRange,
   toggleMultiSelect,

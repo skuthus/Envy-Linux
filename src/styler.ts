@@ -3,7 +3,18 @@ import { EditorState, Facet, Range, StateEffect, StateField, Text } from '@codem
 import { invoke } from '@tauri-apps/api/core'
 import { createMiniNoteEditor, type MiniNoteEditor } from './mininote'
 import { resolveDueToken, urgencyFor } from './due'
-import { findTableBlocks, type TableBlock } from './tables'
+import {
+  findTableBlocks,
+  forEachPipe,
+  padTableSource,
+  serializeTable,
+  serializeTableRow,
+  tableRowLines,
+  type CellAlign,
+  type TableBlock,
+} from './tables'
+import { emphasisEdit } from './input'
+import { matches as matchesShortcut } from './shortcuts'
 import { findFencedBlocks, type FenceBlock } from './fences'
 
 // --- Embeds -----------------------------------------------------------------
@@ -1417,8 +1428,24 @@ function selectionOverlapsRange(state: EditorState, from: number, to: number): b
 /// "Block decorations may not be specified via plugins"). The pipe source
 /// stays on disk; when the cursor is outside the table it is replaced with
 /// the same HTML the Omarchy manual produces for that markdown — `<table>` /
-/// `<thead>` / `<tbody>`, code chips, linked cells. Click the table (not a
-/// link) to put the caret in the source and edit.
+/// `<thead>` / `<tbody>`, code chips, linked cells.
+///
+/// The cells are editable in place. Every keystroke in one rebuilds *that row's
+/// source line* and dispatches it as an ordinary transaction, so the file still
+/// holds the pipes, undo still works, and there is no second model of the table
+/// anywhere. Three things keep the widget alive across its own edits:
+///
+/// - `eq` compares the source, so a table nothing touched keeps its DOM
+///   whatever else the transaction did. It compares `from` as well: the cached
+///   block behind the DOM is only refreshed in `updateDOM`, so a table that
+///   *moved* has to go through there rather than be reused with stale offsets.
+/// - `updateDOM` patches the cell text in place when only content changed, so
+///   the focused cell is never re-created and never loses its caret. Anything
+///   that changes the shape (a row, a column, an alignment) rebuilds, and the
+///   caller puts focus back afterwards.
+/// - the CodeMirror selection is parked just after the block while a cell has
+///   focus, so the "cursor is inside the block → show the pipes" rule cannot
+///   fire underneath the person typing.
 class TableWidget extends WidgetType {
   constructor(readonly block: TableBlock) {
     super()
@@ -1432,44 +1459,672 @@ class TableWidget extends WidgetType {
   toDOM(view: EditorView) {
     const wrap = document.createElement('div')
     wrap.className = 'envy-md-table-wrap'
-    const table = document.createElement('table')
-    table.className = 'envy-md-table'
-    const colCount = Math.max(
-      this.block.header.length,
-      ...this.block.rows.map((r) => r.length),
-      this.block.aligns.length,
+    tableStates.set(wrap, { view, block: this.block })
+    wrap.append(
+      buildTableToolbar(wrap),
+      buildTableScroller(this.block, view.state.facet(EditorView.editable)),
     )
-    const thead = document.createElement('thead')
-    thead.append(this.rowEl('th', this.block.header, colCount))
-    table.append(thead)
-    const tbody = document.createElement('tbody')
-    for (const row of this.block.rows) tbody.append(this.rowEl('td', row, colCount))
-    table.append(tbody)
-    wrap.append(table)
-    wrap.onmousedown = (e) => {
-      if ((e.target as HTMLElement).closest('a')) return
-      e.preventDefault()
-      view.dispatch({ selection: { anchor: this.block.from }, scrollIntoView: true })
-      view.focus()
-    }
+    wireTable(wrap)
     return wrap
   }
-  ignoreEvent(event: Event) {
-    const t = event.target as HTMLElement
-    if (t.closest?.('a')) return true
-    return event.type === 'mousedown' || event.type === 'click'
-  }
-  private rowEl(kind: 'th' | 'td', cells: string[], colCount: number): HTMLElement {
-    const tr = document.createElement('tr')
-    for (let i = 0; i < colCount; i++) {
-      const cell = document.createElement(kind)
-      const align = this.block.aligns[i] ?? 'left'
-      if (align !== 'left') cell.style.textAlign = align
-      cell.append(...tableCellNodes(cells[i] ?? ''))
-      tr.append(cell)
+  updateDOM(dom: HTMLElement, _view: EditorView, old: TableWidget) {
+    const state = tableStates.get(dom)
+    if (!state) return false
+    // The reuse search offers this widget every table tile in turn, so the
+    // pairing has to be checked rather than assumed: the same block either
+    // stayed put and changed (same `from`) or moved without changing (same
+    // source). Anything else is a different table and must not be patched.
+    if (old.block.from !== this.block.from && old.block.src !== this.block.src) return false
+    if (tableShape(old.block) !== tableShape(this.block)) return false
+    state.block = this.block
+    const active = dom.ownerDocument.activeElement
+    for (const cell of dom.querySelectorAll<HTMLElement>('th[data-row], td[data-row]')) {
+      // The focused cell already holds what the person typed — rewriting it
+      // would destroy the caret to say something it already says.
+      if (cell === active) continue
+      const raw = cellRaw(this.block, Number(cell.dataset.row), Number(cell.dataset.col))
+      if (cell.dataset.raw !== raw) renderTableCellInto(cell, raw, false)
     }
-    return tr
+    return true
   }
+  destroy(dom: HTMLElement) {
+    tableStates.delete(dom)
+  }
+  /// Everything inside the widget is the widget's: cells handle their own
+  /// keys, input and clicks, and CodeMirror must not also act on them.
+  ignoreEvent() {
+    return true
+  }
+}
+
+/// The live block behind a rendered table, kept honest by `toDOM`/`updateDOM`.
+/// Handlers read it from here rather than closing over the widget they were
+/// created with, because that widget is replaced on every transaction.
+interface TableState {
+  view: EditorView
+  block: TableBlock
+}
+const tableStates = new WeakMap<HTMLElement, TableState>()
+
+/// Rows × columns × alignments. Two blocks with the same shape can swap cell
+/// text without the DOM changing structure — the test `updateDOM` patches on.
+function tableShape(block: TableBlock): string {
+  return `${block.rows.length}x${tableCols(block)}:${block.aligns.join(',')}`
+}
+
+function tableCols(block: TableBlock): number {
+  return Math.max(block.header.length, block.aligns.length, ...block.rows.map((r) => r.length))
+}
+
+/// Row 0 is the header; row n+1 is `rows[n]`, the same numbering the DOM and
+/// `tableRowLines` use.
+function cellRaw(block: TableBlock, row: number, col: number): string {
+  const cells = row === 0 ? block.header : (block.rows[row - 1] ?? [])
+  return cells[col] ?? ''
+}
+
+/// Whether the webview honours `contenteditable="plaintext-only"`. WebKitGTK
+/// versions differ, and the fallback (`true` plus a paste that is sanitised to
+/// text) has to be chosen at runtime rather than guessed at build time.
+let plaintextOnly: boolean | null = null
+function supportsPlaintextOnly(): boolean {
+  if (plaintextOnly === null) {
+    const probe = document.createElement('div')
+    try {
+      probe.contentEditable = 'plaintext-only'
+    } catch {
+      // Older WebKit throws on the unknown value rather than ignoring it.
+    }
+    plaintextOnly = probe.contentEditable === 'plaintext-only'
+  }
+  return plaintextOnly
+}
+
+/// A cell's content: the formatted inline markdown when it is at rest, the raw
+/// cell markdown while it is being edited. Editing formatted DOM is how these
+/// widgets usually go wrong — `**a**` renders as `a`, and there is no honest
+/// way back from that — so the swap happens on focus and reverses on blur.
+function renderTableCellInto(cell: HTMLElement, raw: string, asRaw: boolean) {
+  cell.dataset.raw = raw
+  if (asRaw) {
+    if (cell.textContent !== raw) cell.textContent = raw
+  } else {
+    cell.replaceChildren(...tableCellNodes(raw))
+  }
+}
+
+function buildTableScroller(block: TableBlock, editable: boolean): HTMLElement {
+  // The scroller is inside the wrap rather than being it, so the toolbar can
+  // sit beside the table without being clipped by `overflow-x`.
+  const scroll = document.createElement('div')
+  scroll.className = 'envy-md-table-scroll'
+  const table = document.createElement('table')
+  table.className = 'envy-md-table'
+  const cols = tableCols(block)
+  const thead = document.createElement('thead')
+  thead.append(tableRowEl('th', block, 0, cols, editable))
+  table.append(thead)
+  const tbody = document.createElement('tbody')
+  for (let r = 0; r < block.rows.length; r++) {
+    tbody.append(tableRowEl('td', block, r + 1, cols, editable))
+  }
+  table.append(tbody)
+  scroll.append(table)
+  return scroll
+}
+
+function tableRowEl(
+  kind: 'th' | 'td',
+  block: TableBlock,
+  row: number,
+  cols: number,
+  editable: boolean,
+): HTMLElement {
+  const tr = document.createElement('tr')
+  for (let col = 0; col < cols; col++) {
+    const cell = document.createElement(kind)
+    const align = block.aligns[col] ?? 'left'
+    if (align !== 'left') cell.style.textAlign = align
+    cell.dataset.row = String(row)
+    cell.dataset.col = String(col)
+    // A read-only editor (the main window with no note open) must not become
+    // editable just because part of it renders as a table.
+    cell.contentEditable = !editable ? 'false' : supportsPlaintextOnly() ? 'plaintext-only' : 'true'
+    // A cell is one line of markdown; nothing inside it should be a spell-check
+    // or autocorrect target either, since it is source text.
+    cell.spellcheck = false
+    renderTableCellInto(cell, cellRaw(block, row, col), false)
+    tr.append(cell)
+  }
+  return tr
+}
+
+// --- Editing a cell ----------------------------------------------------------
+
+function tableWrapOf(node: EventTarget | null): HTMLElement | null {
+  const el = node as HTMLElement | null
+  return el?.closest?.('.envy-md-table-wrap') ?? null
+}
+
+function cellOf(node: EventTarget | null): HTMLElement | null {
+  const el = node as HTMLElement | null
+  const cell = el?.closest?.('th[data-row], td[data-row]') as HTMLElement | null
+  return cell ?? null
+}
+
+function cellAt(wrap: HTMLElement, row: number, col: number): HTMLElement | null {
+  return wrap.querySelector<HTMLElement>(
+    `th[data-row="${row}"][data-col="${col}"], td[data-row="${row}"][data-col="${col}"]`,
+  )
+}
+
+/// The cell that has focus, which is what every toolbar button acts on — the
+/// buttons cancel their own mousedown, so focus is still in the cell when the
+/// action runs.
+function focusedCell(wrap: HTMLElement): HTMLElement | null {
+  const active = wrap.ownerDocument.activeElement
+  return active && wrap.contains(active) ? cellOf(active) : null
+}
+
+/// Caret offsets inside a cell, counted in characters of its text.
+function cellSelection(cell: HTMLElement): { from: number; to: number } | null {
+  const sel = cell.ownerDocument.getSelection()
+  if (!sel || sel.rangeCount === 0) return null
+  const range = sel.getRangeAt(0)
+  if (!cell.contains(range.startContainer) || !cell.contains(range.endContainer)) return null
+  const before = cell.ownerDocument.createRange()
+  before.selectNodeContents(cell)
+  before.setEnd(range.startContainer, range.startOffset)
+  const from = before.toString().length
+  return { from, to: from + range.toString().length }
+}
+
+function setCellSelection(cell: HTMLElement, from: number, to: number) {
+  const node = cell.firstChild ?? cell
+  const max = node.nodeType === Node.TEXT_NODE ? (node.textContent ?? '').length : 0
+  const range = cell.ownerDocument.createRange()
+  range.setStart(node, Math.min(from, max))
+  range.setEnd(node, Math.min(to, max))
+  const sel = cell.ownerDocument.getSelection()
+  sel?.removeAllRanges()
+  sel?.addRange(range)
+}
+
+/// `at` is a caret offset; `select` takes the whole cell instead, which is what
+/// Tab does — the same "typing replaces what's there" the raw-pipes Tab gives,
+/// so the two editing modes feel identical.
+function focusTableCell(
+  wrap: HTMLElement,
+  row: number,
+  col: number,
+  at?: number,
+  select = false,
+) {
+  const cell = cellAt(wrap, row, col)
+  if (!cell) return
+  cell.focus()
+  const len = (cell.textContent ?? '').length
+  if (select) {
+    setCellSelection(cell, 0, len)
+    return
+  }
+  const put = Math.min(at ?? len, len)
+  setCellSelection(cell, put, put)
+}
+
+/// Puts focus back in a cell after a change that rebuilt the widget's DOM. The
+/// new DOM is already in place by the time `dispatch` returns, but a rebuild
+/// that CodeMirror defers to a measure pass is retried once on the next frame.
+function refocusTableCell(view: EditorView, from: number, row: number, col: number, at?: number) {
+  const attempt = () => {
+    for (const wrap of view.contentDOM.querySelectorAll<HTMLElement>('.envy-md-table-wrap')) {
+      if (tableStates.get(wrap)?.block.from !== from) continue
+      focusTableCell(wrap, row, col, at)
+      return true
+    }
+    return false
+  }
+  if (!attempt()) requestAnimationFrame(() => void attempt())
+}
+
+/// Keeps the CodeMirror selection out of the block a cell is being edited in.
+/// `block.to` is the start of the line *after* the table, which the reveal rule
+/// counts as outside — so the widget stays up while the caret has somewhere
+/// sensible to be if the person tabs back into the document.
+function parkSelectionAfter(view: EditorView, block: TableBlock) {
+  if (!selectionOverlapsRange(view.state, block.from, block.to)) return
+  view.dispatch({ selection: { anchor: Math.min(block.to, view.state.doc.length) } })
+}
+
+/// Rebuilds one row's source line from the cells on screen and dispatches it.
+///
+/// One line, not the block: an edit that only retypes a cell should be one
+/// small change so undo, the save debounce and `updateDOM` all stay cheap.
+function commitTableRow(cell: HTMLElement) {
+  const wrap = tableWrapOf(cell)
+  const state = wrap && tableStates.get(wrap)
+  if (!wrap || !state) return
+  const { view, block } = state
+  const row = Number(cell.dataset.row)
+  const col = Number(cell.dataset.col)
+  // The editable facet can be switched off after the widget was drawn; a cell
+  // is never a way around it, so anything typed is simply put back.
+  if (!view.state.facet(EditorView.editable)) {
+    renderTableCellInto(cell, cellRaw(block, row, col), true)
+    return
+  }
+  const caret = cellSelection(cell)?.from
+  cell.dataset.raw = cell.textContent ?? ''
+  const lineNo = tableRowLines(view.state.doc, block)[row]
+  if (lineNo === undefined) return
+  const line = view.state.doc.line(lineNo)
+  const cols = tableCols(block)
+  const cells: string[] = []
+  for (let c = 0; c < cols; c++) {
+    cells.push(cellAt(wrap, row, c)?.dataset.raw ?? cellRaw(block, row, c))
+  }
+  const indent = /^\s*/.exec(line.text)![0]
+  const text = indent + serializeTableRow(cells)
+  if (text === line.text) return
+  const park = selectionOverlapsRange(view.state, block.from, block.to)
+  view.dispatch({
+    changes: { from: line.from, to: line.to, insert: text },
+    selection: park ? { anchor: block.to + (text.length - line.text.length) } : undefined,
+    userEvent: 'input',
+  })
+  // Normally `updateDOM` patched around the focused cell and nothing moved.
+  // But some text reshapes the block as it is typed — a lone backtick makes
+  // the parser read past the next pipe until its pair arrives — and that
+  // rebuilds the widget. Putting focus back is better than dropping the person
+  // out of the table mid-word.
+  if (wrap.ownerDocument.activeElement !== cell) {
+    refocusTableCell(view, block.from, row, col, caret)
+  }
+}
+
+/// A whole-block rewrite: the shape changed, so the source is regenerated and
+/// the widget rebuilt. `focus` is where the caret should land afterwards.
+function rewriteTable(
+  wrap: HTMLElement,
+  parts: { header: string[]; aligns: CellAlign[]; rows: string[][] },
+  focus: { row: number; col: number } | null,
+) {
+  const state = tableStates.get(wrap)
+  if (!state) return
+  const { view, block } = state
+  // Padded on the way in: a structural change rewrites the whole block anyway,
+  // so there is nothing to gain from leaving it ragged until the next blur.
+  const src = padTableSource(
+    serializeTable(parts.header, parts.aligns, parts.rows, block.src.endsWith('\n')),
+  )
+  if (src === block.src) return
+  view.dispatch({
+    changes: { from: block.from, to: block.to, insert: src },
+    // Just after the new block — outside it, so the rendered table stays up.
+    selection: { anchor: block.from + src.length },
+    userEvent: 'input',
+  })
+  if (focus) refocusTableCell(view, block.from, focus.row, focus.col)
+}
+
+/// The block as rectangular arrays — ragged rows filled out — so row and
+/// column edits are ordinary array work.
+function tableParts(block: TableBlock): { header: string[]; aligns: CellAlign[]; rows: string[][] } {
+  const cols = tableCols(block)
+  const fill = (row: string[]) => Array.from({ length: cols }, (_, i) => row[i] ?? '')
+  return {
+    header: fill(block.header),
+    aligns: Array.from({ length: cols }, (_, i) => block.aligns[i] ?? 'left'),
+    rows: block.rows.map(fill),
+  }
+}
+
+// --- Keys inside a cell ------------------------------------------------------
+
+function moveCell(wrap: HTMLElement, row: number, col: number, dir: 1 | -1) {
+  const block = tableStates.get(wrap)?.block
+  if (!block) return
+  const cols = tableCols(block)
+  const lastRow = block.rows.length
+  let r = row
+  let c = col + dir
+  if (c >= cols) {
+    c = 0
+    r++
+  } else if (c < 0) {
+    c = cols - 1
+    r--
+  }
+  if (r > lastRow) {
+    // Tab off the end appends a row, the way it does in every spreadsheet.
+    addTableRow(wrap, lastRow, { row: lastRow + 1, col: 0 })
+    return
+  }
+  if (r < 0) {
+    r = lastRow
+    c = cols - 1
+  }
+  focusTableCell(wrap, r, c, undefined, true)
+}
+
+/// Inserts an empty row below `row` (row 0 being the header).
+function addTableRow(wrap: HTMLElement, row: number, focus: { row: number; col: number } | null) {
+  const block = tableStates.get(wrap)?.block
+  if (!block) return
+  const parts = tableParts(block)
+  parts.rows.splice(row, 0, parts.header.map(() => ''))
+  rewriteTable(wrap, parts, focus)
+}
+
+function removeTableRow(wrap: HTMLElement, row: number) {
+  const block = tableStates.get(wrap)?.block
+  // The header is the table's definition, not a row: removing it would leave
+  // the delimiter describing nothing.
+  if (!block || row < 1) return
+  const parts = tableParts(block)
+  parts.rows.splice(row - 1, 1)
+  rewriteTable(wrap, parts, { row: Math.min(row, parts.rows.length), col: 0 })
+}
+
+function addTableColumn(wrap: HTMLElement, col: number) {
+  const block = tableStates.get(wrap)?.block
+  if (!block) return
+  const parts = tableParts(block)
+  parts.header.splice(col + 1, 0, '')
+  parts.aligns.splice(col + 1, 0, 'left')
+  for (const row of parts.rows) row.splice(col + 1, 0, '')
+  rewriteTable(wrap, parts, { row: 0, col: col + 1 })
+}
+
+function removeTableColumn(wrap: HTMLElement, col: number) {
+  const block = tableStates.get(wrap)?.block
+  // A table with no columns is not a table; the delete button is the way out.
+  if (!block || tableCols(block) <= 1) return
+  const parts = tableParts(block)
+  parts.header.splice(col, 1)
+  parts.aligns.splice(col, 1)
+  for (const row of parts.rows) row.splice(col, 1)
+  rewriteTable(wrap, parts, { row: 0, col: Math.max(0, col - 1) })
+}
+
+function alignTableColumn(wrap: HTMLElement, col: number, align: CellAlign) {
+  const state = tableStates.get(wrap)
+  if (!state) return
+  const parts = tableParts(state.block)
+  if (parts.aligns[col] === align) return
+  parts.aligns[col] = align
+  const cell = focusedCell(wrap)
+  rewriteTable(wrap, parts, {
+    row: Number(cell?.dataset.row ?? 0),
+    col: Number(cell?.dataset.col ?? col),
+  })
+}
+
+/// Tables whose next blur must not re-pad: "Edit as text" leaves the caret
+/// *inside* the block, and rewriting the text under it would throw the caret to
+/// one end of the table — the opposite of what the button promised.
+const skipRepad = new WeakSet<HTMLElement>()
+
+/// Drops out of the rendered table and into the pipes, caret in the same cell —
+/// what clicking a table used to do, kept as a button now that a click edits.
+function editTableAsText(wrap: HTMLElement) {
+  const state = tableStates.get(wrap)
+  if (!state) return
+  const { view, block } = state
+  const cell = focusedCell(wrap)
+  const row = Number(cell?.dataset.row ?? 0)
+  const col = Number(cell?.dataset.col ?? 0)
+  const lineNo = tableRowLines(view.state.doc, block)[row] ?? view.state.doc.lineAt(block.from).number
+  const line = view.state.doc.line(lineNo)
+  const pipes: number[] = []
+  forEachPipe(line.text, (rel) => pipes.push(rel))
+  let at = (pipes[col] ?? pipes[0] ?? 0) + 1
+  if (line.text[at] === ' ') at++
+  skipRepad.add(wrap)
+  cell?.blur()
+  view.dispatch({ selection: { anchor: line.from + at }, scrollIntoView: true })
+  view.focus()
+}
+
+function deleteTable(wrap: HTMLElement) {
+  const state = tableStates.get(wrap)
+  if (!state) return
+  const { view, block } = state
+  if (!view.state.facet(EditorView.editable)) return
+  focusedCell(wrap)?.blur()
+  view.dispatch({
+    changes: { from: block.from, to: block.to, insert: '' },
+    selection: { anchor: block.from },
+    userEvent: 'delete.table',
+  })
+  view.focus()
+}
+
+/// Leaves the table for the document, caret just after it.
+function leaveTable(wrap: HTMLElement) {
+  const state = tableStates.get(wrap)
+  if (!state) return
+  const { view, block } = state
+  focusedCell(wrap)?.blur()
+  const at = Math.min(block.to, view.state.doc.length)
+  view.dispatch({ selection: { anchor: at }, scrollIntoView: true })
+  view.focus()
+}
+
+/// Ctrl+B / Ctrl+I inside a cell, applied to the cell's raw text with the same
+/// rule the editor's own emphasis commands use.
+function emphasiseCell(cell: HTMLElement, marker: string): boolean {
+  const sel = cellSelection(cell)
+  if (!sel || sel.from === sel.to) return false
+  const edit = emphasisEdit(cell.textContent ?? '', sel.from, sel.to, marker)
+  if (!edit) return false
+  cell.textContent = edit.text
+  setCellSelection(cell, edit.from, edit.to)
+  commitTableRow(cell)
+  return true
+}
+
+/// Re-pads the whole block so the pipes line up again, once the table is done
+/// being edited. Cosmetic, and only dispatched when it actually changes the
+/// text — an idle blur should not put anything on the undo stack.
+function repadTable(wrap: HTMLElement) {
+  const state = tableStates.get(wrap)
+  if (!state) return
+  const { view, block } = state
+  if (!view.state.facet(EditorView.editable)) return
+  // The block may have been edited or deleted from elsewhere since; only pad
+  // what is still exactly the text this widget is showing.
+  if (view.state.doc.sliceString(block.from, block.to) !== block.src) return
+  const padded = padTableSource(block.src)
+  if (padded === block.src) return
+  view.dispatch({
+    changes: { from: block.from, to: block.to, insert: padded },
+    userEvent: 'input.format',
+  })
+}
+
+/// One place for every listener the rendered table needs. Delegated on the
+/// wrap, so a rebuilt row or column is wired without re-attaching anything.
+function wireTable(wrap: HTMLElement) {
+  wrap.addEventListener('mousedown', (e) => {
+    const target = e.target as HTMLElement
+    if (target.closest('a') || target.closest('.envy-table-toolbar') || cellOf(target)) return
+    // The margin around the table: nothing to edit there, so the caret goes
+    // after the block rather than into it.
+    e.preventDefault()
+    leaveTable(wrap)
+  })
+
+  wrap.addEventListener('input', (e) => {
+    const cell = cellOf(e.target)
+    if (cell) commitTableRow(cell)
+  })
+
+  // A cell holds one line of markdown, whatever was on the clipboard.
+  wrap.addEventListener('paste', (e) => {
+    const cell = cellOf(e.target)
+    if (!cell) return
+    e.preventDefault()
+    const text = (e.clipboardData?.getData('text/plain') ?? '').replace(/\s*[\r\n]+\s*/g, ' ')
+    if (!text) return
+    // execCommand is the only insertion that keeps the webview's own undo
+    // stack for the cell; the manual range edit is the fallback when it is
+    // refused (and is what a `plaintext-only`-less WebKit needs anyway).
+    if (!cell.ownerDocument.execCommand('insertText', false, text)) {
+      const sel = cellSelection(cell) ?? { from: 0, to: 0 }
+      const current = cell.textContent ?? ''
+      cell.textContent = current.slice(0, sel.from) + text + current.slice(sel.to)
+      setCellSelection(cell, sel.from + text.length, sel.from + text.length)
+      commitTableRow(cell)
+    }
+  })
+
+  wrap.addEventListener('focusin', (e) => {
+    const cell = cellOf(e.target)
+    const state = tableStates.get(wrap)
+    if (!cell || !state) return
+    wrap.classList.add('editing')
+    disarmTableDelete(wrap)
+    // Raw markdown while editing. Cells with no markup already read the same
+    // either way, and leaving those alone keeps the caret exactly where the
+    // click put it.
+    const raw = cell.dataset.raw ?? ''
+    if (cell.textContent !== raw) {
+      renderTableCellInto(cell, raw, true)
+      setCellSelection(cell, raw.length, raw.length)
+    }
+    parkSelectionAfter(state.view, state.block)
+    state.view.requestMeasure()
+  })
+
+  wrap.addEventListener('focusout', (e) => {
+    const cell = cellOf(e.target)
+    if (cell) renderTableCellInto(cell, cell.textContent ?? '', false)
+    // `relatedTarget` is null when focus lands on the body, so the question is
+    // asked after the browser has finished moving it.
+    setTimeout(() => {
+      if (!tableStates.has(wrap) || wrap.contains(wrap.ownerDocument.activeElement)) return
+      wrap.classList.remove('editing')
+      disarmTableDelete(wrap)
+      if (!skipRepad.delete(wrap)) repadTable(wrap)
+      tableStates.get(wrap)?.view.requestMeasure()
+    }, 0)
+  })
+
+  wrap.addEventListener('keydown', (e) => {
+    const cell = cellOf(e.target)
+    if (!cell) return
+    const row = Number(cell.dataset.row)
+    const col = Number(cell.dataset.col)
+    const block = tableStates.get(wrap)?.block
+    if (!block) return
+
+    if (e.key === 'Tab') {
+      e.preventDefault()
+      moveCell(wrap, row, col, e.shiftKey ? -1 : 1)
+      return
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      // Shift+Enter would mean a line break, and a pipe-table cell cannot
+      // hold one — so it does nothing rather than something surprising.
+      if (!e.shiftKey) addTableRow(wrap, row, { row: row + 1, col: 0 })
+      return
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      leaveTable(wrap)
+      return
+    }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      const next = row + (e.key === 'ArrowDown' ? 1 : -1)
+      if (next < 0 || next > block.rows.length) return
+      e.preventDefault()
+      focusTableCell(wrap, next, col)
+      return
+    }
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      const sel = cellSelection(cell)
+      if (!sel || sel.from !== sel.to) return
+      const len = (cell.textContent ?? '').length
+      if (e.key === 'ArrowLeft' ? sel.from !== 0 : sel.to !== len) return
+      e.preventDefault()
+      moveCell(wrap, row, col, e.key === 'ArrowLeft' ? -1 : 1)
+      return
+    }
+    // Swallowed whether or not there is a selection to wrap: without
+    // `plaintext-only` the webview answers Ctrl+B with its own bold command,
+    // which would put markup into a cell that is meant to hold source text.
+    if (matchesShortcut('bold', e)) {
+      e.preventDefault()
+      emphasiseCell(cell, '**')
+      return
+    }
+    if (matchesShortcut('italic', e)) {
+      e.preventDefault()
+      emphasiseCell(cell, '*')
+    }
+  })
+}
+
+// --- The table toolbar -------------------------------------------------------
+
+/// Delete is two-step rather than a modal: the modal would take focus out of
+/// the cell the toolbar is attached to, and "click it twice" says the same
+/// thing without leaving the table.
+function disarmTableDelete(wrap: HTMLElement) {
+  const btn = wrap.querySelector<HTMLButtonElement>('.envy-table-btn.armed')
+  if (!btn) return
+  btn.classList.remove('armed')
+  btn.textContent = 'Delete'
+}
+
+function buildTableToolbar(wrap: HTMLElement): HTMLElement {
+  const bar = document.createElement('div')
+  bar.className = 'envy-table-toolbar'
+  const add = (label: string, title: string, run: () => void, cls = '') => {
+    const btn = document.createElement('button')
+    btn.type = 'button'
+    btn.className = 'envy-table-btn' + (cls ? ' ' + cls : '')
+    btn.title = title
+    btn.textContent = label
+    // mousedown, not click, and cancelled: the cell must keep focus, since
+    // every action here is defined relative to the cell being edited.
+    btn.onmousedown = (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+      if (!btn.classList.contains('armed')) disarmTableDelete(wrap)
+      run()
+    }
+    bar.append(btn)
+    return btn
+  }
+  const at = () => {
+    const cell = focusedCell(wrap)
+    return { row: Number(cell?.dataset.row ?? 0), col: Number(cell?.dataset.col ?? 0) }
+  }
+  add('Row+', 'Add a row below', () => addTableRow(wrap, at().row, { row: at().row + 1, col: 0 }))
+  add('Row−', 'Remove this row', () => removeTableRow(wrap, at().row))
+  add('Col+', 'Add a column to the right', () => addTableColumn(wrap, at().col))
+  add('Col−', 'Remove this column', () => removeTableColumn(wrap, at().col))
+  add('⇤', 'Align this column left', () => alignTableColumn(wrap, at().col, 'left'))
+  add('⇔', 'Centre this column', () => alignTableColumn(wrap, at().col, 'center'))
+  add('⇥', 'Align this column right', () => alignTableColumn(wrap, at().col, 'right'))
+  add('Edit as text', 'Edit the pipes directly', () => editTableAsText(wrap))
+  const del = add(
+    'Delete',
+    'Delete this table (click twice)',
+    () => {
+      if (del.classList.contains('armed')) {
+        deleteTable(wrap)
+        return
+      }
+      del.classList.add('armed')
+      del.textContent = 'Delete? ✓'
+    },
+    'destructive',
+  )
+  return bar
 }
 
 function escapeHtml(s: string): string {

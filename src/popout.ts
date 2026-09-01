@@ -20,7 +20,8 @@ import { openImagePicker } from './image-picker'
 import { openContextMenu } from './context-menu'
 import { setPromptFocusReturn } from './prompt-modal'
 import { listEditing } from './lists'
-import { tableEditing } from './tables'
+import { insertTable, tableEditing } from './tables'
+import { matches as matchesShortcut } from './shortcuts'
 import {
   editorCompletion,
   completionSources,
@@ -260,6 +261,7 @@ editorEl.addEventListener('contextmenu', (e) => {
       label: 'Insert Image…',
       run: () => void openImagePicker((name) => insertImageReference(name, view)),
     },
+    { label: 'Insert Table', run: () => void insertTable(view) },
   ])
 })
 
@@ -297,6 +299,13 @@ try {
 // close, so the window wouldn't shut. The 400ms save debounce and this flush
 // cover the pending edit instead.)
 window.addEventListener('keydown', (e) => {
+  // The one editor action this window shares with the main one — read through
+  // the registry, so a remap there applies here too.
+  if (noteId && matchesShortcut('insertTable', e)) {
+    e.preventDefault()
+    insertTable(view)
+    return
+  }
   if (e.key !== 'Escape') return
   e.preventDefault()
   void flush().then(() => getCurrentWindow().close())
