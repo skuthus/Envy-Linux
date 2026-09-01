@@ -216,6 +216,10 @@ fn save_keep_on_top(app: &tauri::AppHandle, on: bool) {
 fn apply_keep_on_top(app: &tauri::AppHandle, on: bool) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.set_always_on_top(on);
+        // Windows leaves a de-topmost'd window at the top of the normal stack,
+        // so it is restacked by hand there. On Linux the compositor owns
+        // z-order: clearing always-on-top is the whole job.
+        #[cfg(windows)]
         if !on {
             lower_below_foreground(&w);
         }
@@ -230,6 +234,7 @@ fn apply_keep_on_top(app: &tauri::AppHandle, on: bool) {
 /// and the unfocused window naturally falls behind the active app; this mirrors
 /// that by re-inserting the window just under the current foreground window.
 /// A no-op when Envy itself is in front (e.g. toggled from its own window).
+#[cfg(windows)]
 fn lower_below_foreground(w: &tauri::WebviewWindow) {
     use windows::Win32::UI::WindowsAndMessaging::{
         GetForegroundWindow, SetWindowPos, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
@@ -693,11 +698,7 @@ fn reveal_folder(which: String, state: State<AppState>) -> Result<(), String> {
     // Created on demand: Explorer cannot show a folder that doesn't exist yet,
     // and neither Templates/ nor .trash/ exists until first used.
     let _ = std::fs::create_dir_all(&path);
-    std::process::Command::new("explorer")
-        .arg(path)
-        .spawn()
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+    open_directory(&path)
 }
 
 /// Re-points the store at a different folder.
@@ -1017,8 +1018,28 @@ fn set_include_subfolders(include: bool, state: State<AppState>) -> usize {
 #[tauri::command]
 fn reveal_index(state: State<AppState>) -> Result<(), String> {
     let dir = state.store.lock().unwrap().directory().to_path_buf();
+    open_directory(&dir)
+}
+
+/// Opens a folder in the user's file manager. Explorer on Windows; on Linux
+/// `xdg-open`, which hands the directory to whatever the desktop has
+/// registered for `inode/directory` — deliberately not nautilus / thunar /
+/// dolphin by name.
+#[cfg(windows)]
+fn open_directory(path: &std::path::Path) -> Result<(), String> {
     std::process::Command::new("explorer")
-        .arg(dir)
+        .arg(path)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(not(windows))]
+fn open_directory(path: &std::path::Path) -> Result<(), String> {
+    std::process::Command::new("xdg-open")
+        .arg(path)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .spawn()
         .map(|_| ())
         .map_err(|e| e.to_string())
@@ -1040,6 +1061,7 @@ fn reveal_index(state: State<AppState>) -> Result<(), String> {
 /// Selects `path` in a new Explorer window. `raw_arg`, not `arg`, for the
 /// reason spelled out on `reveal_note`: the switch stays bare and only the path
 /// is quoted, so a vault path with spaces still selects the file.
+#[cfg(windows)]
 fn reveal_path(path: &std::path::Path) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
     std::process::Command::new("explorer")
@@ -1047,6 +1069,57 @@ fn reveal_path(path: &std::path::Path) -> Result<(), String> {
         .spawn()
         .map(|_| ())
         .map_err(|e| e.to_string())
+}
+
+/// Selects `path` in the user's file manager — the Linux "Show in Folder".
+///
+/// Tries the FreeDesktop `org.freedesktop.FileManager1.ShowItems` D-Bus call
+/// first, which every mainstream file manager (Nautilus, Thunar, Dolphin,
+/// Nemo, …) implements and which actually *selects* the file rather than just
+/// opening its folder. If no file manager answers on the session bus, falls
+/// back to `xdg-open` on the parent directory, which at least lands the user in
+/// the right place. Neither path names a specific file manager.
+#[cfg(not(windows))]
+fn reveal_path(path: &std::path::Path) -> Result<(), String> {
+    let uri = file_uri(path);
+    let shown = std::process::Command::new("dbus-send")
+        .args([
+            "--session",
+            "--print-reply",
+            "--dest=org.freedesktop.FileManager1",
+            "/org/freedesktop/FileManager1",
+            "org.freedesktop.FileManager1.ShowItems",
+        ])
+        .arg(format!("array:string:{uri}"))
+        .arg("string:")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if shown {
+        return Ok(());
+    }
+    let parent = path.parent().unwrap_or(path);
+    open_directory(parent)
+}
+
+/// `file://` URI for a local path, percent-encoding everything RFC 3986 does
+/// not allow unescaped in a path segment. Spaces and `#` in note titles are
+/// the common cases — an unescaped `#` would be read as a fragment.
+#[cfg(not(windows))]
+fn file_uri(path: &std::path::Path) -> String {
+    use std::os::unix::ffi::OsStrExt;
+    let mut out = String::from("file://");
+    for &b in path.as_os_str().as_bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }
 
 #[tauri::command]
@@ -1349,6 +1422,7 @@ fn build_tray_menu(app: &tauri::AppHandle) -> Result<Menu<tauri::Wry>, Box<dyn s
 /// Waiting removes the race rather than narrowing it. `ping` rather than
 /// `timeout`, because `timeout` reads the console and fails outright when there
 /// is not one — which is exactly the case for a detached process.
+#[cfg(windows)]
 fn launch_installer_after_exit(bytes: &[u8], version: &str) -> std::io::Result<()> {
     let installer = std::env::temp_dir().join(format!("Envy_{version}_x64-setup.exe"));
     std::fs::write(&installer, bytes)?;
@@ -1391,6 +1465,7 @@ fn launch_installer_after_exit(bytes: &[u8], version: &str) -> std::io::Result<(
 /// possible. The installed build also has to actually perform this check —
 /// a release that never asks will never discover its successor no matter what
 /// key it was signed against.
+#[cfg(windows)]
 async fn run_update_check(app: tauri::AppHandle, manual: bool) {
     use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
     use tauri_plugin_updater::UpdaterExt;
@@ -1478,6 +1553,24 @@ async fn run_update_check(app: tauri::AppHandle, manual: bool) {
     // every path here, so a tray-triggered check updates the label too. Not
     // reached when an install starts, since that exits the process first.
     let _ = app.emit("update-checked", ());
+}
+
+/// Linux builds have no update channel: this repository is private, so there is
+/// no `latest.json` an unauthenticated updater could fetch, and the updater
+/// plugin is not even compiled in (see Cargo.toml). Updating is `./build.sh`.
+/// A background check is a silent no-op; the Settings "Check Now" button says
+/// so instead of appearing to do nothing.
+#[cfg(not(windows))]
+async fn run_update_check(app: tauri::AppHandle, manual: bool) {
+    use tauri_plugin_dialog::DialogExt;
+    if manual {
+        app.dialog()
+            .message(
+                "This Linux build has no update channel yet.\n\nTo update, pull the repository and run ./build.sh.",
+            )
+            .title("No Update Channel")
+            .blocking_show();
+    }
 }
 
 /// The frontend's entry point to the same check the tray command and the launch
@@ -1844,15 +1937,20 @@ fn set_autostart(enabled: bool, app: tauri::AppHandle) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_dialog::init())
-        // Checks the endpoint in tauri.conf.json and verifies whatever it finds
-        // against the public key compiled in beside it. That key is why this has
-        // to exist before the first release rather than after: an install that
-        // shipped without it has nothing to verify an update with, so it can
-        // never update itself — only a manual reinstall fixes it.
-        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_dialog::init());
+    // Checks the endpoint in tauri.conf.json and verifies whatever it finds
+    // against the public key compiled in beside it. That key is why this has
+    // to exist before the first release rather than after: an install that
+    // shipped without it has nothing to verify an update with, so it can
+    // never update itself — only a manual reinstall fixes it.
+    //
+    // Windows only. The plugin's config requires a `pubkey`, and a Linux build
+    // has no release channel to point one at (PLAN.md, Phase 6).
+    #[cfg(windows)]
+    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    builder
         // The window comes back the size and place it was left. macOS gives a
         // WindowGroup this for free through AppKit's state restoration, which is
         // why the Mac has no code for it; Windows has no equivalent, so without
