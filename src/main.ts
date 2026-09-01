@@ -15,6 +15,7 @@ import {
   embedHost,
   envyStyler,
   existingTitles,
+  firstSearchMatch,
   isImageTarget,
   isGhostLinkForTest,
   plainTextField,
@@ -2107,9 +2108,31 @@ async function openHighlightedTemplate() {
   renderTemplateList()
 }
 
+/// Scrolls the first search match in the open note into view, about a third
+/// of the way down the editor rather than the bare minimum — a match just
+/// below the fold would otherwise land flush against the bottom edge with no
+/// context under it, which reads as a lurch rather than "here's your result".
+/// The cursor and selection are left where they were: this moves the view,
+/// not the insertion point. Nothing happens for a blank query, or one made
+/// only of operators that name nothing literal, since there's nothing lit up
+/// to go to. Mirrors the Mac's jumpToFirstSearchMatch (1.11.0).
+function jumpToFirstSearchMatch() {
+  const query = searchInput.value
+  if (!query.trim() || view.state.doc.length === 0) return
+  const pos = firstSearchMatch(view.state.doc.toString(), query)
+  if (pos === null) return
+  view.dispatch({
+    effects: EditorView.scrollIntoView(pos, {
+      y: 'start',
+      yMargin: view.scrollDOM.clientHeight / 3,
+    }),
+  })
+}
+
 async function runSearch() {
   // Push the query into the editor so matches light up in the open note.
   view.dispatch({ effects: setSearchQuery.of(searchInput.value) })
+  jumpToFirstSearchMatch()
   // Before the branches: the badge's count comes from the store and its
   // in/out state from the query, so it has to update whichever list is about
   // to be shown.
@@ -2204,6 +2227,9 @@ async function openNote(id: string) {
   // styler decorates only what's in view — without a re-measure the viewport
   // it computed a moment ago may not match what's actually on screen.
   view.requestMeasure()
+  // Opening a result of a search lands on what matched, not on the top of the
+  // note — the same jump typing in the box makes for the note already open.
+  jumpToFirstSearchMatch()
   renderStats()
   await refreshInterlinks()
 }

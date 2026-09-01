@@ -785,6 +785,20 @@ function searchMatchRanges(text: string, query: string): Array<[number, number]>
   return out
 }
 
+/// The offset of the earliest range in `text` that `query` lights up, or null
+/// when the query paints nothing here — no match at all, or a query made only
+/// of operators that name nothing literal (`due:`, `orphan:`, an exclusion).
+/// Drives the editor's scroll-to-match: it shares its matching rules with the
+/// highlighting itself, so where the view jumps can't drift from what actually
+/// lit up. Mirrors the Mac's `MarkdownStyler.firstSearchMatch`.
+export function firstSearchMatch(text: string, query: string): number | null {
+  let earliest: number | null = null
+  for (const [start] of searchMatchRanges(text, query)) {
+    if (earliest === null || start < earliest) earliest = start
+  }
+  return earliest
+}
+
 /// The note a `[[…]]` body points at — alias and heading stripped. Mirrors
 /// `WikiLink::parse` in envy-core.
 function wikiLinkTarget(body: string): string {
