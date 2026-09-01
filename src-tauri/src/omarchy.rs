@@ -1,0 +1,176 @@
+//! Live Omarchy appearance: the current theme's `colors.toml` and the
+//! system monospace font.
+//!
+//! Omarchy stages the active theme at `~/.local/state/omarchy/current/theme`
+//! and rewrites that directory on every `omarchy theme set`. Font changes
+//! land in `~/.config/fontconfig/fonts.conf`. We poll both so a running Envy
+//! retints without a restart, matching terminals, the shell, and Obsidian.
+
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread;
+use std::time::{Duration, SystemTime};
+
+use serde::Serialize;
+use tauri::{AppHandle, Emitter};
+
+const POLL: Duration = Duration::from_millis(400);
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct OmarchyAppearance {
+    pub colors: HashMap<String, String>,
+    pub font: String,
+}
+
+fn home() -> Option<PathBuf> {
+    dirs::home_dir()
+}
+
+fn colors_toml() -> Option<PathBuf> {
+    home().map(|h| h.join(".local/state/omarchy/current/theme/colors.toml"))
+}
+
+fn theme_name_file() -> Option<PathBuf> {
+    home().map(|h| h.join(".local/state/omarchy/current/theme.name"))
+}
+
+fn fontconfig_file() -> Option<PathBuf> {
+    home().map(|h| h.join(".config/fontconfig/fonts.conf"))
+}
+
+fn file_stamp(path: &Path) -> u128 {
+    std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis())
+        .unwrap_or(0)
+}
+
+fn fingerprint() -> String {
+    let colors = colors_toml().map(|p| file_stamp(&p)).unwrap_or(0);
+    let name = theme_name_file().map(|p| file_stamp(&p)).unwrap_or(0);
+    let font = fontconfig_file().map(|p| file_stamp(&p)).unwrap_or(0);
+    format!("{colors}:{name}:{font}")
+}
+
+/// Flat `key = "value"` parser. Omarchy `colors.toml` files are a list of
+/// assignments plus comments — not nested tables — so this is the whole
+/// format, not a subset.
+pub fn parse_colors_toml(text: &str) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((key, raw)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        if key.is_empty() {
+            continue;
+        }
+        let mut val = raw.trim();
+        if let Some(comment) = val.find('#') {
+            // Unquoted trailing comments. Quoted values with a hash inside
+            // are handled by the quote strip below running first on the
+            // original, so only peel a comment when the value isn't quoted.
+            if !val.starts_with('"') {
+                val = val[..comment].trim();
+            }
+        }
+        if val.len() >= 2 && val.starts_with('"') && val.ends_with('"') {
+            val = &val[1..val.len() - 1];
+        }
+        out.insert(key.to_string(), val.to_string());
+    }
+    out
+}
+
+pub fn omarchy_font() -> String {
+    let output = std::process::Command::new("fc-match")
+        .args(["monospace", "-f", "%{family}\n"])
+        .output()
+        .ok();
+    let Some(output) = output else {
+        return "monospace".into();
+    };
+    String::from_utf8(output.stdout)
+        .ok()
+        .and_then(|s| {
+            s.lines()
+                .next()
+                .map(|line| line.split(',').next().unwrap_or(line).trim().to_string())
+        })
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "monospace".into())
+}
+
+pub fn read_appearance() -> OmarchyAppearance {
+    let colors = colors_toml()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .map(|text| parse_colors_toml(&text))
+        .unwrap_or_default();
+    OmarchyAppearance {
+        colors,
+        font: omarchy_font(),
+    }
+}
+
+#[tauri::command]
+pub fn omarchy_appearance() -> OmarchyAppearance {
+    read_appearance()
+}
+
+/// One watcher for the process. `setup` can be called once; tests shouldn't
+/// start a second poller.
+static WATCHING: AtomicBool = AtomicBool::new(false);
+
+pub fn spawn_watcher(app: AppHandle) {
+    if WATCHING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    thread::spawn(move || {
+        let mut last_fp = fingerprint();
+        let mut last = read_appearance();
+        loop {
+            thread::sleep(POLL);
+            let fp = fingerprint();
+            if fp == last_fp {
+                continue;
+            }
+            last_fp = fp;
+            let next = read_appearance();
+            if next == last {
+                continue;
+            }
+            last = next.clone();
+            let _ = app.emit("omarchy-appearance", next);
+        }
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_colors_toml;
+
+    #[test]
+    fn parses_omarchy_colors_toml() {
+        let text = r###"
+# Generated by Aether for Omarchy v4.
+mode = "dark"
+
+accent = "#5280c7"
+background = "#05080e"
+foreground = "#d2d9e4"
+red = "#7da3e0"
+"###;
+        let map = parse_colors_toml(text);
+        assert_eq!(map.get("mode").unwrap(), "dark");
+        assert_eq!(map.get("accent").unwrap(), "#5280c7");
+        assert_eq!(map.get("background").unwrap(), "#05080e");
+        assert_eq!(map.get("red").unwrap(), "#7da3e0");
+    }
+}

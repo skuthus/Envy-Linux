@@ -26,7 +26,7 @@ import {
   loadCompletionSources,
   type CompletionSources,
 } from './completion'
-import { applyTheme, enviousDark, enviousLight } from './theme'
+import { initAppearance } from './theme'
 
 // Its own entry point, so it needs its own last-resort handler — the main
 // window's doesn't reach here.
@@ -259,18 +259,7 @@ editorEl.addEventListener('contextmenu', (e) => {
   ])
 })
 
-const darkQuery = window.matchMedia('(prefers-color-scheme: dark)')
-function syncTheme() {
-  const stored = localStorage.getItem('appearanceMode') ?? 'system'
-  const dark = stored === 'system' ? darkQuery.matches : stored === 'dark'
-  applyTheme(dark ? enviousDark : enviousLight)
-  document.documentElement.style.colorScheme = dark ? 'dark' : 'light'
-}
-darkQuery.addEventListener('change', syncTheme)
-// Applied up front, before any Tauri call — a hiccup in the window API must
-// never leave the note rendered with no theme (an unset --envy-background is a
-// blank white page).
-syncTheme()
+void initAppearance()
 
 // The size sticks: drag any edge and the next pop-out opens that size, as the
 // Mac's self-persisting peek panel does. Stored in the origin's localStorage,

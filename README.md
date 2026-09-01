@@ -26,6 +26,12 @@ Notes live in `~/Documents/Envy` by default, created on first launch with a
 welcome note; Settings → Change Location… points it at another folder. The
 chosen path is remembered in `~/.config/app.envynote.linux/index-path`.
 
+**Omarchy theme.** This Envy-Omarchy variant follows the current Omarchy
+theme (`~/.local/state/omarchy/current/theme/colors.toml`) and the Omarchy
+monospace font. Changing `omarchy theme set` or `omarchy font set` retints a
+running window. Settings → Appearance can pin Envious light/dark or a custom
+font instead. Surfaces are translucent so Hyprland blur shows through.
+
 **Summon.** Wayland has no app-registered global hotkeys, so summon is a
 Hyprland bind: `linux/hyprland-envy.lua` parks Envy's main window on the
 `special:envy` scratchpad and binds **Ctrl+Alt+Return** to

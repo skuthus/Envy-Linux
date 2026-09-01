@@ -1,7 +1,6 @@
-/* Every color here is a var fed from theme.ts, which transcribes Theme.swift.
-   Nothing is hardcoded — the point is that Envy's theme model (a flat set of
-   named color tokens) maps onto CSS custom properties one-to-one, so the
-   existing theme gallery ports as pure data. */
+/* Every color here is a var fed from theme.ts. On Omarchy those tokens are
+   derived from the current theme's colors.toml; Envious light/dark remain a
+   Settings override. Surfaces carry alpha so Hyprland blur shows through. */
 
 * { box-sizing: border-box; }
 
@@ -15,6 +14,14 @@
      outside the scrolling element, so it has to account for the same gutter to
      stay aligned with the rows. */
   --envy-scrollbar-width: 10px;
+  --envy-radius: 6px;
+  --envy-radius-lg: 10px;
+  --envy-font-family: ui-monospace, monospace;
+  --envy-mono-family: ui-monospace, monospace;
+  /* MultiplanetaryMono only ships Regular and Bold. 500 still resolves to
+     Regular; the hairline stroke is the actual "a bit heavier" step. */
+  --envy-font-weight: 500;
+  --envy-font-embolden: 0.3px;
 }
 
 /* --- Scrollbars ------------------------------------------------------------
@@ -53,9 +60,26 @@ html, body {
      this, any flex-sizing mistake inside silently turns into a scrolled window
      with the search box pushed out of view rather than a visible glitch. */
   overflow: hidden;
-  background: var(--envy-background);
+  /* Transparent so the compositor can blur whatever the surfaces don't cover.
+     #app (and the popover/pop-out bodies) carry the themed, alpha'd fill. */
+  background: transparent;
   color: var(--envy-text);
-  font-family: system-ui, sans-serif;
+  font-family: var(--envy-font-family);
+  font-weight: var(--envy-font-weight);
+  /* `auto` keeps LCD subpixel AA. Forcing `antialiased` is grayscale and
+     reads softer on a 1× panel. Kerning off because the default face is mono
+     and fractional advances are how WebKit blurs a grid of glyphs. */
+  -webkit-font-smoothing: auto;
+  text-rendering: optimizeLegibility;
+  font-synthesis: none;
+  font-kerning: none;
+  -webkit-text-stroke: var(--envy-font-embolden) currentColor;
+}
+
+#app,
+body.popover,
+body.popout-window {
+  background: var(--envy-background);
 }
 
 /* --- App shell -----------------------------------------------------------
@@ -105,7 +129,7 @@ html, body {
   font: inherit;
   font-size: 15px;
   padding: 6px 10px;
-  border-radius: 8px;
+  border-radius: var(--envy-radius);
   border: 1px solid color-mix(in srgb, var(--envy-marker) 55%, transparent);
   background: color-mix(in srgb, var(--envy-marker) 12%, transparent);
   color: var(--envy-text);
@@ -725,7 +749,7 @@ body.bold-file-list .row-date { font-weight: 700; }
 
 body.popover {
   border: 1px solid color-mix(in srgb, var(--envy-marker) 70%, transparent);
-  border-radius: 8px;
+  border-radius: var(--envy-radius-lg);
   overflow: hidden;
 }
 #pinned-app { display: flex; flex-direction: column; height: 100%; }
@@ -999,10 +1023,10 @@ body.popout-window {
   z-index: 20;
   min-width: 200px;
   padding: 4px;
-  border-radius: 8px;
+  border-radius: var(--envy-radius);
   background: var(--envy-title-bar-background);
   border: 1px solid color-mix(in srgb, var(--envy-marker) 55%, transparent);
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
 }
 #context-menu.hidden { display: none; }
 
@@ -1046,10 +1070,10 @@ body.popout-window {
   max-height: 60vh;
   overflow-y: auto;
   padding: 4px;
-  border-radius: 8px;
+  border-radius: var(--envy-radius);
   background: var(--envy-title-bar-background);
   border: 1px solid color-mix(in srgb, var(--envy-marker) 55%, transparent);
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
 }
 .context-submenu.hidden { display: none; }
 .context-submenu.flip { left: auto; right: 100%; }
@@ -1148,7 +1172,7 @@ body.popout-window {
   align-items: baseline;
 }
 .reference-syntax {
-  font-family: ui-monospace, monospace;
+  font-family: var(--envy-mono-family);
   font-size: 12px;
   padding: 1px 5px;
   border-radius: 4px;
@@ -1218,7 +1242,7 @@ body.popout-window {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.45);
+  background: color-mix(in srgb, var(--envy-background) 45%, transparent);
   z-index: 10;
 }
 #settings.hidden { display: none; }
@@ -1228,10 +1252,10 @@ body.popout-window {
   max-height: 85vh;
   overflow-y: auto;
   padding: 18px 22px 22px;
-  border-radius: 12px;
+  border-radius: var(--envy-radius-lg);
   background: var(--envy-title-bar-background);
   border: 1px solid color-mix(in srgb, var(--envy-marker) 45%, transparent);
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.4);
 }
 #settings-panel header {
   display: flex;
@@ -1299,7 +1323,7 @@ body.popout-window {
 }
 .shortcut-label { flex: 1; min-width: 0; font-size: 12.5px; }
 .shortcut-key {
-  font-family: ui-monospace, monospace;
+  font-family: var(--envy-mono-family);
   font-size: 11px;
   min-width: 12ch;
   padding: 3px 8px;
@@ -1331,6 +1355,9 @@ body.popout-window {
   background: var(--envy-background);
   color: var(--envy-text);
 }
+#settings-panel input#setting-font-custom {
+  width: 22ch;
+}
 /* A number field paired with a unit dropdown, kept together at the row's right
    edge (the group takes the auto margin so the two don't drift apart). */
 #settings-panel .setting-inline-group {
@@ -1354,7 +1381,7 @@ body.popout-window {
   text-align: right;
 }
 #settings-panel code {
-  font-family: ui-monospace, monospace;
+  font-family: var(--envy-mono-family);
   font-size: 0.92em;
   padding: 0 3px;
   border-radius: 3px;
@@ -1369,17 +1396,17 @@ body.popout-window {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.45);
+  background: color-mix(in srgb, var(--envy-background) 45%, transparent);
   z-index: 30;
 }
 #prompt.hidden { display: none; }
 #prompt-panel {
   width: min(360px, 88vw);
   padding: 18px 20px 16px;
-  border-radius: 12px;
+  border-radius: var(--envy-radius-lg);
   background: var(--envy-title-bar-background);
   border: 1px solid color-mix(in srgb, var(--envy-marker) 45%, transparent);
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.4);
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -1393,7 +1420,7 @@ body.popout-window {
   font: inherit;
   font-size: 13px;
   padding: 6px 9px;
-  border-radius: 7px;
+  border-radius: var(--envy-radius);
   border: 1px solid color-mix(in srgb, var(--envy-marker) 55%, transparent);
   background: var(--envy-background);
   color: var(--envy-text);
@@ -1582,7 +1609,7 @@ body.popout-window {
   background: color-mix(in srgb, var(--envy-due-overdue) 18%, transparent);
 }
 
-.cm-editor { background: var(--envy-background); height: 100%; }
+.cm-editor { background: transparent; height: 100%; }
 .cm-editor.cm-focused { outline: none; }
 /* Note text is the system UI face, matching the Mac theme's "SF Pro Text"
    default. Both come from the theme, so the customization settings can drive
@@ -1596,8 +1623,14 @@ body.popout-window {
 .cm-editor .cm-scroller {
   font-family: var(--envy-font-family);
   font-size: var(--envy-font-size);
-  line-height: 1.6;
+  font-weight: var(--envy-font-weight);
+  line-height: var(--envy-line-height, 24px);
+  -webkit-text-stroke: var(--envy-font-embolden) currentColor;
   padding: 20px 28px 40vh;
+}
+/* Real Bold is already heavier; the Regular hairline would fatten it twice. */
+.envy-bold, .envy-h1, .envy-h2 {
+  -webkit-text-stroke: 0;
 }
 /* CodeMirror injects its own stylesheet at runtime, *after* this file, so a
    bare `.cm-cursor` rule here loses on equal specificity. `.cm-editor
@@ -1650,7 +1683,7 @@ body.popout-window {
    "this is literal", which is exactly what monospace is for. Slightly smaller
    because monospace faces run visually larger at the same px. */
 .envy-code, .envy-code-block {
-  font-family: ui-monospace, monospace;
+  font-family: var(--envy-mono-family);
   font-size: 0.92em;
   background: var(--envy-code-background);
 }

@@ -26,7 +26,7 @@ import {
   loadCompletionSources,
   type CompletionSources,
 } from './completion'
-import { applyTheme, enviousDark, enviousLight } from './theme'
+import { enviousDark, initAppearance } from './theme'
 
 // This window is where the silent-failure pattern first bit — see `hide()`
 // below. Its own entry point, so it needs its own handler; the main window's
@@ -180,14 +180,7 @@ async function load() {
   })
 }
 
-const darkQuery = window.matchMedia('(prefers-color-scheme: dark)')
-function syncTheme() {
-  const stored = localStorage.getItem('appearanceMode') ?? 'system'
-  const dark = stored === 'system' ? darkQuery.matches : stored === 'dark'
-  applyTheme(dark ? enviousDark : enviousLight)
-  document.documentElement.style.colorScheme = dark ? 'dark' : 'light'
-}
-darkQuery.addEventListener('change', syncTheme)
+void initAppearance(() => applyPopoverZoom())
 
 // Flush before the window goes away — hiding is the normal way this closes,
 // and a pending debounce would otherwise be dropped along with it.
@@ -293,10 +286,9 @@ try {
 let popoverZoom = Number(localStorage.getItem('menuBarPopoverFontZoom') ?? '0')
 function applyPopoverZoom() {
   const base = Number.parseFloat(enviousDark.fontSize)
-  document.documentElement.style.setProperty(
-    '--envy-font-size',
-    `${(base + popoverZoom).toFixed(2)}px`,
-  )
+  const px = Math.max(9, Math.round(base + popoverZoom))
+  document.documentElement.style.setProperty('--envy-font-size', `${px}px`)
+  document.documentElement.style.setProperty('--envy-line-height', `${Math.round(px * 1.6)}px`)
   localStorage.setItem('menuBarPopoverFontZoom', String(popoverZoom))
   view.requestMeasure()
 }
@@ -329,6 +321,5 @@ window.addEventListener('keydown', (e) => {
 // swapped for a different one, since this window was last visible.
 void listen('pinned-note-changed', () => void load())
 
-syncTheme()
 void load()
 view.focus()

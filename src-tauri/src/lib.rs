@@ -16,6 +16,8 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 use tauri::{Emitter, Manager, State, WebviewWindow};
 use tauri_plugin_autostart::ManagerExt as AutostartManagerExt;
 
+mod omarchy;
+
 /// A note as the frontend sees it. The store's `Note` isn't serialized
 /// directly — its derived values are lazy and private, and the UI wants them
 /// resolved (title, preview, due) rather than the raw content alone.
@@ -1863,6 +1865,7 @@ fn show_pinned_window(app: &tauri::AppHandle) {
     .decorations(false)
     .always_on_top(true)
     .skip_taskbar(true)
+    .transparent(true)
     .build();
     if let Err(e) = built {
         eprintln!("could not open the pinned-note window: {e}");
@@ -1971,6 +1974,7 @@ async fn pop_out_note(id: String, inner_size: Option<(f64, f64)>, app: tauri::Ap
                 // and stays out of the taskbar so a handful don't clutter it.
                 .always_on_top(true)
                 .skip_taskbar(true)
+                .transparent(true)
                 .build();
                 match built {
                     Ok(window) => {
@@ -2237,6 +2241,7 @@ pub fn run() {
             setup_tray(app.handle())?;
             // Re-assert the remembered on-top state now the window exists.
             apply_keep_on_top(app.handle(), persisted_keep_on_top(app.handle()));
+            omarchy::spawn_watcher(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -2306,6 +2311,7 @@ pub fn run() {
             detect_kindle_clippings,
             import_kindle_clippings,
             forget_kindle_history,
+            omarchy::omarchy_appearance,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

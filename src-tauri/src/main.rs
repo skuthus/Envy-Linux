@@ -4,6 +4,8 @@
 fn main() {
     #[cfg(target_os = "linux")]
     linux_webkit_workarounds();
+    #[cfg(target_os = "linux")]
+    linux_font_rendering();
     envy_linux_lib::run()
 }
 
@@ -28,5 +30,35 @@ fn linux_webkit_workarounds() {
         // SAFETY: called on the main thread before any other thread exists, so
         // nothing can be reading the environment concurrently.
         unsafe { std::env::set_var(VAR, "1") };
+    }
+}
+
+/// Snap FreeType to full-hinted LCD rasterization before GTK/WebKit start.
+/// FONTCONFIG_FILE replaces the config search path, so the file we write
+/// includes /etc/fonts/fonts.conf and therefore the user's Omarchy prepend.
+#[cfg(target_os = "linux")]
+fn linux_font_rendering() {
+    use std::path::PathBuf;
+
+    if std::env::var_os("FONTCONFIG_FILE").is_none() {
+        let dir = std::env::var_os("XDG_RUNTIME_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir);
+        let path = dir.join("envy-fontconfig.conf");
+        if std::fs::write(&path, include_str!("../../linux/fonts.conf")).is_ok() {
+            // SAFETY: main thread, before other threads exist.
+            unsafe { std::env::set_var("FONTCONFIG_FILE", &path) };
+        }
+    }
+
+    if std::env::var_os("FREETYPE_PROPERTIES").is_none() {
+        // v40 is the subpixel interpreter; stem darkening fattens glyphs and
+        // reads as blur at 15px on a 1× panel.
+        unsafe {
+            std::env::set_var(
+                "FREETYPE_PROPERTIES",
+                "truetype:interpreter-version=40 cff:no-stem-darkening=1 autofitter:no-stem-darkening=1",
+            )
+        };
     }
 }

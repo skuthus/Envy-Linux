@@ -38,7 +38,7 @@ import {
 } from './input'
 import { editorCompletion, completionSources, ghostRemainderForTest } from './completion'
 import { listEditing, listContinuation, isListLine, renumberEdits } from './lists'
-import { applyTheme, enviousDark, enviousLight } from './theme'
+import { applyStoredAppearance, enviousDark, initAppearance } from './theme'
 import { createMiniNoteEditor, type MiniNoteEditor } from './mininote'
 import { renderReference, type ReferenceTab } from './reference'
 import { initKindleImport } from './kindle'
@@ -1158,7 +1158,9 @@ const settings = {
   showDateModified: boolSetting('showDateModified', true),
   showDueSort: boolSetting('showDueSort', true),
   includeSubfolders: boolSetting('indexIncludeSubfolders', false),
-  theme: localStorage.getItem('appearanceMode') ?? 'system',
+  theme: localStorage.getItem('appearanceMode') ?? 'omarchy',
+  fontSource: localStorage.getItem('uiFontSource') ?? 'omarchy',
+  fontCustom: localStorage.getItem('uiFontCustom') ?? '',
   moveFocusToEditorOnEnter: boolSetting('moveFocusToEditorOnEnter', true),
   dateDisplayStyle: localStorage.getItem('dateDisplayStyle') ?? 'smart',
   // Whether the Inbox exists at all. Off, there is no capture queue: no badge,
@@ -1918,10 +1920,11 @@ let editorZoom = Number(localStorage.getItem('editorFontZoom') ?? '1')
 
 function applyZoom() {
   const base = Number.parseFloat(enviousDark.fontSize)
-  document.documentElement.style.setProperty(
-    '--envy-font-size',
-    `${(base * editorZoom).toFixed(2)}px`,
-  )
+  // Whole pixels: a 15×1.15 = 17.25px face is the usual WebKit softness.
+  const px = Math.max(9, Math.round(base * editorZoom))
+  const root = document.documentElement.style
+  root.setProperty('--envy-font-size', `${px}px`)
+  root.setProperty('--envy-line-height', `${Math.round(px * 1.6)}px`)
   saveSetting('editorFontZoom', editorZoom)
   view.requestMeasure()
 }
@@ -3727,18 +3730,16 @@ void listen('pinned-note-changed', async () => {
   renderList()
 })
 
-// Envious ships a light and a dark face. Following the OS is the default —
-// `AppearanceMode.system` on the Mac — but an explicit choice pins it.
+// Follow Omarchy by default. Dark / Light / System pin the Envious faces as
+// a Settings override; System still tracks prefers-color-scheme.
 const darkQuery = window.matchMedia('(prefers-color-scheme: dark)')
 function syncTheme() {
-  // Every color is a CSS variable, so swapping the token set is the whole
-  // switch — no light-mode stylesheet to keep in step.
-  const dark = settings.theme === 'system' ? darkQuery.matches : settings.theme === 'dark'
-  applyTheme(dark ? enviousDark : enviousLight)
-  // Without this the engine paints *native* controls for a light page —
-  // scrollbars, selects, checkboxes — regardless of what the CSS says, which
-  // is why the scrollbars came out white on a dark editor.
-  document.documentElement.style.colorScheme = dark ? 'dark' : 'light'
+  applyStoredAppearance()
+  applyZoom()
+}
+function syncFontSettingsRow() {
+  const custom = settings.fontSource === 'custom'
+  el('setting-font-custom-row').classList.toggle('hidden', !custom)
 }
 darkQuery.addEventListener('change', syncTheme)
 
@@ -3984,6 +3985,9 @@ function openSettings() {
   updateTemplateDatePreview()
   dropdown('setting-layout').value = layoutMode
   dropdown('setting-theme').value = settings.theme
+  dropdown('setting-font').value = settings.fontSource
+  el<HTMLInputElement>('setting-font-custom').value = settings.fontCustom
+  syncFontSettingsRow()
   settingsEl.classList.remove('hidden')
 }
 
@@ -4357,6 +4361,17 @@ el<HTMLSelectElement>('setting-theme').onchange = (e) => {
   saveSetting('appearanceMode', settings.theme)
   syncTheme()
 }
+el<HTMLSelectElement>('setting-font').onchange = (e) => {
+  settings.fontSource = (e.target as HTMLSelectElement).value
+  saveSetting('uiFontSource', settings.fontSource)
+  syncFontSettingsRow()
+  syncTheme()
+}
+el<HTMLInputElement>('setting-font-custom').oninput = (e) => {
+  settings.fontCustom = (e.target as HTMLInputElement).value
+  saveSetting('uiFontCustom', settings.fontCustom)
+  syncTheme()
+}
 el('settings-open-folder').onclick = () => void invoke('reveal_index')
 
 /// The moment a trash emptied at `fromMs` next falls due, adding the interval
@@ -4499,7 +4514,7 @@ try {
 }
 
 async function boot() {
-  syncTheme()
+  await initAppearance(() => applyZoom())
   // The on-top state is a Rust-side preference (toggled from the tray), so read
   // the remembered value once at startup for the hide-on-focus-loss guard.
   try {

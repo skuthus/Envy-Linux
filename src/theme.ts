@@ -1,31 +1,27 @@
-// Skyler's "Envious" house palette, transcribed from Theme.swift.
-// Roles are consistent across both faces (per the source comment):
-//   blue   wiki-links, and the note list's selected row
-//   red    the editor's text selection, and overdue
-//   green  tags and ticked checkboxes
-//   amber  due-soon, and search matches
-//
-// The dark greys are white at graded alpha (0.847 body, 0.549 secondary,
-// 0.247 markers) rather than fixed RGB — opaque greys are only correct at one
-// blur strength, and alpha keeps the hierarchy over whatever the window is
-// actually letting through. Preserved here for the same reason: Mica/Acrylic
-// on Win11 is exactly the same problem.
+import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 
-/// The Windows counterpart to the Mac theme's "SF Pro Text" default: the
-/// system UI face, not a monospace one. Segoe UI Variable is Windows 11's;
-/// Segoe UI is the Windows 10 fallback, and `system-ui` covers anything else.
-///
-/// Note text uses this. Code spans and fenced blocks deliberately do not — a
-/// backtick means "this is literal", and proportional code is harder to read
-/// for exactly the reasons monospace exists.
-export const SYSTEM_UI_FONT =
-  "system-ui, sans-serif"
+// Envy-Omarchy: Envy's named color roles, filled either from the current
+// Omarchy theme (`colors.toml`) or from the Envious light/dark faces kept as
+// a Settings override.
+//
+// Roles stay the same as Theme.swift so the styler doesn't care which palette
+// is driving them:
+//   blue/accent   wiki-links, and the note list's selected row
+//   red           the editor's text selection, and overdue
+//   green         tags and ticked checkboxes
+//   yellow/amber  due-soon, and search matches
+
+export const SYSTEM_UI_FONT = "system-ui, sans-serif"
 export const MONO_FONT = "ui-monospace, monospace"
 
 export interface EnvyTheme {
   /// Font is part of the theme on the Mac (`Theme.fontName` / `fontSize`) and
   /// applies to both faces — unlike colors, it isn't a light/dark concern.
   fontFamily: string
+  /// Face for backticks and fenced blocks. Follows the UI font when that font
+  /// is already mono (the Omarchy default); otherwise a dedicated mono stack.
+  monoFamily: string
   fontSize: string
   text: string
   background: string
@@ -39,13 +35,6 @@ export interface EnvyTheme {
   tagBackground: string
   highlight: string
   /// Ink for text sitting on `highlight`.
-  ///
-  /// The Mac computes this at style time, flipping to black or white when the
-  /// existing foreground would be unreadable over the highlight. CSS cannot
-  /// measure contrast, so it becomes a paired token instead: one deliberate
-  /// choice per theme rather than a calculation. Amber highlights want dark
-  /// ink in both faces, which is why both values agree today — a theme with a
-  /// dark highlight would set it differently.
   highlightText: string
   /// The note list's selection highlight.
   selection: string
@@ -54,10 +43,6 @@ export interface EnvyTheme {
   /// the list row, red for selected text).
   selectedText: string
   focusHighlight: string
-  /// `fileListBackground` is its own token rather than reusing `background`
-  /// because on the Mac a null value means "let the window's blur show
-  /// through" — an absence, not a color. Same distinction will matter here
-  /// once Mica/Acrylic is wired up.
   fileListBackground: string
   blockquote: string
   completedTask: string
@@ -66,8 +51,14 @@ export interface EnvyTheme {
   titleBarBackground: string
 }
 
+export interface OmarchyAppearance {
+  colors: Record<string, string>
+  font: string
+}
+
 export const enviousDark: EnvyTheme = {
   fontFamily: SYSTEM_UI_FONT,
+  monoFamily: MONO_FONT,
   // 15px rather than the Mac's 13: Segoe UI has a smaller x-height than SF Pro
   // Text, so matching the number would read noticeably smaller than Envy does
   // on a Mac.
@@ -95,14 +86,9 @@ export const enviousDark: EnvyTheme = {
   titleBarBackground: 'rgb(38, 38, 38)',
 }
 
-// Same roles, different hues. Every accent above was mixed for a near-black
-// ground and three fail on paper — the blue and green lose contrast, the amber
-// vanishes — so each is darkened until it clears. The two selections are the
-// real departure: in dark they're opaque and the light body text reads against
-// them; on paper, dark text on solid blue or red is unreadable, so both become
-// tints.
 export const enviousLight: EnvyTheme = {
   fontFamily: SYSTEM_UI_FONT,
+  monoFamily: MONO_FONT,
   fontSize: '15px',
   text: 'rgba(0, 0, 0, 0.85)',
   background: 'rgb(250, 250, 248)',
@@ -131,5 +117,187 @@ export function applyTheme(theme: EnvyTheme) {
   const root = document.documentElement.style
   for (const [key, value] of Object.entries(theme)) {
     root.setProperty(`--envy-${key.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase())}`, value)
+  }
+}
+
+export function cssFontStack(family: string): string {
+  const name = family.trim()
+  if (!name) return MONO_FONT
+  const quoted = /[\s,]/.test(name) && !name.startsWith('"') ? `"${name.replaceAll('"', '')}"` : name
+  return `${quoted}, ui-monospace, monospace`
+}
+
+function pick(colors: Record<string, string>, keys: string[], fallback: string): string {
+  for (const key of keys) {
+    const value = colors[key]
+    if (value) return value
+  }
+  return fallback
+}
+
+function hexToRgba(hex: string, alpha: number): string {
+  const raw = hex.trim().replace('#', '')
+  const h =
+    raw.length === 3
+      ? raw
+          .split('')
+          .map((c) => c + c)
+          .join('')
+      : raw.slice(0, 6)
+  if (h.length !== 6 || /[^0-9a-fA-F]/.test(h)) return hex
+  const r = Number.parseInt(h.slice(0, 2), 16)
+  const g = Number.parseInt(h.slice(2, 4), 16)
+  const b = Number.parseInt(h.slice(4, 6), 16)
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`
+}
+
+function toAlpha(color: string, alpha: number): string {
+  const trimmed = color.trim()
+  if (trimmed.startsWith('rgba(')) {
+    return trimmed.replace(/rgba\(([^,]+),([^,]+),([^,]+),\s*[\d.]+\)/, `rgba($1,$2,$3, ${alpha})`)
+  }
+  if (trimmed.startsWith('rgb(')) {
+    return trimmed.replace('rgb(', 'rgba(').replace(')', `, ${alpha})`)
+  }
+  if (trimmed.startsWith('#')) return hexToRgba(trimmed, alpha)
+  return color
+}
+
+function isLightMode(colors: Record<string, string>): boolean {
+  const mode = (colors.mode ?? colors.theme_type ?? '').toLowerCase()
+  return mode === 'light'
+}
+
+/// Hyprland blur only shows through if the surfaces themselves have alpha —
+/// an opaque `rgb()` slab hides the wallpaper even with a transparent window.
+function withSurfaceAlpha(theme: EnvyTheme, light: boolean): EnvyTheme {
+  // High enough that glyph coverage doesn't mix with the wallpaper blur —
+  // that's the usual "WebKit looks soft" look — but still short of opaque so
+  // Hyprland blur remains visible in the chrome.
+  const body = light ? 0.92 : 0.88
+  const chrome = light ? 0.94 : 0.90
+  const code = light ? 0.82 : 0.72
+  return {
+    ...theme,
+    background: toAlpha(theme.background, body),
+    fileListBackground: toAlpha(theme.fileListBackground, body),
+    titleBarBackground: toAlpha(theme.titleBarBackground, chrome),
+    codeBackground: toAlpha(theme.codeBackground, code),
+  }
+}
+
+export function omarchyToEnvy(colors: Record<string, string>, fontFamily: string): EnvyTheme {
+  const light = isLightMode(colors)
+  const background = pick(colors, ['background', 'bg'], '#1a1b26')
+  const foreground = pick(colors, ['foreground', 'fg'], '#c0caf5')
+  const muted = pick(colors, ['muted', 'dark_foreground', 'dark_fg'], light ? '#6c6c6c' : '#565f89')
+  const accent = pick(colors, ['accent', 'blue'], '#7aa2f7')
+  const red = pick(colors, ['red'], '#f7768e')
+  const green = pick(colors, ['green'], '#9ece6a')
+  const yellow = pick(colors, ['yellow'], '#e0af68')
+  const darker = pick(colors, ['dark_background', 'dark_bg', 'darker_background'], background)
+  const lighter = pick(colors, ['lighter_background', 'lighter_bg'], light ? '#e8e8e8' : '#24283b')
+  const bright = pick(colors, ['bright_foreground', 'bright_fg', 'light_foreground'], foreground)
+  const darkFg = pick(colors, ['dark_foreground', 'dark_fg'], muted)
+
+  return withSurfaceAlpha(
+    {
+      fontFamily,
+      monoFamily: fontFamily,
+      fontSize: '15px',
+      text: foreground,
+      background,
+      marker: muted,
+      link: accent,
+      due: bright,
+      dueSoon: yellow,
+      dueOverdue: red,
+      codeBackground: lighter,
+      tag: green,
+      tagBackground: hexToRgba(green.startsWith('#') ? green : '#9ece6a', 0.16),
+      highlight: yellow,
+      highlightText: darker,
+      selection: light ? hexToRgba(accent.startsWith('#') ? accent : '#7aa2f7', 0.18) : accent,
+      selectedText: light
+        ? hexToRgba(red.startsWith('#') ? red : '#f7768e', 0.22)
+        : hexToRgba(red.startsWith('#') ? red : '#f7768e', 0.45),
+      focusHighlight: hexToRgba(accent.startsWith('#') ? accent : '#7aa2f7', 0.28),
+      fileListBackground: darker,
+      blockquote: darkFg,
+      completedTask: darkFg,
+      footnote: darkFg,
+      checkedCheckbox: green,
+      titleBarBackground: darker,
+    },
+    light,
+  )
+}
+
+let omarchy: OmarchyAppearance | null = null
+let appearanceListener: (() => void) | null = null
+
+export function currentOmarchy(): OmarchyAppearance | null {
+  return omarchy
+}
+
+export function setOmarchyAppearance(next: OmarchyAppearance) {
+  omarchy = next
+  appearanceListener?.()
+}
+
+function resolveFont(omarchyFont: string | undefined): string {
+  const source = localStorage.getItem('uiFontSource') ?? 'omarchy'
+  const custom = localStorage.getItem('uiFontCustom') ?? ''
+  if (source === 'custom' && custom.trim()) return cssFontStack(custom)
+  if (omarchyFont) return cssFontStack(omarchyFont)
+  return MONO_FONT
+}
+
+function prefersDark(): boolean {
+  return window.matchMedia('(prefers-color-scheme: dark)').matches
+}
+
+export function applyStoredAppearance() {
+  const mode = localStorage.getItem('appearanceMode') ?? 'omarchy'
+  const font = resolveFont(omarchy?.font)
+  const omarchyReady = Boolean(omarchy?.colors?.background)
+  const useOmarchy = (mode === 'omarchy' || !mode) && omarchyReady
+
+  let theme: EnvyTheme
+  let dark: boolean
+  if (useOmarchy && omarchy) {
+    theme = omarchyToEnvy(omarchy.colors, font)
+    dark = !isLightMode(omarchy.colors)
+  } else {
+    dark = mode === 'system' || mode === 'omarchy' ? prefersDark() : mode !== 'light'
+    theme = withSurfaceAlpha({ ...(dark ? enviousDark : enviousLight), fontFamily: font, monoFamily: font }, !dark)
+  }
+
+  applyTheme(theme)
+  document.documentElement.style.colorScheme = dark ? 'dark' : 'light'
+  document.documentElement.classList.toggle('theme-light', !dark)
+  document.documentElement.classList.toggle('theme-dark', dark)
+}
+
+/// Subscribe to Omarchy theme/font changes and apply once the first payload
+/// arrives. `onApply` runs after every apply so a window can refresh zoom.
+export async function initAppearance(onApply?: () => void) {
+  appearanceListener = () => {
+    applyStoredAppearance()
+    onApply?.()
+  }
+  applyStoredAppearance()
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    appearanceListener?.()
+  })
+  try {
+    omarchy = await invoke<OmarchyAppearance>('omarchy_appearance')
+    appearanceListener()
+    await listen<OmarchyAppearance>('omarchy-appearance', (event) => {
+      omarchy = event.payload
+      appearanceListener?.()
+    })
+  } catch {
+    // Outside Tauri (plain browser) — Envious faces still apply.
   }
 }

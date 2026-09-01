@@ -19,4 +19,11 @@ o.window({ class = "envy-linux", title = "^Envy$" }, {
   workspace = "special:envy silent",
 })
 
+-- Omarchy's default window opacity (0.985 / 0.96) multiplies every glyph.
+-- Drop it so Envy can be as sharp as an opaque terminal.
+o.window("envy-linux", {
+  tag = "-default-opacity",
+  opacity = "1 override 1 override 1 override",
+})
+
 o.bind("CTRL + ALT + RETURN", "Envy", envy_summon)

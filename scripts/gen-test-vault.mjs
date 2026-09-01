@@ -167,10 +167,11 @@ function inline(s) {
   return words.join(' ')
 }
 
-function body(note) {
+function body() {
   const parts = []
   const kind = rand()
-  if (chance(0.35)) parts.push(`# ${note.title}\n`)
+  // The filename *is* the title. Never open a note with `# Title` matching
+  // the stem — that duplicates the list and fights Envy's model.
   if (chance(0.3)) parts.push(`${tag()} ${chance(0.5) ? tag() : ''}`.trim() + '\n')
   const paras = int(1, kind < 0.3 ? 2 : 6)
   for (let p = 0; p < paras; p++) {
@@ -223,11 +224,11 @@ fs.mkdirSync(path.join(dir, 'Templates'), { recursive: true })
 for (const [name, rgb] of images) fs.writeFileSync(path.join(dir, 'Attachments', name), png(int(64, 320), int(48, 240), rgb))
 
 const templates = {
-  'Meeting Notes': '# {{title}}\n\nAttendees:\n\nAgenda:\n- \n\nDecisions:\n- \n\nActions:\n- [ ] \n',
-  'Daily Note': '# {{title}}\n\n## Today\n- [ ] \n\n## Notes\n\n#journal\n',
-  'Book Notes': '# {{title}}\n\nAuthor:\nStarted: @today\n\n## Summary\n\n## Highlights\n> \n\n#reading #book\n',
-  'Project Brief': '# {{title}}\n\n## Goal\n\n## Scope\n\n## Risks\n\n## Milestones\n- [ ] Kickoff @friday\n\n#project\n',
-  'Recipe': '# {{title}}\n\nServes:\nTime:\n\n## Ingredients\n- \n\n## Method\n1. \n\n#recipe #cooking\n',
+  'Meeting Notes': 'Attendees:\n\nAgenda:\n- \n\nDecisions:\n- \n\nActions:\n- [ ] \n',
+  'Daily Note': '## Today\n- [ ] \n\n## Notes\n\n#journal\n',
+  'Book Notes': 'Author:\nStarted: @today\n\n## Summary\n\n## Highlights\n> \n\n#reading #book\n',
+  'Project Brief': '## Goal\n\n## Scope\n\n## Risks\n\n## Milestones\n- [ ] Kickoff @friday\n\n#project\n',
+  'Recipe': 'Serves:\nTime:\n\n## Ingredients\n- \n\n## Method\n1. \n\n#recipe #cooking\n',
 }
 for (const [t, c] of Object.entries(templates)) fs.writeFileSync(path.join(dir, 'Templates', `${t}.md`), c)
 
@@ -237,7 +238,7 @@ const DAY = 86400000
 let written = 0
 for (const note of notes) {
   const file = path.join(dir, note.folder, `${note.title.replace(/[\\/:*?"<>|]/g, '-')}.md`)
-  fs.writeFileSync(file, body(note))
+  fs.writeFileSync(file, body())
   const r = rand()
   const ageDays = r < 0.35 ? int(0, 7) : r < 0.6 ? int(8, 60) : r < 0.85 ? int(61, 365) : int(366, 1100)
   const mtime = new Date(now - ageDays * DAY - int(0, DAY))
@@ -249,7 +250,7 @@ for (const note of notes) {
 const awkward = ['Note with #hash in title', 'Unicode – dashes — and “quotes”', 'Émigré café résumé', '日本語のノート', 'trailing space ', 'Really really really really really really really really really really long title that will not fit in the list row at all', 'Note.with.dots', '(parens) and [brackets]']
 for (const t of awkward) {
   const file = path.join(dir, `${t.replace(/[\\/:*?"<>|]/g, '-').trim()}.md`)
-  fs.writeFileSync(file, `# ${t}\n\n${paragraph()} ${link()} ${tag()}\n`)
+  fs.writeFileSync(file, `${paragraph()} ${link()} ${tag()}\n`)
   written++
 }
 
