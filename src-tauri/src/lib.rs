@@ -5,6 +5,7 @@
 //! serializes across the boundary.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -65,11 +66,29 @@ impl NoteDto {
             due: note.due().map(|d| d.to_string()),
             due_count: note.due_date_count(),
             tags: note.tags().iter().cloned().collect(),
-            is_inbox: envy_core::search::is_inbox_note(note),
+            // With the Inbox turned off a note in `Inbox/` is just a note in a
+            // folder — no amber dot, no fleeting banner.
+            is_inbox: inbox_enabled() && envy_core::search::is_inbox_note(note),
             ai_provenance: format!("{:?}", note.ai_provenance()).to_lowercase(),
             has_unchecked_task: note.has_unchecked_task(),
         }
     }
+}
+
+/// Whether the Inbox feature is on (Mac 1.10.0 "Turn off the Inbox"),
+/// mirrored from the frontend's settings. Process-wide rather than a field on
+/// `AppState` because `NoteDto::from_note` — which every command that returns
+/// a note goes through — has no state handle, and threading one through would
+/// change its signature at every call site.
+static INBOX_ENABLED: AtomicBool = AtomicBool::new(true);
+
+fn inbox_enabled() -> bool {
+    INBOX_ENABLED.load(Ordering::Relaxed)
+}
+
+#[tauri::command]
+fn set_inbox_enabled(on: bool) {
+    INBOX_ENABLED.store(on, Ordering::Relaxed);
 }
 
 pub struct AppState {
@@ -282,7 +301,8 @@ fn index_directory(state: State<AppState>) -> String {
 fn search(query: String, state: State<AppState>) -> Vec<NoteDto> {
     let store = state.store.lock().unwrap();
     let root = store.directory().to_path_buf();
-    let ctx = SearchContext::now();
+    let mut ctx = SearchContext::now();
+    ctx.inbox_enabled = inbox_enabled();
     envy_core::filtered(store.notes(), &query, &ctx, Some(&root))
         .into_iter()
         .map(|n| NoteDto::from_note(n, false, &root))
@@ -895,6 +915,9 @@ fn all_titles(state: State<AppState>) -> Vec<String> {
 
 #[tauri::command]
 fn inbox_count(state: State<AppState>) -> usize {
+    if !inbox_enabled() {
+        return 0;
+    }
     state
         .store
         .lock()
@@ -952,13 +975,20 @@ fn submit_from_inbox(
         .ok_or_else(|| "that note is not in the Inbox".to_string())
 }
 
+/// Captures a fleeting note — or, with the Inbox turned off, a plain note at
+/// the root: the capture shortcut keeps working, it just has nowhere fleeting
+/// to put things.
 #[tauri::command]
 fn create_inbox_note(title: String, state: State<AppState>) -> Result<NoteDto, String> {
     state.mark_internal_write();
     let mut store = state.store.lock().unwrap();
     let root = store.directory().to_path_buf();
-    store
-        .create_inbox_note(&title)
+    let created = if inbox_enabled() {
+        store.create_inbox_note(&title)
+    } else {
+        store.create(&title)
+    };
+    created
         .map(|n| NoteDto::from_note(&n, true, &root))
         .map_err(|e| e.to_string())
 }
@@ -2108,6 +2138,7 @@ pub fn run() {
             save_template,
             create_inbox_note,
             inbox_count,
+            set_inbox_enabled,
             vault_counts,
             keep_on_top,
             all_tags,

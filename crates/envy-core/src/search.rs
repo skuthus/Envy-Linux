@@ -35,6 +35,11 @@ pub const INBOX_FOLDER_NAME: &str = "Inbox";
 pub struct SearchContext {
     pub now: DateTime<Local>,
     pub week_start: Weekday,
+    /// Whether the Inbox feature is on at all (Mac 1.10.0 "Turn off the
+    /// Inbox"). When off, the fleeting concept doesn't exist: `inbox:` and
+    /// `-inbox:` are consumed but inert, so a search behaves as though the
+    /// operator was never typed — trailing text still searches.
+    pub inbox_enabled: bool,
 }
 
 impl SearchContext {
@@ -42,6 +47,7 @@ impl SearchContext {
         Self {
             now: Local::now(),
             week_start: crate::due::DEFAULT_WEEK_START,
+            inbox_enabled: true,
         }
     }
 
@@ -537,13 +543,21 @@ impl GroupQuery {
         for token in tokenize(&lowered) {
             let t = token.as_str();
             if t == "-inbox:" {
-                q.inbox_excluded = true;
+                // With the inbox disabled the operator is inert (the fleeting
+                // concept doesn't exist), but the token is still consumed so it
+                // never leaks in as a literal free term.
+                if ctx.inbox_enabled {
+                    q.inbox_excluded = true;
+                }
             } else if let Some(rest) = t.strip_prefix("inbox:") {
                 // A bare "inbox:" scopes to fleeting notes; anything after the
                 // colon is ordinary search text within them, so it falls
                 // through to free terms like any other operator's trailing
-                // words.
-                q.inbox_only = true;
+                // words. Disabled: no scoping, but trailing text still
+                // searches.
+                if ctx.inbox_enabled {
+                    q.inbox_only = true;
+                }
                 if !rest.is_empty() {
                     q.free_terms.push(rest.to_string());
                 }
@@ -1085,6 +1099,7 @@ mod tests {
         SearchContext {
             now: Local.with_ymd_and_hms(2026, 7, 25, 12, 0, 0).unwrap(),
             week_start: Weekday::Sun,
+            inbox_enabled: true,
         }
     }
 
@@ -1264,6 +1279,36 @@ mod tests {
             note("Three", "bauhaus filed"),
         ];
         assert_eq!(titles(&notes, "inbox: bauhaus"), vec!["One"]);
+    }
+
+    /// With the inbox disabled, `inbox:`/`-inbox:` are inert: no scoping (all
+    /// notes returned), but the operator is still consumed so it doesn't leak
+    /// in as a literal free term; trailing text still searches.
+    #[test]
+    fn inbox_operator_is_inert_when_the_inbox_is_disabled() {
+        let notes = vec![
+            inbox_note("Fleeting one", "bauhaus"),
+            inbox_note("Fleeting two", "something else"),
+            note("Filed thought", "bauhaus"),
+        ];
+        let off = SearchContext {
+            inbox_enabled: false,
+            ..ctx()
+        };
+        let run = |q: &str| {
+            let mut t: Vec<String> = filtered(&notes, q, &off, None)
+                .into_iter()
+                .map(|n| n.title().to_string())
+                .collect();
+            t.sort();
+            t
+        };
+        let all = vec!["Filed thought", "Fleeting one", "Fleeting two"];
+        assert_eq!(run("inbox:"), all);
+        assert_eq!(run("-inbox:"), all);
+        assert_eq!(run("inbox: bauhaus"), vec!["Filed thought", "Fleeting one"]);
+        // Enabled, the same queries scope as before.
+        assert_eq!(titles(&notes, "-inbox:"), vec!["Filed thought"]);
     }
 
     #[test]
