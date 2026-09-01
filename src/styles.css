@@ -594,46 +594,6 @@ body.bold-file-list .row-date { font-weight: 700; }
 .row .inbox-dot,
 .row .trash-mark { line-height: 1; }
 
-/* --- Folder colours --------------------------------------------------------
-   One row per folder: its name, then the palette. The chosen swatch is ringed
-   rather than ticked, since the swatch itself is the value. */
-#folder-colors-empty.hidden { display: none; }
-#folder-colors h4 {
-  margin: 12px 0 6px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--envy-blockquote);
-}
-.folder-color-row {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 3px 0;
-}
-.folder-color-name {
-  flex: 1;
-  min-width: 0;
-  font-size: 12.5px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.folder-swatch {
-  flex: none;
-  width: 15px;
-  height: 15px;
-  padding: 0;
-  border-radius: 50%;
-  border: 2px solid transparent;
-  cursor: default;
-}
-.folder-swatch.active { border-color: var(--envy-text); }
-.folder-swatch.none {
-  background: none;
-  border: 1px dashed color-mix(in srgb, var(--envy-marker) 70%, transparent);
-}
-.folder-swatch.none.active { border: 2px solid var(--envy-text); }
-
 #settings-panel .setting-note {
   margin: 6px 0 0;
   font-size: 12px;

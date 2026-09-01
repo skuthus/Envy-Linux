@@ -2468,12 +2468,37 @@ function setFolderColor(folder: string, color: string | null) {
   if (color) all[folder] = color
   else delete all[folder]
   localStorage.setItem('folderColors', JSON.stringify(all))
+  // Every folder is born coloured, so "Remove Color" rolls a fresh preset
+  // rather than leaving a gap — the same thing the Mac's rebuild does the
+  // moment the preference changes.
+  if (!color) ensureFolderColors([folder])
+  repaintFolderColors()
+}
+
+/// Repaints everything keyed on a folder's colour: the list rows and the open
+/// note's title-bar chip, in step rather than waiting for the note to be
+/// reopened.
+function repaintFolderColors() {
   renderList()
-  renderFolderColorSettings()
-  // The open note's title-bar chip is keyed on the same colour, so recolour it
-  // in step rather than waiting for the note to be reopened.
   const open = results.find((n) => n.id === openNoteId)
   renderTitleBarFolder(open?.subfolder ?? null)
+}
+
+/// Every folder is born coloured, tag-style: any folder seen without a colour
+/// (newly created in Envy, made in a file manager, or predating this behaviour)
+/// gets a random preset, persisted — so its dot, and the dot's right-click
+/// recolour menu, always exist. Mirrors the Mac's rebuildFolderColors.
+function ensureFolderColors(folders: string[]) {
+  const all = folderColors()
+  let assigned = false
+  for (const folder of folders) {
+    if (all[folder]) continue
+    all[folder] = FOLDER_PRESETS[Math.floor(Math.random() * FOLDER_PRESETS.length)][1]
+    assigned = true
+  }
+  if (!assigned) return
+  localStorage.setItem('folderColors', JSON.stringify(all))
+  repaintFolderColors()
 }
 
 /// The colour menu for a folder's dot — the same palette as tags, plus a
@@ -2582,6 +2607,8 @@ async function renameFolderFlow(oldPath: string) {
   void invoke<string>('rename_folder', { oldPath, newPath: next })
     .then((newPath) => {
       migrateFolderColors(oldPath, newPath)
+      // A folder that somehow had no colour to carry across gets one now.
+      ensureFolderColors([newPath])
       return runSearch()
     })
     .catch((err) => {
@@ -2660,60 +2687,6 @@ function renderCatalog(kind: CatalogKind) {
   )
 }
 
-/// Settings → Folder Colors: one row per folder, with the palette and a way to
-/// clear it. Rebuilt on open rather than kept in step, since folders change from
-/// outside Envy as readily as from within.
-async function renderFolderColorSettings() {
-  const list = document.getElementById('folder-colors-list')!
-  const empty = document.getElementById('folder-colors-empty')!
-  if (!settings.includeSubfolders) {
-    list.replaceChildren()
-    empty.classList.remove('hidden')
-    return
-  }
-  let folders: string[] = []
-  try {
-    folders = await invoke<string[]>('list_subfolders')
-  } catch (err) {
-    console.error('could not list folders', err)
-  }
-  empty.classList.toggle('hidden', folders.length > 0)
-  if (!folders.length) {
-    empty.textContent = 'No subfolders yet. Right-click a note → Move to → New Folder…'
-    list.replaceChildren()
-    return
-  }
-
-  const colors = folderColors()
-  list.replaceChildren(
-    ...folders.map((folder) => {
-      const row = document.createElement('div')
-      row.className = 'folder-color-row'
-      const name = document.createElement('span')
-      name.className = 'folder-color-name'
-      name.textContent = folder
-      row.append(name)
-
-      for (const [label, hex] of FOLDER_PRESETS) {
-        const b = document.createElement('button')
-        b.type = 'button'
-        b.className = 'folder-swatch' + (colors[folder] === hex ? ' active' : '')
-        b.style.background = hex
-        b.title = label
-        b.onclick = () => setFolderColor(folder, hex)
-        row.append(b)
-      }
-      const clear = document.createElement('button')
-      clear.type = 'button'
-      clear.className = 'folder-swatch none' + (colors[folder] ? '' : ' active')
-      clear.title = 'No colour'
-      clear.onclick = () => setFolderColor(folder, null)
-      row.append(clear)
-      return row
-    }),
-  )
-}
-
 /// Moves `ids` into `subfolder` (null = the Index root), the selection following
 /// the notes across the id changes a move makes — one note from the single-note
 /// menu, the whole selection from the bulk menu.
@@ -2746,6 +2719,8 @@ async function moveNotes(ids: string[], subfolder: string | null) {
     if (anchorId === from) anchorId = to
     if (multiSelected.delete(from)) multiSelected.add(to)
   }
+  // A folder that didn't exist a moment ago is born coloured, like the rest.
+  if (subfolder && moved.size > 0) ensureFolderColors([subfolder])
   const primary = results[highlighted]?.id
   const primaryAfter = primary ? (moved.get(primary) ?? primary) : null
   await runSearch()
@@ -3183,6 +3158,9 @@ async function refreshCompletionSources() {
     ])
     knownTags = tags
     knownFolders = folders
+    // Colours only mean anything once folders are listed — the same gate the
+    // Mac's rebuildFolderColors keeps.
+    if (settings.includeSubfolders) ensureFolderColors(folders)
     // Routes through the setter so the ghost-link title set and a restyle come
     // along with the new titles.
     updateKnownTitles(titles)
@@ -3830,7 +3808,6 @@ function openSettings() {
   checkbox('setting-date').checked = settings.showDateModified
   checkbox('setting-due').checked = settings.showDueSort
   checkbox('setting-subfolders').checked = settings.includeSubfolders
-  void renderFolderColorSettings()
   checkbox('setting-focus-editor').checked = settings.moveFocusToEditorOnEnter
   checkbox('setting-keep-pinned-visible').checked = settings.keepPinnedNotesVisible
   checkbox('setting-inbox-enabled').checked = settings.inboxEnabled
@@ -4239,9 +4216,6 @@ el<HTMLInputElement>('setting-subfolders').onchange = async (e) => {
   await runSearch()
   // Submit's folder arrow exists only while folders are listed.
   applyFleetingSubmitShape()
-  // Folder colours only mean anything once folders are listed, so the pane
-  // follows the toggle rather than waiting for Settings to be reopened.
-  await renderFolderColorSettings()
 }
 el<HTMLSelectElement>('setting-layout').onchange = (e) => {
   layoutMode = (e.target as HTMLSelectElement).value as LayoutMode
