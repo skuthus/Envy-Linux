@@ -1,0 +1,483 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Envy</title>
+    <script type="module" src="/src/main.ts" defer></script>
+  </head>
+
+  <body>
+    <div id="app">
+      <div id="search-bar">
+        <!-- Left of the field, and hidden entirely at zero: an empty inbox is
+             the goal state, and a permanent "0" would nag about nothing. -->
+        <button id="inbox-badge" class="hidden" type="button"></button>
+        <div id="search-wrap">
+          <!-- Sits behind the field, showing the rest of a matching tag as
+               ghost text. Not inside the input, which can't hold markup. -->
+          <div id="search-ghost" aria-hidden="true"></div>
+          <input
+            id="search"
+            type="text"
+            placeholder="Search or Create Note"
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </div>
+      </div>
+      <div id="panes">
+        <div id="list-pane">
+          <div id="list-header" role="row"></div>
+          <div id="list" role="listbox" aria-label="Notes"></div>
+        </div>
+        <div
+          id="divider"
+          role="separator"
+          aria-label="Resize panes"
+          tabindex="0"
+        ></div>
+        <div id="editor-pane">
+          <div id="note-title-bar">
+            <input
+              id="note-title"
+              type="text"
+              spellcheck="false"
+              autocomplete="off"
+              aria-label="Note title"
+              title="Click to rename. Links to this note are updated."
+            />
+            <!-- The open note's folder, when it sits in one. Click pivots to
+                 that folder's notes; right-click recolours it. -->
+            <span id="note-folder" class="hidden"></span>
+            <span id="note-tags"></span>
+            <span id="note-due"></span>
+            <!-- Only for a note still waiting in Inbox/. Reviewing one is a
+                 decision — file it or bin it — so both are one click away. -->
+            <span id="fleeting-actions" class="hidden">
+              <button id="fleeting-submit" type="button">Submit Note</button>
+              <button id="fleeting-delete" type="button" class="destructive">
+                Delete Note
+              </button>
+            </span>
+            <!-- Creating a note from a template is an explicit button, not a
+                 side effect of opening one to look at it. -->
+            <span id="template-actions" class="hidden">
+              <button id="template-create" type="button">Create Note from Template</button>
+            </span>
+          </div>
+          <div id="editor"></div>
+          <div id="empty-state">
+            Type to search. Press Return to open the top match, or create a note
+            from what you typed.
+          </div>
+          <!-- Trashed notes are shown, never edited: a note in the trash is a
+               record of something removed, and letting it be typed into would
+               make "restore" ambiguous about which version it restores. -->
+          <div id="trash-preview" class="hidden">
+            <div id="trash-preview-bar">
+              <span id="trash-preview-title"></span>
+              <button id="trash-restore" type="button">Restore</button>
+              <button id="trash-reveal" type="button">Reveal in Explorer</button>
+              <button id="trash-delete" type="button" class="destructive">Delete</button>
+            </div>
+            <pre id="trash-preview-body"></pre>
+          </div>
+          <!-- Sits directly above the footer bar so expanding grows the panel
+               upward into the editor rather than pushing the footer down. -->
+          <div id="interlinks" class="hidden"></div>
+          <div id="footer">
+            <button id="interlinks-toggle" type="button" class="hidden"></button>
+            <span id="loading-indicator" class="hidden">Loading notes…</span>
+            <span id="footer-clock" class="hidden"></span>
+            <span id="stats"></span>
+            <!-- Whole-vault note (and, with subfolders on, folder) totals,
+                 sitting to the right of the open note's own counts. -->
+            <span id="vault-stats" class="hidden"></span>
+          </div>
+        </div>
+      </div>
+
+      <div id="context-menu" class="hidden" role="menu"></div>
+
+      <!-- A text-input prompt. WebView2 does not implement window.prompt() (it
+           returns null without ever showing a dialog), so anything that needs a
+           typed answer — renaming a tag or folder, a domain's emoji, a new
+           folder's name — goes through this instead. -->
+      <div id="prompt" class="hidden" role="dialog" aria-modal="true" aria-labelledby="prompt-message">
+        <form id="prompt-panel" method="dialog">
+          <label id="prompt-message" for="prompt-input"></label>
+          <input id="prompt-input" type="text" autocomplete="off" spellcheck="false" />
+          <div id="prompt-buttons">
+            <button id="prompt-cancel" type="button">Cancel</button>
+            <button id="prompt-ok" type="submit">OK</button>
+          </div>
+        </form>
+      </div>
+
+      <!-- Insert Image picker: a grid of every image already in the vault, so
+           one can be dropped in by sight rather than by remembering a filename
+           like "Pasted image 3.png". Opened with the Insert Image shortcut or
+           the editor's right-click menu. -->
+      <div id="image-picker" class="hidden" role="dialog" aria-label="Insert image">
+        <div id="image-picker-panel">
+          <div id="image-picker-search">
+            <input
+              id="image-picker-filter"
+              type="text"
+              placeholder="Filter images…"
+              autocomplete="off"
+              spellcheck="false"
+            />
+          </div>
+          <div id="image-picker-grid"></div>
+          <div id="image-picker-empty" class="hidden"></div>
+        </div>
+      </div>
+
+      <!-- Alt-click a [[link]] to read the note without leaving where you are.
+           Deliberately a modifier-click rather than hover: a popover appearing
+           from a passing hover can sit exactly where a Ctrl-click was aimed. -->
+      <div id="link-preview" class="hidden" role="dialog" aria-label="Linked note">
+        <div id="link-preview-title"></div>
+        <div id="link-preview-body"></div>
+      </div>
+
+      <div id="reference" class="hidden" role="dialog" aria-label="Reference">
+        <div id="reference-panel">
+          <header>
+            <div id="reference-tabs"></div>
+            <button id="reference-close" type="button" aria-label="Close">✕</button>
+          </header>
+          <div id="reference-content"></div>
+        </div>
+      </div>
+
+      <div id="settings" class="hidden" role="dialog" aria-label="Settings">
+        <div id="settings-panel">
+          <header>
+            <h2>Settings</h2>
+            <button id="settings-close" type="button" aria-label="Close">✕</button>
+          </header>
+
+          <section>
+            <h3>The Index</h3>
+            <p class="setting-path" id="settings-index-path"></p>
+            <div class="setting-row">
+              <button id="setting-change-index" type="button">Change Location…</button>
+              <button id="settings-open-folder" type="button">Reveal in Explorer</button>
+            </div>
+            <label>
+              <input type="checkbox" id="setting-subfolders" />
+              Show items in subfolders
+            </label>
+            <div id="folder-colors">
+              <h4>Folder Colors</h4>
+              <p class="setting-note" id="folder-colors-empty">
+                Turn on “Show items in subfolders” to colour your folders. Every note
+                inside a coloured folder shows a dot in that colour.
+              </p>
+              <div id="folder-colors-list"></div>
+            </div>
+          </section>
+
+          <section>
+            <h3>Templates</h3>
+            <label>
+              Date format
+              <input type="text" id="setting-template-date" spellcheck="false" />
+            </label>
+            <p class="setting-note" id="setting-template-date-preview"></p>
+            <button id="setting-reveal-templates" type="button">
+              Reveal Templates Folder
+            </button>
+          </section>
+
+          <section>
+            <h3>Trash</h3>
+            <label>
+              Empty every
+              <span class="setting-inline-group">
+                <input
+                  type="number"
+                  id="setting-trash-interval"
+                  min="1"
+                  max="99"
+                  step="1"
+                />
+                <select id="setting-trash-unit">
+                  <option value="days">Day(s)</option>
+                  <option value="weeks">Week(s)</option>
+                  <option value="months">Month(s)</option>
+                </select>
+              </span>
+            </label>
+            <p class="setting-note">
+              The whole Trash folder is swept into the Recycle Bin this often,
+              counting from the last time it was emptied — checked when Envy
+              starts and hourly while it runs.
+            </p>
+            <div class="setting-row">
+              <button id="setting-reveal-trash" type="button">Reveal Trash Folder</button>
+              <button id="setting-empty-trash" type="button" class="destructive">
+                Empty Trash…
+              </button>
+            </div>
+          </section>
+
+          <section>
+            <h3>Note list</h3>
+            <label>
+              <input type="checkbox" id="setting-focus-editor" />
+              Move cursor to editor after opening a note
+            </label>
+            <label>
+              <input type="checkbox" id="setting-preview" />
+              Show content preview next to title
+            </label>
+            <label>
+              <input type="checkbox" id="setting-date" />
+              Show date modified
+            </label>
+            <label>
+              Date format
+              <select id="setting-date-style">
+                <option value="relative">Relative</option>
+                <option value="smart">Smart</option>
+                <option value="dateTime">Date and Time</option>
+                <option value="dateOnly">Date Only</option>
+              </select>
+            </label>
+            <label>
+              Density
+              <select id="setting-density">
+                <option value="compact">Compact</option>
+                <option value="cozy">Cozy</option>
+                <option value="comfy">Comfy</option>
+              </select>
+            </label>
+            <label>
+              Show a note's folder as
+              <select id="setting-folder-display">
+                <option value="dot">Coloured dot</option>
+                <option value="name">Folder name</option>
+                <option value="off">Nothing</option>
+              </select>
+            </label>
+            <p class="setting-note">
+              For a note in a subfolder: a dot in the folder's colour, the
+              folder's name as a chip, or nothing. Needs “Show items in
+              subfolders”.
+            </p>
+            <label>
+              <input type="checkbox" id="setting-folder-trailing" />
+              Show the folder marker after the title
+            </label>
+            <p class="setting-note">
+              A note's folder dot or name chip sits just after the title by
+              default. Turn this off to move it before the title. The Inbox
+              mark always stays on the left.
+            </p>
+            <label>
+              <input type="checkbox" id="setting-due" />
+              Allow sorting by due date
+            </label>
+            <label>
+              <input type="checkbox" id="setting-inbox-new" />
+              New notes start in the Inbox
+            </label>
+            <p class="setting-note">
+              Everything you write begins as a fleeting note, and filing it
+              into The Index becomes a deliberate act — including notes created
+              by following a <code>[[link]]</code> that doesn't exist yet. Notes
+              made from a template are unaffected, since those arrive with
+              structure you chose deliberately.
+            </p>
+            <label>
+              <input type="checkbox" id="setting-inbox-in-list" />
+              Show fleeting notes in the list
+            </label>
+            <label>
+              <input type="checkbox" id="setting-vault-counts" />
+              Show note and folder counts in footer
+            </label>
+            <p class="setting-note">
+              Whole-vault totals, to the right of the word and character
+              counts. The folder count appears only when subfolders are shown.
+            </p>
+          </section>
+
+          <section>
+            <h3>Editor</h3>
+            <label>
+              <input type="checkbox" id="setting-show-tags" />
+              Show tags in title bar
+            </label>
+            <label>
+              <input type="checkbox" id="setting-show-folder-titlebar" />
+              Show folder in title bar
+            </label>
+            <label>
+              <input type="checkbox" id="setting-show-due-pill" />
+              Show due date pill in title bar
+            </label>
+            <label>
+              <input type="checkbox" id="setting-domain-pills" />
+              Show links as domain pills
+            </label>
+            <p class="setting-note">
+              A bare URL renders as a compact pill of just its domain. Purely
+              visual and entirely offline — the note still holds the full URL,
+              and it shows in full the moment your cursor enters it.
+            </p>
+            <label>
+              <input type="checkbox" id="setting-require-modifier" />
+              Require Ctrl-click to open note links
+            </label>
+            <label>
+              Preview linked notes
+              <select id="setting-link-preview">
+                <option value="altClick">Alt-Click</option>
+                <option value="off">Off</option>
+              </select>
+            </label>
+            <label>
+              <input type="checkbox" id="setting-plain-text" />
+              Plain-text mode (ignore markdown formatting)
+            </label>
+            <label>
+              <input type="checkbox" id="setting-show-interlinks" />
+              Show interlinks in footer
+            </label>
+          </section>
+
+          <section>
+            <h3>Footer clock</h3>
+            <label>
+              <input type="checkbox" id="setting-clock" />
+              Show clock in footer
+            </label>
+            <label>
+              <input type="checkbox" id="setting-clock-date" />
+              Show date with clock
+            </label>
+            <label>
+              Date Format
+              <select id="setting-clock-date-format">
+                <option value="short">Short (Jul 8)</option>
+                <option value="medium">Medium (July 8, 2026)</option>
+                <option value="full">Full (Tuesday, July 8, 2026)</option>
+                <option value="numeric">Numeric (7/8/2026)</option>
+              </select>
+            </label>
+            <label>
+              <input type="checkbox" id="setting-clock-fullscreen" />
+              Only show clock in full screen
+            </label>
+          </section>
+
+          <section>
+            <h3>Shortcuts</h3>
+            <div id="shortcut-list"></div>
+            <p class="setting-note" id="shortcut-conflicts"></p>
+            <button id="shortcut-reset" type="button">Reset All to Defaults</button>
+          </section>
+
+          <section>
+            <h3>Reference</h3>
+            <div class="setting-row">
+              <button id="open-markup" type="button">Markup Commands…</button>
+              <button id="open-shortcuts" type="button">Keyboard Shortcuts…</button>
+            </div>
+            <div class="setting-row">
+              <button id="open-emoji" type="button">Emoji Shortcodes…</button>
+              <button id="open-about" type="button">About Envy…</button>
+            </div>
+          </section>
+
+          <section>
+            <h3>System</h3>
+            <label>
+              <input type="checkbox" id="setting-autostart" />
+              Open Envy at login
+            </label>
+            <label>
+              <input type="checkbox" id="setting-hide-on-blur" />
+              Hide Envy when clicking outside the app
+            </label>
+            <label>
+              <input type="checkbox" id="setting-restore-focus" />
+              Keep focus where it was when summoned
+            </label>
+            <label>
+              <input type="checkbox" id="setting-taskbar" />
+              Show Envy in the taskbar
+            </label>
+            <p class="setting-note">
+              The tray icon is always there, so turning this off still leaves a
+              way back besides the hotkey.
+            </p>
+            <p class="setting-note">
+              <strong>Ctrl+Alt+Enter</strong> shows or hides Envy from any app.
+              The tray icon does the same on click.
+            </p>
+          </section>
+
+          <section>
+            <h3>Updates</h3>
+            <label>
+              <input type="checkbox" id="setting-auto-update" />
+              Check for updates automatically
+            </label>
+            <div class="setting-row update-check-row">
+              <span id="setting-update-last-checked" class="setting-note"
+                >Last checked: never</span
+              >
+              <button id="setting-check-updates" type="button">Check Now</button>
+            </div>
+          </section>
+
+          <section>
+            <h3>Appearance</h3>
+            <label>
+              Layout
+              <select id="setting-layout">
+                <option value="vertical">Vertical (list above note)</option>
+                <option value="horizontal">Horizontal (list beside note)</option>
+              </select>
+            </label>
+            <label>
+              Interface text size
+              <select id="setting-text-size">
+                <option value="0.8">Extra Small</option>
+                <option value="0.9">Small</option>
+                <option value="0.95">Medium</option>
+                <option value="1">Large (Default)</option>
+                <option value="1.15">Extra Large</option>
+                <option value="1.3">XX Large</option>
+                <option value="1.5">XXX Large</option>
+              </select>
+            </label>
+            <label>
+              <input type="checkbox" id="setting-fade-focus" />
+              Fade out focus highlight
+            </label>
+            <label>
+              <input type="checkbox" id="setting-bold-list" />
+              Bold File List Text
+            </label>
+            <label>
+              Theme
+              <select id="setting-theme">
+                <option value="system">Follow system</option>
+                <option value="dark">Dark</option>
+                <option value="light">Light</option>
+              </select>
+            </label>
+          </section>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

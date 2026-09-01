@@ -1,0 +1,20 @@
+[package]
+name = "envy-core"
+description = "The note model and store — the platform-agnostic half of Envy."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[dependencies]
+fancy-regex.workspace = true
+rayon.workspace = true
+dunce.workspace = true
+notify.workspace = true
+serde.workspace = true
+chrono.workspace = true
+# Sends emptied/deleted notes to the Windows Recycle Bin rather than erasing
+# them, matching the Mac moving trashed items to the macOS Trash (recoverable).
+trash = "5"
+
+[dev-dependencies]
+tempfile = "3"
