@@ -531,3 +531,47 @@ If you need a product decision, ask. The only likely ones:
 
 Until told otherwise: scratchpad snippet in-repo (don’t edit hypr config),
 throwaway Index for tests, keep the repos separate.
+
+---
+
+## 13. Status and deviations (2026-08-31)
+
+Phases 0–6 are done; the owner's later chat decisions override this plan where
+they differ, per AGENTS.md. What changed from the text above:
+
+- **Parity target widened.** The owner asked for macOS **1.11.1** parity (not
+  Windows-level v1), minus Apple-only features, plus **Kindle import from a
+  USB-mounted Kindle only** (no Moorage/MTP). An audit found Envy-Windows was
+  already at ~1.8.8, not 1.7.0; the remaining gaps were ported: Kindle import
+  (`crates/envy-core/src/kindle.rs`, `src/kindle.ts`), Enable-Inbox toggle,
+  path-traversal hardening, sticky pinned strip, search jump-to-match,
+  move-collision refusal + submit-into-folder + bulk move, born-coloured
+  folders, `*`→`**|**` pairing, inline caption/width editing, ghost completion
+  in secondary windows, peek pin button, pop-out size memory, title fades,
+  vector checkbox, and the small 1.8.8/1.8.1 fixes.
+- **Two Mac alignments that also change Windows-inherited behaviour:**
+  duplicate filenames now disambiguate as `Name (2)` (Mac shape; Windows had
+  `Name 2`), and a visible vault-root `Trash/` plus `Envy Data/` are treated
+  as service folders (excluded from notes, folders and move targets) so a
+  Mac-synced Index does not show its trash as live notes. The Linux trash
+  itself is still per-folder `.trash/` (§2 rule 3 unchanged).
+- **WebKitGTK on NVIDIA.** The first launch died with Wayland
+  `Error 71 (Protocol error)`; `src-tauri/src/main.rs` sets
+  `WEBKIT_DISABLE_DMABUF_RENDERER=1` when the `nvidia` module is loaded.
+- **Toolchain facts (§5) were wrong:** Rust was not installed (now via
+  `mise use -g rust@stable`); `~/Documents` is a symlink to
+  `/mnt/storage/Documents` with no owner-write bit, so the generated test
+  Index lives at `~/Envy Test Vault` (`scripts/gen-test-vault.mjs`).
+- **Hyprland (§5/§6 Phase 5):** this Hyprland uses Omarchy's Lua config;
+  `hyprctl dispatch` takes Lua (`hl.dsp.focus({ window = 'address:…' })`,
+  `hl.dsp.workspace.toggle_special('envy')`). The summon bind lives in
+  `linux/hyprland-envy.lua` and is loaded from the owner's `bindings.lua`
+  with a guarded `dofile` (owner approved editing it). Window class measured:
+  `envy-linux`; the rule matches class + title `^Envy$` so pop-outs stay
+  ordinary windows.
+- **Packaging (Phase 6):** `.deb` and AppImage both build; AppImage needs
+  `NO_STRIP=true` (set in `build.sh`) because linuxdeploy's bundled `strip`
+  rejects `.relr.dyn` sections. Updater stays Windows-only (`cfg(windows)`).
+- **Not verified in-app yet (keyboard-driven harness could not click):**
+  Ctrl-click on a `[[wiki-link]]`, autostart toggle writing
+  `~/.config/autostart/`, tray left-click toggle, Kindle import end to end.
