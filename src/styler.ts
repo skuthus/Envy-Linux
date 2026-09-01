@@ -1,5 +1,5 @@
 import { Decoration, DecorationSet, EditorView, ViewPlugin, ViewUpdate, WidgetType } from '@codemirror/view'
-import { EditorState, Facet, Range, StateEffect, StateField } from '@codemirror/state'
+import { EditorState, Facet, Range, StateEffect, StateField, Text } from '@codemirror/state'
 import { invoke } from '@tauri-apps/api/core'
 import { createMiniNoteEditor, type MiniNoteEditor } from './mininote'
 import { resolveDueToken, urgencyFor } from './due'
@@ -1252,13 +1252,32 @@ function punchOut(spans: Array<[number, number]>, holes: Array<[number, number]>
   }
 }
 
+/// `findTableBlocks`/`findFencedBlocks` each walk the whole document line by
+/// line, and they depend on nothing but the text. Yet a single keystroke calls
+/// them ~4 times (both block state fields, plus the inline plugin's
+/// `replacedBlockRanges`), and a bare cursor move calls them again — even though
+/// the *set* of blocks cannot change without a doc edit; only whether each is
+/// revealed can. Memoize both by the document: CodeMirror's `Text` is immutable,
+/// so identity is a sound key. A doc edit produces a new `Text` and recomputes;
+/// a selection change keeps the same `Text` and hits the cache. Turns the N
+/// whole-document scans per update into one, and none at all on cursor movement.
+let blockCache: { doc: Text; tables: TableBlock[]; fences: FenceBlock[] } | null = null
+
+function blocksFor(doc: Text): { tables: TableBlock[]; fences: FenceBlock[] } {
+  if (!blockCache || blockCache.doc !== doc) {
+    blockCache = { doc, tables: findTableBlocks(doc), fences: findFencedBlocks(doc) }
+  }
+  return blockCache
+}
+
 function replacedBlockRanges(state: EditorState): Array<[number, number]> {
   if (state.field(plainTextField, false)) return []
+  const { tables, fences } = blocksFor(state.doc)
   const out: Array<[number, number]> = []
-  for (const block of findTableBlocks(state.doc)) {
+  for (const block of tables) {
     if (shouldReplaceRange(state, block.from, block.to)) out.push([block.from, block.to])
   }
-  for (const block of findFencedBlocks(state.doc)) {
+  for (const block of fences) {
     if (shouldReplaceRange(state, block.from, block.to)) out.push([block.from, block.to])
   }
   return out
@@ -1411,7 +1430,7 @@ const tableDecorations = StateField.define<DecorationSet>({
 function buildTableDecorations(state: EditorState): DecorationSet {
   if (state.field(plainTextField, false)) return Decoration.none
   const ranges: Range<Decoration>[] = []
-  for (const block of findTableBlocks(state.doc)) {
+  for (const block of blocksFor(state.doc).tables) {
     if (!shouldReplaceRange(state, block.from, block.to)) continue
     ranges.push(
       Decoration.replace({ widget: new TableWidget(block), block: true }).range(block.from, block.to),
@@ -1504,7 +1523,7 @@ const fenceDecorations = StateField.define<DecorationSet>({
 function buildFenceDecorations(state: EditorState): DecorationSet {
   if (state.field(plainTextField, false)) return Decoration.none
   const ranges: Range<Decoration>[] = []
-  for (const block of findFencedBlocks(state.doc)) {
+  for (const block of blocksFor(state.doc).fences) {
     if (!shouldReplaceRange(state, block.from, block.to)) continue
     ranges.push(
       Decoration.replace({ widget: new FenceWidget(block), block: true }).range(block.from, block.to),

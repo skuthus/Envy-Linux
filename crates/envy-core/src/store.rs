@@ -6,6 +6,7 @@
 //! does a search span all of them) for a feature almost nobody used across
 //! more than one.
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -129,8 +130,20 @@ impl NoteStore {
         self.reload();
     }
 
+    /// Re-reads the Index, reusing every note whose file is untouched.
+    ///
+    /// A reload fires on any settled change under the folder — an external
+    /// edit, a `git pull`, a sync client landing one file. Re-reading all N
+    /// files each time (while holding the store lock, so search and every other
+    /// command block behind it) made a one-note change cost the whole vault.
+    /// Instead we diff the on-disk paths and modification times against the
+    /// notes we already hold: unchanged notes move across as-is, keeping their
+    /// populated derived caches, and only new or actually-changed files are
+    /// read from disk. The first load has no previous notes, so it reads
+    /// everything exactly as before.
     pub fn reload(&mut self) {
-        self.notes = scan_directory(&self.directory, self.include_subfolders);
+        let previous = std::mem::take(&mut self.notes);
+        self.notes = scan_directory_reusing(&self.directory, self.include_subfolders, previous);
         self.refresh_trashed();
     }
 
@@ -1225,6 +1238,53 @@ pub fn scan_directory(directory: &Path, include_subfolders: bool) -> Vec<Note> {
         .collect();
     notes.sort_by_key(|n| std::cmp::Reverse(n.modified));
     notes
+}
+
+/// Like `scan_directory`, but reuses any `Note` from `previous` whose file is
+/// still present with the same modification time instead of re-reading it.
+///
+/// This is what keeps a reload after a single external change from re-reading
+/// the whole vault: the on-disk `(path, mtime)` list is cheap (one `read_dir`
+/// pass, no file opens — see `note_paths`), so we diff it against the notes we
+/// already have. Unchanged files are handed back untouched — derived cache and
+/// all — removed files are dropped, and only the new/changed remainder is read,
+/// still in parallel. Reduces a one-file edit from N reads to one.
+fn scan_directory_reusing(
+    directory: &Path,
+    include_subfolders: bool,
+    previous: Vec<Note>,
+) -> Vec<Note> {
+    let paths = note_paths(directory, include_subfolders);
+    // Index the notes we already hold by path so the diff is O(1) per entry.
+    // The paths from `note_paths` are built the same way as each note's `url`
+    // (both walk `entry.path()` from the one canonicalized root), so they match.
+    let mut prior: HashMap<PathBuf, Note> =
+        previous.into_iter().map(|n| (n.url().to_path_buf(), n)).collect();
+
+    let mut reused: Vec<Note> = Vec::new();
+    let mut to_read: Vec<(PathBuf, SystemTime)> = Vec::with_capacity(paths.len());
+    for (path, modified) in paths {
+        match prior.remove(&path) {
+            // Same file, same mtime: the note we hold is still current.
+            Some(note) if note.modified == modified => reused.push(note),
+            // New file, or one whose mtime moved — must (re)read it.
+            _ => to_read.push((path, modified)),
+        }
+    }
+    // Anything left in `prior` is a file that no longer exists; dropping the map
+    // drops those notes.
+
+    let mut fresh: Vec<Note> = to_read
+        .into_par_iter()
+        .filter_map(|(path, modified)| {
+            let content = fs::read_to_string(&path).ok()?;
+            Some(Note::new(path, content, modified))
+        })
+        .collect();
+
+    reused.append(&mut fresh);
+    reused.sort_by_key(|n| std::cmp::Reverse(n.modified));
+    reused
 }
 
 /// Every `.trash` directory anywhere under `directory` — there's one per

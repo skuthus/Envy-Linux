@@ -1248,6 +1248,13 @@ const DEFAULT_ASCENDING: Record<SortField, boolean> = {
 let sortField: SortField = (localStorage.getItem('noteSortField') as SortField | null) ?? 'date'
 let sortAscending = boolSetting('noteSortAscending', false)
 
+/// One reused collator instead of `localeCompare(…, options)` per comparison:
+/// the options form rebuilds collation state on every call, which is the bulk
+/// of a name sort's cost across O(n log n) comparisons on a large vault. Same
+/// ordering (`numeric` approximates localizedStandardCompare, so "Note 2"
+/// sorts before "Note 10"), a fraction of the work.
+const nameCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
+
 /// Applied after filtering, replacing relevance order entirely — same as the
 /// Mac, where sortNotes runs on the already-filtered list.
 function sortNotes(notes: NoteDto[]): NoteDto[] {
@@ -1255,11 +1262,7 @@ function sortNotes(notes: NoteDto[]): NoteDto[] {
   const sorted = [...notes]
   switch (sortField) {
     case 'name':
-      // `numeric` approximates localizedStandardCompare, so "Note 2" sorts
-      // before "Note 10" rather than after it.
-      sorted.sort(
-        (a, b) => dir * a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' }),
-      )
+      sorted.sort((a, b) => dir * nameCollator.compare(a.title, b.title))
       break
     case 'date':
       sorted.sort((a, b) => dir * (a.modifiedMs - b.modifiedMs))
@@ -2354,7 +2357,37 @@ function jumpToFirstSearchMatch(force = false) {
   })
 }
 
+/// The search box searches as you type, but each run fans out into several IPC
+/// calls (the query plus badge/completion/count refreshes) and a full
+/// re-render — firing that on every keystroke was the bulk of the box's typing
+/// cost. Debouncing coalesces a burst of keystrokes into one run. Only this
+/// per-keystroke path is debounced; every other `runSearch` caller (selecting a
+/// folder, toggling a setting, …) still runs immediately.
+let searchDebounceTimer: number | undefined
+const SEARCH_DEBOUNCE_MS = 130
+
+function scheduleSearch() {
+  if (searchDebounceTimer !== undefined) clearTimeout(searchDebounceTimer)
+  searchDebounceTimer = window.setTimeout(() => {
+    searchDebounceTimer = undefined
+    void runSearch()
+  }, SEARCH_DEBOUNCE_MS)
+}
+
+/// Run `fn` only once the query on screen has actually been searched. Enter and
+/// the arrow keys act on `results`; if a debounced search is still pending they
+/// would otherwise act on the previous query's list, so flush it first.
+function afterPendingSearch(fn: () => void) {
+  if (searchDebounceTimer === undefined) fn()
+  else void runSearch().then(fn)
+}
+
 async function runSearch() {
+  // A direct run supersedes any keystroke-debounced one still waiting.
+  if (searchDebounceTimer !== undefined) {
+    clearTimeout(searchDebounceTimer)
+    searchDebounceTimer = undefined
+  }
   // Push the query into the editor so matches light up in the open note.
   view.dispatch({ effects: setSearchQuery.of(searchInput.value) })
   jumpToFirstSearchMatch()
@@ -3412,7 +3445,7 @@ function acceptCompletion(): string {
 
 searchInput.addEventListener('input', () => {
   renderGhost()
-  void runSearch()
+  scheduleSearch()
 })
 searchInput.addEventListener('blur', () => searchGhostEl.classList.add('hidden'))
 
@@ -3435,10 +3468,12 @@ function renderCurrentList() {
 searchInput.addEventListener('keydown', (e) => {
   if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
     e.preventDefault()
-    arrowNavigate(e.key === 'ArrowDown' ? 1 : -1, e.shiftKey)
+    const dir = e.key === 'ArrowDown' ? 1 : -1
+    const shift = e.shiftKey
+    afterPendingSearch(() => arrowNavigate(dir, shift))
   } else if (e.key === 'Enter') {
     e.preventDefault()
-    void openOrCreate()
+    afterPendingSearch(() => void openOrCreate())
   } else if (e.key === 'Escape') {
     searchInput.value = ''
     void runSearch()
