@@ -9,6 +9,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::SystemTime;
 
 use fancy_regex::Regex;
@@ -17,6 +18,7 @@ use rayon::prelude::*;
 use crate::filename::{
     available_attachment_name, sanitize_attachment_name, sanitize_title, unique_filename,
 };
+use crate::interlinks::{interlinks_with, Interlinks, TitleMatcher};
 use crate::note::Note;
 use crate::search::INBOX_FOLDER_NAME;
 
@@ -76,6 +78,16 @@ pub struct NoteTemplate {
     pub path: PathBuf,
 }
 
+/// What applying one watched path did to the note list — the difference
+/// between "a note's text moved" and "a note appeared or disappeared", which
+/// is what decides whether the title-derived caches survive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PathChange {
+    None,
+    Content,
+    Set,
+}
+
 pub struct NoteStore {
     directory: PathBuf,
     include_subfolders: bool,
@@ -86,6 +98,16 @@ pub struct NoteStore {
     /// last `delete` call together — not a full history stack. Replaced (not
     /// appended to) by the next delete, and cleared once restored.
     last_deleted: Vec<(Note, PathBuf)>,
+    /// The folder list, which is a recursive `read_dir` of the whole Index —
+    /// 7.7 ms at 30,000 notes, paid by the footer's vault counts, the folder
+    /// catalog, and every folder picker. The folders only change when Envy or
+    /// the watcher says they did, so it is computed on first ask and dropped
+    /// by `invalidate_caches`.
+    folders: OnceLock<Vec<String>>,
+    /// The suggested-links automaton over every title; see
+    /// [`crate::interlinks::TitleMatcher`]. Cached and invalidated alongside
+    /// the folder list.
+    title_matcher: OnceLock<TitleMatcher>,
 }
 
 impl NoteStore {
@@ -101,6 +123,8 @@ impl NoteStore {
             notes: Vec::new(),
             trashed: Vec::new(),
             last_deleted: Vec::new(),
+            folders: OnceLock::new(),
+            title_matcher: OnceLock::new(),
         };
         store.reload();
         Ok(store)
@@ -163,7 +187,166 @@ impl NoteStore {
     pub fn reload(&mut self) {
         let previous = std::mem::take(&mut self.notes);
         self.notes = scan_directory_reusing(&self.directory, self.include_subfolders, previous);
+        self.invalidate_caches();
         self.refresh_trashed();
+    }
+
+    /// Applies one settled watcher batch by touching only the files it names.
+    ///
+    /// `reload` is already incremental about *reading* — it re-reads only the
+    /// files whose mtime moved — but it still walks the whole tree, rebuilds
+    /// the path map, re-sorts every note and re-walks every `.trash` folder.
+    /// At 30,000 notes that is 66 ms for a one-character edit in one file,
+    /// with the store lock held the whole time, so search and the note list
+    /// block behind it.
+    ///
+    /// This does the same job for the far more common shape of change: a short
+    /// list of `.md` files, each of which is stat-ed and read (or dropped) on
+    /// its own. Anything that could have changed the *shape* of the Index —
+    /// a directory created, removed or renamed, a path from outside it, an
+    /// empty list, or a batch big enough that a full rescan is cheaper anyway
+    /// — falls back to `reload`, which is always correct.
+    pub fn reload_paths(&mut self, paths: &[PathBuf]) {
+        /// Past this many files in one settled burst — a sync client landing a
+        /// folder, a `git pull` — one tree walk beats N stats plus a re-sort
+        /// per file.
+        const MAX_INCREMENTAL: usize = 200;
+
+        if paths.is_empty() || paths.len() > MAX_INCREMENTAL {
+            return self.reload();
+        }
+        // Deleting a note leaves a file under `.trash`; nothing else the
+        // watcher reports touches the trash list, so it is re-walked only when
+        // one of these paths is actually in there.
+        let mut touches_trash = false;
+        let mut changed = false;
+        let mut set_changed = false;
+        for path in paths {
+            if path.components().any(|c| c.as_os_str() == TRASH_FOLDER_NAME) {
+                touches_trash = true;
+                continue;
+            }
+            if !is_markdown(path) || !path.starts_with(&self.directory) {
+                // A directory event (no extension) means notes may have
+                // arrived or left en masse, and a path outside the Index means
+                // our idea of where the vault is disagrees with the watcher's.
+                return self.reload();
+            }
+            match self.apply_one_path(path) {
+                Ok(change) => {
+                    changed |= change != PathChange::None;
+                    set_changed |= change == PathChange::Set;
+                }
+                // The path is a directory now, or unreadable in a way a stat
+                // can't explain — neither is something to guess at.
+                Err(()) => return self.reload(),
+            }
+        }
+        if changed {
+            // Newest first, the order every caller of `notes()` relies on.
+            self.notes.sort_by_key(|n| std::cmp::Reverse(n.modified));
+        }
+        if set_changed {
+            // Only the title automaton: a `.md` event cannot have changed the
+            // folder list (a folder event takes the full-reload path above),
+            // and an in-place edit cannot have changed a title, which is the
+            // file's own name.
+            self.title_matcher = OnceLock::new();
+        }
+        if touches_trash {
+            self.refresh_trashed();
+        }
+    }
+
+    /// Re-reads, inserts or drops the single note at `path`. `Err(())` when
+    /// the caller should fall back to a full reload.
+    fn apply_one_path(&mut self, path: &Path) -> Result<PathChange, ()> {
+        let existing = self.notes.iter().position(|n| n.url() == path);
+        let metadata = match fs::metadata(path) {
+            Ok(m) if m.is_file() => m,
+            // A file that isn't there any more: the note goes with it. That
+            // covers a delete and the "from" half of a rename alike.
+            Err(_) => {
+                return Ok(match existing {
+                    Some(i) => {
+                        self.notes.remove(i);
+                        PathChange::Set
+                    }
+                    None => PathChange::None,
+                })
+            }
+            Ok(_) => return Err(()),
+        };
+        // The scan's own rules decide whether this file is a note at all —
+        // a `.md` under `Templates/`, or in a subfolder with subfolder
+        // scanning off, is not one.
+        if !self.scan_would_include(path) {
+            return Ok(match existing {
+                Some(i) => {
+                    self.notes.remove(i);
+                    PathChange::Set
+                }
+                None => PathChange::None,
+            });
+        }
+        let modified = metadata.modified().unwrap_or_else(|_| SystemTime::now());
+        if let Some(i) = existing {
+            if self.notes[i].modified == modified {
+                return Ok(PathChange::None);
+            }
+        }
+        let Ok(content) = fs::read_to_string(path) else {
+            // Readable a moment ago, not now — a sync client mid-write. Leave
+            // the note we hold rather than dropping it.
+            return Ok(PathChange::None);
+        };
+        let note = Note::new(path.to_path_buf(), content, modified);
+        Ok(match existing {
+            Some(i) => {
+                self.notes[i] = note;
+                PathChange::Content
+            }
+            None => {
+                self.notes.push(note);
+                PathChange::Set
+            }
+        })
+    }
+
+    /// Whether a full scan of the Index would have picked this file up — the
+    /// same exclusions `note_paths` applies, asked one path at a time.
+    fn scan_would_include(&self, path: &Path) -> bool {
+        let Ok(relative) = path.strip_prefix(&self.directory) else {
+            return false;
+        };
+        let mut folders: Vec<&std::ffi::OsStr> =
+            relative.components().map(|c| c.as_os_str()).collect();
+        // The last component is the file itself, not a folder.
+        folders.pop();
+        // The scan skips hidden files and never descends into a hidden
+        // folder — which is what keeps `.trash` out without naming it.
+        if is_hidden(path) || folders.iter().any(|f| f.to_string_lossy().starts_with('.')) {
+            return false;
+        }
+        if folders
+            .first()
+            .is_some_and(|f| SERVICE_FOLDER_NAMES.contains(&f.to_string_lossy().as_ref()))
+        {
+            return false;
+        }
+        // With subfolders off only the root and `Inbox/` are read; see
+        // `note_paths` for why the Inbox is the exception.
+        self.include_subfolders
+            || folders.is_empty()
+            || (folders.len() == 1 && folders[0] == INBOX_FOLDER_NAME)
+    }
+
+    /// Drops everything derived from the *set* of notes and folders. Called
+    /// wherever a note or folder is created, renamed, moved or removed —
+    /// never for a plain content edit, which can move neither.
+    fn invalidate_caches(&mut self) {
+        self.folders = OnceLock::new();
+        self.title_matcher = OnceLock::new();
     }
 
     fn refresh_trashed(&mut self) {
@@ -195,32 +378,24 @@ impl NoteStore {
     /// something else. Hidden folders are skipped wholesale, which is what
     /// keeps `.trash` out without needing its own case.
     pub fn subfolders(&self) -> Vec<String> {
-        let mut out = Vec::new();
-        fn walk(dir: &Path, root: &Path, out: &mut Vec<String>) {
-            let Ok(entries) = fs::read_dir(dir) else {
-                return;
-            };
-            for entry in entries.filter_map(|e| e.ok()) {
-                let path = entry.path();
-                // Symlinks skipped, as in the note scan: a folder you can file
-                // a note into has to genuinely be inside the Index.
-                let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
-                if !is_dir || is_hidden(&path) {
-                    continue;
-                }
-                let name = path.file_name().unwrap_or_default().to_string_lossy();
-                if name == INBOX_FOLDER_NAME || SERVICE_FOLDER_NAMES.contains(&name.as_ref()) {
-                    continue;
-                }
-                if let Ok(rel) = path.strip_prefix(root) {
-                    out.push(rel.to_string_lossy().replace('\\', "/"));
-                }
-                walk(&path, root, out);
-            }
-        }
-        walk(&self.directory, &self.directory, &mut out);
-        out.sort();
-        out
+        self.folder_list().to_vec()
+    }
+
+    /// The cached folder list. See the `folders` field for why it is cached
+    /// rather than walked on every ask.
+    fn folder_list(&self) -> &[String] {
+        self.folders
+            .get_or_init(|| scan_subfolders(&self.directory))
+    }
+
+    /// The interlink footer for `note`, over the cached title automaton.
+    pub fn interlinks(&self, note: &Note) -> Interlinks {
+        let matcher = self.title_matcher.get_or_init(|| {
+            let candidates: Vec<(&str, &str)> =
+                self.notes.iter().map(|n| (n.id(), n.title())).collect();
+            TitleMatcher::new(&candidates)
+        });
+        interlinks_with(note, &self.notes, matcher)
     }
 
     /// Moves a note into `subfolder` (relative to the Index root), or to the
@@ -294,6 +469,7 @@ impl NoteStore {
         if let Some(i) = self.notes.iter().position(|n| n.id() == id) {
             self.notes[i] = moved.clone();
         }
+        self.invalidate_caches();
         // Sanitization can still change the title ("What?" → "What-"). That's
         // deterministic, not ambiguous — so rewrite the vault's references the
         // same way `rename` does, and links keep working. Skipped when filing
@@ -316,17 +492,17 @@ impl NoteStore {
     /// the 1.8.8 rule that a row's count equals what clicking it shows — a note
     /// deliberately counts toward every folder that contains it.
     pub fn folder_counts(&self) -> Vec<(String, usize)> {
-        let folders = self.subfolders();
         let paths: Vec<String> = self.notes.iter().filter_map(|n| self.subfolder_path(n)).collect();
-        let mut rows: Vec<(String, usize)> = folders
-            .into_iter()
+        let mut rows: Vec<(String, usize)> = self
+            .folder_list()
+            .iter()
             .map(|folder| {
                 let descendant = format!("{folder}/");
                 let count = paths
                     .iter()
-                    .filter(|p| **p == folder || p.starts_with(&descendant))
+                    .filter(|p| **p == *folder || p.starts_with(&descendant))
                     .count();
-                (folder, count)
+                (folder.clone(), count)
             })
             .collect();
         rows.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
@@ -427,6 +603,7 @@ impl NoteStore {
             let modified = self.notes[i].modified;
             self.notes[i] = Note::new(moved_url, content, modified);
         }
+        self.invalidate_caches();
         Some(new_path)
     }
 
@@ -561,6 +738,7 @@ impl NoteStore {
         fs::write(&path, "")?;
         let note = Note::new(path, "", SystemTime::now());
         self.notes.insert(0, note.clone());
+        self.invalidate_caches();
         Ok(note)
     }
 
@@ -627,6 +805,7 @@ impl NoteStore {
         if let Some(slot) = self.notes.iter_mut().find(|n| n.id() == note.id()) {
             *slot = renamed.clone();
         }
+        self.invalidate_caches();
         self.update_wiki_link_references(note.title(), renamed.title());
         Ok(renamed)
     }
@@ -718,6 +897,7 @@ impl NoteStore {
         let deleted_ids: Vec<&str> = trashed.iter().map(|(n, _)| n.id()).collect();
         self.notes.retain(|n| !deleted_ids.contains(&n.id()));
         self.last_deleted = trashed;
+        self.invalidate_caches();
         self.refresh_trashed();
     }
 
@@ -742,6 +922,7 @@ impl NoteStore {
             }
         }
         self.notes.extend(restored.iter().cloned());
+        self.invalidate_caches();
         self.refresh_trashed();
         restored
     }
@@ -759,6 +940,7 @@ impl NoteStore {
         fs::rename(note.url(), &destination).ok()?;
         let restored = Note::new(destination, note.content(), note.modified);
         self.notes.push(restored.clone());
+        self.invalidate_caches();
         self.refresh_trashed();
         Some(restored)
     }
@@ -1025,6 +1207,7 @@ impl NoteStore {
         fs::write(&path, &content)?;
         let note = Note::new(path, content, SystemTime::now());
         self.notes.insert(0, note.clone());
+        self.invalidate_caches();
         Ok(note)
     }
 
@@ -1041,6 +1224,7 @@ impl NoteStore {
         }
         fs::rename(note.url(), &path).ok()?;
         self.notes.retain(|n| n.id() != note.id());
+        self.invalidate_caches();
         Some(NoteTemplate {
             id: path.to_string_lossy().into_owned(),
             name: path
@@ -1429,6 +1613,37 @@ fn scan_directory_reusing(
     reused
 }
 
+/// The folder walk behind `NoteStore::subfolders`, lifted out so the cached
+/// value has one producer.
+fn scan_subfolders(root: &Path) -> Vec<String> {
+    let mut out = Vec::new();
+    fn walk(dir: &Path, root: &Path, out: &mut Vec<String>) {
+        let Ok(entries) = fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.filter_map(|e| e.ok()) {
+            let path = entry.path();
+            // Symlinks skipped, as in the note scan: a folder you can file
+            // a note into has to genuinely be inside the Index.
+            let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            if !is_dir || is_hidden(&path) {
+                continue;
+            }
+            let name = path.file_name().unwrap_or_default().to_string_lossy();
+            if name == INBOX_FOLDER_NAME || SERVICE_FOLDER_NAMES.contains(&name.as_ref()) {
+                continue;
+            }
+            if let Ok(rel) = path.strip_prefix(root) {
+                out.push(rel.to_string_lossy().replace('\\', "/"));
+            }
+            walk(&path, root, out);
+        }
+    }
+    walk(root, root, &mut out);
+    out.sort();
+    out
+}
+
 /// Every `.trash` directory anywhere under `directory` — there's one per
 /// folder that's ever had a note deleted from it, not just one at the top.
 fn all_trash_directories(directory: &Path) -> Vec<PathBuf> {
@@ -1488,6 +1703,54 @@ mod tests {
     use super::*;
     use chrono::NaiveDate;
     use tempfile::TempDir;
+
+    /// The incremental watcher path: one file re-read, one file dropped, and
+    /// nothing else in the Index disturbed.
+    #[test]
+    fn reload_paths_applies_one_file_at_a_time() {
+        let (dir, mut store) = store_with(&[("A.md", "first"), ("B.md", "second")]);
+        let a = dir.path().join("A.md");
+        let b = dir.path().join("B.md");
+
+        // An edit landing from outside Envy.
+        fs::write(&a, "first, edited").unwrap();
+        // The store canonicalizes its root, so the watcher's paths have to be
+        // resolved the same way before they can be matched against note urls.
+        let resolved = |p: &Path| dunce::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        store.reload_paths(&[resolved(&a)]);
+        fn by(store: &NoteStore, t: &str) -> Option<Note> {
+            store.notes().iter().find(|n| n.title() == t).cloned()
+        }
+        assert_eq!(by(&store, "A").unwrap().content(), "first, edited");
+        assert_eq!(by(&store, "B").unwrap().content(), "second");
+
+        // A file removed outside Envy — `canonicalize` can't resolve a path
+        // that no longer exists, so it is resolved before the delete.
+        let b_resolved = resolved(&b);
+        fs::remove_file(&b).unwrap();
+        store.reload_paths(&[b_resolved]);
+        assert!(by(&store, "B").is_none());
+        assert!(by(&store, "A").is_some());
+    }
+
+    /// A directory event, an empty batch, or one too large to be worth
+    /// stat-ing file by file all fall back to the full rescan — which must
+    /// still see everything.
+    #[test]
+    fn reload_paths_falls_back_to_a_full_reload() {
+        let (dir, mut store) = nested_store_with(&[("A.md", "a")]);
+        fs::create_dir_all(dir.path().join("Projects")).unwrap();
+        fs::write(dir.path().join("Projects/New.md"), "new").unwrap();
+
+        // The directory itself is what the watcher reports; the note inside it
+        // may never get an event of its own.
+        store.reload_paths(&[dir.path().join("Projects")]);
+        assert!(store.notes().iter().any(|n| n.title() == "New"));
+
+        fs::write(dir.path().join("Later.md"), "later").unwrap();
+        store.reload_paths(&[]);
+        assert!(store.notes().iter().any(|n| n.title() == "Later"));
+    }
 
     #[test]
     fn subfolders_exclude_the_folders_that_already_mean_something() {

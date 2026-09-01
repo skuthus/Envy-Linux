@@ -24,8 +24,8 @@ pub mod store;
 pub mod watcher;
 
 pub use due::{resolve_due_token, urgency_for, DueUrgency};
-pub use interlinks::{interlinks_for, InterlinkRef, Interlinks, Suggestion};
+pub use interlinks::{interlinks_for, InterlinkRef, Interlinks, Suggestion, TitleMatcher};
 pub use note::{AiProvenance, Note, ParsedWikiLink, WikiLink};
-pub use search::{filtered, SearchContext};
+pub use search::{filtered, filtered_sorted, SearchContext, SortField, SortSpec};
 pub use store::{subfolder_path, NoteStore, NoteTemplate};
 pub use watcher::{watch_path, IndexWatcher};

@@ -344,12 +344,114 @@ function embedMessage(text: string): HTMLElement {
   return p
 }
 
+/// Decoded attachments, shared and reference-counted by name.
+///
+/// A widget's DOM is destroyed the moment its line leaves the viewport and
+/// rebuilt when it comes back, so a picture that is scrolled past was re-read
+/// over IPC and re-decoded on every crossing — the single most expensive thing
+/// scrolling a note full of images could do. One entry per file holds the
+/// in-flight read *and* the object URL, so N widgets on the same picture share
+/// one fetch; the URL is revoked only after the last widget lets go and a short
+/// grace expires, which is long enough for a scroll to come straight back and
+/// short enough that closing a note doesn't keep its pictures resident.
+interface AttachmentEntry {
+  refs: number
+  /// Resolves to null for a file that isn't there — cached like any other
+  /// answer, so a missing image doesn't re-ask on every scroll either.
+  bytes: Promise<ArrayBuffer | null>
+  url: string | null
+  evict: number | undefined
+}
+
+const attachmentCache = new Map<string, AttachmentEntry>()
+const ATTACHMENT_GRACE_MS = 5000
+
+function acquireAttachment(
+  name: string,
+  read: (name: string) => Promise<ArrayBuffer | null>,
+): AttachmentEntry {
+  let entry = attachmentCache.get(name)
+  if (!entry) {
+    entry = {
+      refs: 0,
+      url: null,
+      evict: undefined,
+      bytes: Promise.resolve()
+        .then(() => read(name))
+        .catch((e) => {
+          console.error(`could not read attachment "${name}"`, e)
+          return null
+        }),
+    }
+    attachmentCache.set(name, entry)
+  }
+  if (entry.evict !== undefined) {
+    clearTimeout(entry.evict)
+    entry.evict = undefined
+  }
+  entry.refs++
+  return entry
+}
+
+function releaseAttachment(name: string) {
+  const entry = attachmentCache.get(name)
+  if (!entry) return
+  entry.refs--
+  if (entry.refs > 0) return
+  entry.evict = window.setTimeout(() => dropAttachment(name), ATTACHMENT_GRACE_MS)
+}
+
+function dropAttachment(name: string) {
+  const entry = attachmentCache.get(name)
+  if (!entry) return
+  if (entry.evict !== undefined) clearTimeout(entry.evict)
+  attachmentCache.delete(name)
+  // Revoking a URL an <img> already loaded from is harmless — the bitmap is
+  // the element's, not the URL's — so this is safe even with widgets still up.
+  if (entry.url) URL.revokeObjectURL(entry.url)
+}
+
+/// The file behind `name` is no longer what was cached — it was renamed, or
+/// replaced under us. The next widget to ask re-reads it.
+export function invalidateAttachment(name: string) {
+  dropAttachment(name)
+}
+
+/// Everything is suspect: the index changed and it doesn't say which files.
+export function invalidateAttachments() {
+  for (const name of [...attachmentCache.keys()]) dropAttachment(name)
+}
+
+/// The picker's entry point: it reads attachments through Rust directly rather
+/// than through an embed host, but it is the same files, so it shares the cache
+/// (and its grace period — reopening the picker within a few seconds decodes
+/// nothing). Returns null for a file that isn't there.
+export async function attachmentUrl(
+  name: string,
+  read: (name: string) => Promise<ArrayBuffer | null>,
+): Promise<string | null> {
+  const entry = acquireAttachment(name, read)
+  const bytes = await entry.bytes
+  if (!bytes) return null
+  if (attachmentCache.get(name) !== entry) {
+    // Invalidated while the read was in flight; the caller releases either way,
+    // and a URL minted onto a detached entry would never be revoked.
+    return null
+  }
+  if (!entry.url) entry.url = URL.createObjectURL(new Blob([bytes]))
+  return entry.url
+}
+
+export function releaseAttachmentUrl(name: string) {
+  releaseAttachment(name)
+}
+
 /// An `![[image.png]]` rendered as the picture itself, in a block below the
 /// marker line — the twin of the note EmbedWidget, but for attachments. The
-/// bytes come from the host (a Rust read), wrapped in an object URL so a large
-/// image isn't re-encoded on every rebuild; the URL is revoked on destroy.
+/// bytes and the object URL come from the shared cache above, so the same
+/// picture is read and decoded once however many times it is scrolled past.
 class ImageEmbedWidget extends WidgetType {
-  private objectUrl: string | null = null
+  private held = false
   private alive = true
 
   constructor(
@@ -416,19 +518,22 @@ class ImageEmbedWidget extends WidgetType {
     // and pinned windows). Render nothing rather than a false "missing" — the
     // file is fine, this window just can't fetch it.
     if (!this.host) return
-    let bytes: ArrayBuffer | null = null
-    try {
-      bytes = await this.host.readAttachment(this.name)
-    } catch (e) {
-      console.error(`could not read attachment "${this.name}"`, e)
+    const host = this.host
+    // `attachmentUrl` takes the ref synchronously; recording it only now means
+    // `destroy` can never release one this widget was not actually given.
+    const url = await attachmentUrl(this.name, (n) => host.readAttachment(n))
+    this.held = true
+    if (!this.alive) {
+      // Destroyed mid-flight: nothing will call destroy again, so let go now.
+      this.held = false
+      releaseAttachment(this.name)
+      return
     }
-    if (!this.alive) return
-    if (!bytes) {
+    if (!url) {
       this.showMissing(wrap)
       return
     }
-    this.objectUrl = URL.createObjectURL(new Blob([bytes]))
-    img.src = this.objectUrl
+    img.src = url
   }
 
   /// A missing file degrades to a placeholder rather than a broken-image icon,
@@ -441,9 +546,9 @@ class ImageEmbedWidget extends WidgetType {
 
   destroy() {
     this.alive = false
-    if (this.objectUrl) {
-      URL.revokeObjectURL(this.objectUrl)
-      this.objectUrl = null
+    if (this.held) {
+      this.held = false
+      releaseAttachment(this.name)
     }
   }
 }
@@ -1565,27 +1670,67 @@ const embedDecorations = StateField.define<DecorationSet>({
   provide: (f) => EditorView.decorations.from(f),
 })
 
+/// One `![[…]]` marker: its body, the text it was written as, and the end of
+/// the line it sits on (where its block goes — placed after the whole line
+/// rather than at the match, so an embed mentioned mid-sentence doesn't cut the
+/// sentence in half; the `![[…]]` stays ordinary text, styled as a link).
+interface EmbedHit {
+  body: string
+  raw: string
+  lineTo: number
+}
+
+/// The marker scan, memoized on the document.
+///
+/// It used to materialise the entire note as one string and run a global regex
+/// over it on every keystroke, which is O(document) of pure allocation for a
+/// result that changes on maybe one keystroke in a thousand. Two things fix it:
+/// the scan walks lines instead of one giant string (a marker is line-local —
+/// the same assumption the inline styler and `wikiLinkRangeAt` already make),
+/// and `Text` is immutable, so the last document's hits can be handed straight
+/// back when the field is rebuilt for anything other than an edit.
+///
+/// The hits are host-independent on purpose: the widgets are rebuilt from them
+/// each time, so a changed embed host is picked up without invalidating this.
+let embedScanCache: { doc: Text; hits: EmbedHit[] } | null = null
+
+function embedHits(doc: Text): EmbedHit[] {
+  if (embedScanCache && embedScanCache.doc === doc) return embedScanCache.hits
+  const hits: EmbedHit[] = []
+  const iter = doc.iterLines()
+  let pos = 0
+  while (!iter.next().done) {
+    const line = iter.value
+    // The `includes` is the whole point of scanning by line: almost every line
+    // has no marker at all, and this rejects it without touching the regex.
+    if (line.includes('![[')) {
+      for (const m of line.matchAll(P.embed)) {
+        hits.push({ body: m[1], raw: m[0], lineTo: pos + line.length })
+      }
+    }
+    // Every line break is a single character in a CodeMirror document.
+    pos += line.length + 1
+  }
+  embedScanCache = { doc, hits }
+  return hits
+}
+
 function buildEmbedDecorations(state: EditorState): DecorationSet {
   if (!state.facet(allowEmbeds) || state.field(plainTextField, false)) return Decoration.none
   const host = state.facet(embedHost)
   const hostNoteId = host?.currentNoteId() ?? null
-  const text = state.doc.toString()
 
   const ranges: Range<Decoration>[] = []
-  for (const m of text.matchAll(P.embed)) {
-    const title = wikiLinkTarget(m[1])
+  for (const hit of embedHits(state.doc)) {
+    const title = wikiLinkTarget(hit.body)
     if (!title) continue
-    // Placed after the whole line rather than at the match, so an embed
-    // mentioned mid-sentence doesn't cut the sentence in half. The `![[…]]`
-    // stays ordinary text, styled as a link.
-    const line = state.doc.lineAt(m.index!)
     // An image extension makes it an attachment, rendered as a picture; anything
     // else is a note transclusion. The single `isImageTarget` split keeps this
     // in step with envy-core's is_image_attachment.
     const widget = isImageTarget(title)
-      ? new ImageEmbedWidget(parseImageEmbed(m[1]), m[0], host)
+      ? new ImageEmbedWidget(parseImageEmbed(hit.body), hit.raw, host)
       : new EmbedWidget(title, host, hostNoteId)
-    ranges.push(Decoration.widget({ widget, block: true, side: 1 }).range(line.to))
+    ranges.push(Decoration.widget({ widget, block: true, side: 1 }).range(hit.lineTo))
   }
   return Decoration.set(ranges, true)
 }

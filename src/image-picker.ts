@@ -5,13 +5,18 @@
 //! `![[name]]` into that window's editor) and guards on whether a note is open.
 
 import { invoke } from '@tauri-apps/api/core'
+import { attachmentUrl, releaseAttachmentUrl } from './styler'
 
 const pickerEl = document.getElementById('image-picker')!
 const filterEl = document.getElementById('image-picker-filter') as HTMLInputElement
 const gridEl = document.getElementById('image-picker-grid')!
 const emptyEl = document.getElementById('image-picker-empty')!
 let names: string[] = []
-let urls: string[] = []
+/// Which cache entries this grid is holding open. The thumbnails come from the
+/// same reference-counted store the editor's `![[image]]` widgets use, so a
+/// picture that is already on screen costs the picker nothing — and a grid that
+/// is rebuilt or closed lets go rather than revoking a URL still in use.
+let held: string[] = []
 // Filtering rebuilds the grid; a bumped generation makes a slow thumbnail load
 // from a superseded build (or after close) drop its result instead of leaking.
 let gen = 0
@@ -31,8 +36,12 @@ function closeImagePicker() {
   gen++
   pickerEl.classList.add('hidden')
   gridEl.replaceChildren()
-  for (const url of urls) URL.revokeObjectURL(url)
-  urls = []
+  releaseHeld()
+}
+
+function releaseHeld() {
+  for (const name of held) releaseAttachmentUrl(name)
+  held = []
 }
 
 function matches(filter: string): string[] {
@@ -42,8 +51,7 @@ function matches(filter: string): string[] {
 
 function buildGrid(filter: string) {
   const build = ++gen
-  for (const url of urls) URL.revokeObjectURL(url)
-  urls = []
+  releaseHeld()
   gridEl.replaceChildren()
   const found = matches(filter)
   if (found.length === 0) {
@@ -71,16 +79,15 @@ function buildGrid(filter: string) {
     cell.append(thumb, label)
     cell.addEventListener('click', () => pick(name))
     gridEl.append(cell)
-    void invoke<ArrayBuffer>('read_attachment', { name })
-      .then((bytes) => {
-        if (build !== gen) return // superseded build or closed
-        const url = URL.createObjectURL(new Blob([bytes]))
-        urls.push(url)
-        img.src = url
-      })
-      .catch(() => {
-        /* a missing file just shows an empty thumb */
-      })
+    held.push(name)
+    void attachmentUrl(name, (n) =>
+      invoke<ArrayBuffer>('read_attachment', { name: n }).catch(() => null),
+    ).then((url) => {
+      // Superseded build or closed: the ref was already handed back by
+      // `releaseHeld`, so nothing to do but drop the answer.
+      if (build !== gen || !url) return
+      img.src = url
+    })
   }
 }
 

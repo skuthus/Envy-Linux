@@ -9,8 +9,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use envy_core::{IndexWatcher, NoteStore, SearchContext};
-use serde::Serialize;
+use envy_core::{IndexWatcher, NoteStore, SearchContext, SortField, SortSpec};
+use serde::{Deserialize, Serialize};
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{Emitter, Manager, State, WebviewWindow};
@@ -145,7 +145,17 @@ fn set_template_date_format(pattern: String, state: State<AppState>) {
     *state.template_date_format.lock().unwrap() = pattern;
 }
 
-const SUPPRESS_WINDOW: Duration = Duration::from_millis(500);
+/// How long after one of Envy's own writes the watcher stays ignored.
+///
+/// This has to outlast the watcher's own debounce (400 ms in `watcher.rs`),
+/// or the suppression is a race it usually loses: the write lands, the
+/// debounce waits 400 ms for the burst to settle, and by the time the reload
+/// fires the 500 ms window has all but closed — a save under any filesystem
+/// or scheduling latency at all would slip through and reload the store on
+/// top of text still being typed. 1500 ms leaves a full second of margin past
+/// the debounce while staying far shorter than the pause anyone would notice
+/// before an *external* edit shows up.
+const SUPPRESS_WINDOW: Duration = Duration::from_millis(1500);
 
 impl AppState {
     fn mark_internal_write(&self) {
@@ -288,7 +298,7 @@ fn toggle_keep_on_top(app: &tauri::AppHandle) {
     refresh_tray_menu(app);
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn index_directory(state: State<AppState>) -> String {
     state
         .store
@@ -299,15 +309,114 @@ fn index_directory(state: State<AppState>) -> String {
         .into_owned()
 }
 
-#[tauri::command]
-fn search(query: String, state: State<AppState>) -> Vec<NoteDto> {
-    let store = state.store.lock().unwrap();
-    let root = store.directory().to_path_buf();
+/// Everything that decides *which* notes the list shows and in what order.
+///
+/// One struct rather than six arguments because `search` and `search_ids` have
+/// to agree on it exactly — a page fetched under one spec and an id list
+/// fetched under another would disagree about what row 4,000 is.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SearchSpec {
+    query: String,
+    /// "name" | "date" | "due" — the list header's field. Anything else falls
+    /// back to date, the frontend's own default.
+    sort_field: String,
+    sort_ascending: bool,
+    /// The pinned note ids, in the frontend's set. Pins live in localStorage,
+    /// so the backend can only know them by being told; they come with the
+    /// request rather than being pushed separately so a page can never be
+    /// ordered by a stale pin set.
+    pinned: Vec<String>,
+    /// "Show fleeting notes in the main list", off. Applied here rather than
+    /// in the frontend now that the list arrives a page at a time — filtering
+    /// a page after it arrives would leave short pages and a wrong total.
+    hide_inbox: bool,
+}
+
+/// One page of the list, plus how long the list actually is.
+///
+/// The command used to return a `NoteDto` for every match: 19.3 MB of JSON on
+/// a 30,000-note vault, on every debounced keystroke, of which the virtualized
+/// list ever displayed about thirty rows. `total` is what the scrollbar and
+/// the row indices need; the rows themselves are fetched as they are scrolled
+/// to.
+#[derive(Serialize)]
+struct SearchPage {
+    notes: Vec<NoteDto>,
+    total: usize,
+}
+
+impl SearchSpec {
+    fn sort(&self) -> SortSpec {
+        SortSpec {
+            field: match self.sort_field.as_str() {
+                "name" => SortField::Name,
+                "due" => SortField::Due,
+                _ => SortField::Date,
+            },
+            ascending: self.sort_ascending,
+        }
+    }
+}
+
+/// Runs the query and hands back the ordered hits, inbox filter applied.
+///
+/// Filtering after the sort rather than before is deliberate: dropping
+/// elements from an ordered vector leaves it ordered, and doing it here keeps
+/// the rule ("what the Inbox setting hides") in the shell, next to the setting
+/// it mirrors, rather than in the core's query language.
+fn ordered_hits<'a>(
+    notes: &'a [envy_core::Note],
+    spec: &SearchSpec,
+    root: &Path,
+) -> Vec<&'a envy_core::Note> {
     let mut ctx = SearchContext::now();
     ctx.inbox_enabled = inbox_enabled();
-    envy_core::filtered(store.notes(), &query, &ctx, Some(&root))
+    let hits = envy_core::filtered_sorted(
+        notes,
+        &spec.query,
+        &ctx,
+        Some(root),
+        Some(spec.sort()),
+        &spec.pinned,
+    );
+    if !spec.hide_inbox {
+        return hits;
+    }
+    hits.into_iter()
+        .filter(|n| !envy_core::search::is_inbox_note(n))
+        .collect()
+}
+
+#[tauri::command(async)]
+fn search(spec: SearchSpec, offset: usize, limit: usize, state: State<AppState>) -> SearchPage {
+    let store = state.store.lock().unwrap();
+    let root = store.directory().to_path_buf();
+    let hits = ordered_hits(store.notes(), &spec, &root);
+    SearchPage {
+        total: hits.len(),
+        notes: hits
+            .into_iter()
+            .skip(offset)
+            .take(limit)
+            .map(|n| NoteDto::from_note(n, false, &root))
+            .collect(),
+    }
+}
+
+/// Just the ids, in the same order `search` pages over.
+///
+/// What a whole-list operation needs — selecting a range that spans rows no
+/// page has fetched, or finding where one note sits in the order — without
+/// paying for a `NoteDto` per note. An id is a path, so this is roughly a
+/// tenth of the bytes and none of the derived-value work.
+#[tauri::command(async)]
+fn search_ids(spec: SearchSpec, state: State<AppState>) -> Vec<String> {
+    let store = state.store.lock().unwrap();
+    let root = store.directory().to_path_buf();
+    ordered_hits(store.notes(), &spec, &root)
         .into_iter()
-        .map(|n| NoteDto::from_note(n, false, &root))
+        .map(|n| n.id().to_string())
         .collect()
 }
 
@@ -316,7 +425,7 @@ fn search(query: String, state: State<AppState>) -> Vec<NoteDto> {
 /// Separate from `open_link`, which creates on miss. An embed pointing at a
 /// note that doesn't exist should say so, not quietly bring one into being
 /// every time the host note is rendered.
-#[tauri::command]
+#[tauri::command(async)]
 fn resolve_title(title: String, state: State<AppState>) -> Option<NoteDto> {
     let store = state.store.lock().unwrap();
     let root = store.directory().to_path_buf();
@@ -325,7 +434,7 @@ fn resolve_title(title: String, state: State<AppState>) -> Option<NoteDto> {
         .map(|n| NoteDto::from_note(n, true, &root))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn read_note(id: String, state: State<AppState>) -> Option<NoteDto> {
     let store = state.store.lock().unwrap();
     let root = store.directory().to_path_buf();
@@ -506,7 +615,7 @@ fn resolved_attachment(name: &str, state: &State<AppState>) -> Result<PathBuf, S
 /// The raw bytes of an attachment, for rendering it inline. Returned as an IPC
 /// response (an ArrayBuffer on the JS side), not a JSON number array, so a
 /// multi-megabyte image doesn't pay serialization overhead on every restyle.
-#[tauri::command]
+#[tauri::command(async)]
 fn read_attachment(name: String, state: State<AppState>) -> Result<tauri::ipc::Response, String> {
     let path = resolved_attachment(&name, &state)?;
     std::fs::read(&path)
@@ -557,7 +666,7 @@ fn reveal_attachment(name: String, state: State<AppState>) -> Result<(), String>
 
 /// Every image already in the vault, newest first — the Insert Image picker
 /// reads bytes for each with `read_attachment` to show a thumbnail.
-#[tauri::command]
+#[tauri::command(async)]
 fn list_image_attachments(state: State<AppState>) -> Vec<String> {
     state.store.lock().unwrap().image_attachments()
 }
@@ -565,7 +674,7 @@ fn list_image_attachments(state: State<AppState>) -> Vec<String> {
 /// Every folder under the Index a note could be filed into, for the "Move to"
 /// menu. Walked fresh each time the menu opens rather than cached — folders
 /// change from outside Envy as easily as from within it.
-#[tauri::command]
+#[tauri::command(async)]
 fn list_subfolders(state: State<AppState>) -> Vec<String> {
     state.store.lock().unwrap().subfolders()
 }
@@ -608,7 +717,7 @@ struct CatalogRow {
 }
 
 /// The `folder:` catalog — every folder with its note count, most-used first.
-#[tauri::command]
+#[tauri::command(async)]
 fn folder_catalog(state: State<AppState>) -> Vec<CatalogRow> {
     state
         .store
@@ -621,7 +730,7 @@ fn folder_catalog(state: State<AppState>) -> Vec<CatalogRow> {
 }
 
 /// The `tag:` catalog — every tag with its note count, most-used first.
-#[tauri::command]
+#[tauri::command(async)]
 fn tag_catalog(state: State<AppState>) -> Vec<CatalogRow> {
     state
         .store
@@ -705,7 +814,7 @@ fn delete_note(id: String, state: State<AppState>) -> Result<(), String> {
 ///
 /// Content is included: the trash preview shows the note's text, and a trashed
 /// note is not in `notes()`, so `read_note` cannot reach it.
-#[tauri::command]
+#[tauri::command(async)]
 fn trashed_notes(fragment: String, state: State<AppState>) -> Vec<NoteDto> {
     let needle = fragment.trim().to_lowercase();
     let store = state.store.lock().unwrap();
@@ -780,6 +889,7 @@ fn set_index_directory(
     }
     let store = NoteStore::open(&path, include_subfolders).map_err(|e| e.to_string())?;
     let count = store.notes().len();
+    let watched = store.directory().to_path_buf();
     *state.store.lock().unwrap() = store;
     // Remembered for next launch, so the choice sticks rather than resetting to
     // the default folder every restart.
@@ -788,12 +898,12 @@ fn set_index_directory(
     // what makes external edits in the new one register at all.
     let handle = app.clone();
     let suppress = Arc::clone(&state.suppress_until);
-    let watcher = envy_core::watch_path(PathBuf::from(&path), move || {
+    let watcher = envy_core::watch_path(watched, move |paths| {
         if std::time::Instant::now() < *suppress.lock().unwrap() {
             return;
         }
         let Some(s) = handle.try_state::<AppState>() else { return };
-        s.store.lock().unwrap().reload();
+        s.store.lock().unwrap().reload_paths(paths);
         let _ = handle.emit("index-changed", ());
     })
     .ok();
@@ -851,7 +961,7 @@ pub struct TemplateDto {
 /// Templates whose name contains `fragment`. An empty fragment (just
 /// "template:" typed so far) matches everything, the same way `tag:` shows
 /// everything until you narrow it.
-#[tauri::command]
+#[tauri::command(async)]
 fn list_templates(fragment: String, state: State<AppState>) -> Vec<TemplateDto> {
     let needle = fragment.trim().to_lowercase();
     state
@@ -921,7 +1031,7 @@ fn template_path(path: &str, state: &State<AppState>) -> Result<PathBuf, String>
 
 /// A template is a plain `.md` file, so this is a plain read — deliberately
 /// not routed through the note store, which never treats one as a note.
-#[tauri::command]
+#[tauri::command(async)]
 fn read_template(path: String, state: State<AppState>) -> Result<String, String> {
     let path = template_path(&path, &state)?;
     std::fs::read_to_string(&path).map_err(|e| e.to_string())
@@ -945,7 +1055,7 @@ fn save_template(path: String, content: String, state: State<AppState>) -> Resul
 /// Sorted by how often each is used rather than alphabetically: completing to
 /// the tag you reach for most is right far more often than completing to the
 /// one that happens to start with an early letter.
-#[tauri::command]
+#[tauri::command(async)]
 fn all_tags(state: State<AppState>) -> Vec<String> {
     let store = state.store.lock().unwrap();
     let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
@@ -962,7 +1072,7 @@ fn all_tags(state: State<AppState>) -> Vec<String> {
 /// Every note's title, newest first — for the search box's autofill of the
 /// title-taking operators (`link:`, `interlink:`, `title:`). The store already
 /// holds notes in modified-descending order, so this is just a projection.
-#[tauri::command]
+#[tauri::command(async)]
 fn all_titles(state: State<AppState>) -> Vec<String> {
     state
         .store
@@ -974,7 +1084,7 @@ fn all_titles(state: State<AppState>) -> Vec<String> {
         .collect()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn inbox_count(state: State<AppState>) -> usize {
     if !inbox_enabled() {
         return 0;
@@ -1006,7 +1116,7 @@ fn keep_on_top(app: tauri::AppHandle) -> bool {
     persisted_keep_on_top(&app)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn vault_counts(state: State<AppState>) -> VaultCounts {
     let store = state.store.lock().unwrap();
     VaultCounts {
@@ -1075,7 +1185,7 @@ pub struct InterlinksDto {
     suggested: Vec<SuggestionDto>,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn interlinks(id: String, state: State<AppState>) -> InterlinksDto {
     let store = state.store.lock().unwrap();
     let Some(note) = store.notes().iter().find(|n| n.id() == id) else {
@@ -1085,7 +1195,7 @@ fn interlinks(id: String, state: State<AppState>) -> InterlinksDto {
             suggested: Vec::new(),
         };
     };
-    let result = envy_core::interlinks_for(note, store.notes());
+    let result = store.interlinks(note);
     let to_dto = |r: &envy_core::InterlinkRef| InterlinkRefDto {
         id: r.id.clone(),
         title: r.title.clone(),
@@ -1105,7 +1215,7 @@ fn interlinks(id: String, state: State<AppState>) -> InterlinksDto {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn can_restore(state: State<AppState>) -> bool {
     state.store.lock().unwrap().can_restore_last_deleted()
 }
@@ -2111,7 +2221,7 @@ struct KindleProgress {
 
 /// The plugged-in Kindle's `My Clippings.txt`, if one is mounted (see
 /// `envy_core::kindle::detection_roots` for where Linux is searched).
-#[tauri::command]
+#[tauri::command(async)]
 fn detect_kindle_clippings() -> Option<String> {
     envy_core::kindle::detect_clippings_file().map(|p| p.to_string_lossy().into_owned())
 }
@@ -2292,16 +2402,20 @@ pub fn run() {
                 }
             };
             // A brand-new Index gets a welcome note, so the first launch isn't
-            // an empty window with no hint of what to type.
+            // an empty window with no hint of what to type. Writing it is the
+            // only thing here that changes what a scan would find, so it is
+            // also the only thing that costs a second read of the folder —
+            // opening the store twice unconditionally meant every launch paid
+            // the whole scan twice.
+            let mut store = store;
             if store.notes().is_empty() {
                 let welcome = dir.join("Welcome to Envy.md");
                 if !welcome.exists() {
                     std::fs::write(&welcome, WELCOME_NOTE)?;
+                    store.reload();
                 }
             }
             seed_sample_templates_if_needed(app.handle(), &dir);
-
-            let store = NoteStore::open(&dir, false)?;
 
             // The launch check is driven by the frontend now (main.ts, gated on
             // the "Check for updates automatically" setting), so it isn't spawned
@@ -2313,7 +2427,11 @@ pub fn run() {
 
             let handle = app.handle().clone();
             let suppress = Arc::clone(&suppress_until);
-            let watcher = envy_core::watch_path(dir.clone(), move || {
+            // The store's own (canonicalized) directory, not `dir`: the paths
+            // the watcher reports are built from whatever path it was handed,
+            // and `reload_paths` matches them against note urls.
+            let watched = store.directory().to_path_buf();
+            let watcher = envy_core::watch_path(watched, move |paths| {
                 // Envy's own writes trip the watcher too. Skipping them avoids
                 // a redundant rescan and, more importantly, avoids reloading
                 // over text still being typed.
@@ -2323,7 +2441,7 @@ pub fn run() {
                 let Some(state) = handle.try_state::<AppState>() else {
                     return;
                 };
-                state.store.lock().unwrap().reload();
+                state.store.lock().unwrap().reload_paths(paths);
                 // The frontend re-runs its query rather than being handed
                 // results, so a reload can't clobber whatever the user has
                 // since typed into the search box.
@@ -2351,6 +2469,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             index_directory,
             search,
+            search_ids,
             read_note,
             resolve_title,
             save_note,

@@ -1002,10 +1002,12 @@ dependencies = [
 name = "envy-core"
 version = "0.1.0"
 dependencies = [
+ "aho-corasick",
  "chrono",
  "dunce",
  "fancy-regex",
  "filetime",
+ "memchr",
  "notify",
  "rayon",
  "serde",

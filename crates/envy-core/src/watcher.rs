@@ -79,35 +79,54 @@ fn is_relevant_path(path: &Path) -> bool {
         .any(|c| c.as_os_str() == crate::store::TRASH_FOLDER_NAME)
 }
 
-/// Watches `directory` recursively, calling `on_change` once per settled burst.
+/// Watches `directory` recursively, calling `on_change` once per settled
+/// burst with every path that burst named.
+///
+/// The paths are what lets the store apply a one-file edit as a one-file edit
+/// (`NoteStore::reload_paths`) instead of rescanning the Index — they were
+/// already being filtered here, and were simply being thrown away. They are
+/// de-duplicated but not otherwise interpreted: a burst can name a directory,
+/// a file that no longer exists, or the same file several times, and deciding
+/// what each means is the store's job.
 ///
 /// `on_change` runs on the watcher's own thread, not the caller's.
 pub fn watch<F>(directory: &Path, on_change: F) -> notify::Result<IndexWatcher>
 where
-    F: Fn() + Send + 'static,
+    F: Fn(&[PathBuf]) + Send + 'static,
 {
-    let (tx, rx) = mpsc::channel::<()>();
+    let (tx, rx) = mpsc::channel::<Vec<PathBuf>>();
 
     let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
         let Ok(event) = res else { return };
         if !is_meaningful(&event.kind) {
             return;
         }
-        if !event.paths.iter().any(|p| is_relevant_path(p)) {
+        let paths: Vec<PathBuf> = event
+            .paths
+            .iter()
+            .filter(|p| is_relevant_path(p))
+            .cloned()
+            .collect();
+        if paths.is_empty() {
             return;
         }
         // Ignore a closed receiver: it just means the watcher outlived the
         // debounce thread during shutdown.
-        let _ = tx.send(());
+        let _ = tx.send(paths);
     })?;
     watcher.watch(directory, RecursiveMode::Recursive)?;
 
     // Coalesce: block for the next event, then keep draining until the channel
     // stays quiet for DEBOUNCE before reporting once.
     thread::spawn(move || {
-        while rx.recv().is_ok() {
-            while rx.recv_timeout(DEBOUNCE).is_ok() {}
-            on_change();
+        while let Ok(first) = rx.recv() {
+            let mut batch = first;
+            while let Ok(more) = rx.recv_timeout(DEBOUNCE) {
+                batch.extend(more);
+            }
+            batch.sort();
+            batch.dedup();
+            on_change(&batch);
         }
     });
 
@@ -117,7 +136,7 @@ where
 /// Convenience for callers that only have an owned path.
 pub fn watch_path<F>(directory: PathBuf, on_change: F) -> notify::Result<IndexWatcher>
 where
-    F: Fn() + Send + 'static,
+    F: Fn(&[PathBuf]) + Send + 'static,
 {
     watch(&directory, on_change)
 }

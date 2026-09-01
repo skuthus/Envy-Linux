@@ -34,6 +34,15 @@ authors = ["Skyler Schoos"]
 # verbatim is still worth more than asymptotics.
 fancy-regex = "0.14"
 rayon = "1.10"
+# Suggested links match every note title in the Index against one note's text.
+# Doing that title-by-title is one substring scan per title per note read —
+# 36 ms on a 30,000-note vault for a well-linked note. One Aho-Corasick pass
+# finds all of them at once, and the automaton is built once per Index rather
+# than once per lookup. Already in the tree as a `fancy-regex` dependency.
+aho-corasick = "1.1"
+# `memchr2` behind the case-folding substring search that replaced storing a
+# lowercased copy of every note body; see `Note::folded_content`.
+memchr = "2"
 # std::fs::canonicalize returns a \\?\ UNC path on Windows, which leaks into
 # every note id and shows up in error messages. dunce hands back the ordinary
 # form wherever one exists.

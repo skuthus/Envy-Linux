@@ -20,6 +20,7 @@ import {
   isGhostLinkForTest,
   plainTextField,
   refreshEmbeds,
+  invalidateAttachments,
   searchQueryField,
   setPlainText,
   setSearchQuery,
@@ -111,9 +112,41 @@ const folderChipEl = document.getElementById('note-folder')!
 const editorEl = document.getElementById('editor')!
 const emptyEl = document.getElementById('empty-state')!
 
-let results: NoteDto[] = []
+/// The list, in display order — and, past one page, *sparse*.
+///
+/// `results.length` is always the full number of matches, so every index in
+/// the app still means the same thing it did when the whole list was here.
+/// What changed is that a slot may be `undefined`: the backend now returns one
+/// page of notes plus a total rather than a `NoteDto` for every match, because
+/// on a 30,000-note vault every match was 19.3 MB of JSON per debounced
+/// keystroke — parsed, allocated and then almost entirely ignored by a list
+/// that only ever paints about thirty rows. Missing pages are fetched by
+/// `loadRange` as the window (or the highlight) reaches them.
+let results: (NoteDto | undefined)[] = []
+/// `results` is held in *display* order, so a render never has to sort. The
+/// order depends only on the list itself, the sort field/direction and the pin
+/// set — none of which a render changes — yet `renderList` re-sorted and
+/// re-pinned on every call, and one arrow key calls it twice. The few places
+/// that can actually invalidate the order mark it dirty instead, which puts a
+/// render back at O(visible rows) on a vault of any size.
+///
+/// Only meaningful while the whole result set is in memory; past that the
+/// backend owns the order — see `reorderResults`.
+let orderDirty = true
+function markOrderDirty() {
+  orderDirty = true
+}
 let highlighted = 0
 let openNoteId: string | null = null
+/// The open note as last read or saved.
+///
+/// The title bar's tags, folder chip and due pill used to look it up in
+/// `results`. That worked while the whole list was in memory; past one page
+/// the open note's row may not be loaded at all, and a lookup that missed
+/// would silently blank the chips (or, in `commitRename`, compare the typed
+/// title against an empty string). Holding the note it already fetched costs
+/// one reference and removes the list from the question entirely.
+let openNoteDto: NoteDto | null = null
 /// The open note's text as last loaded from or written to disk.
 ///
 /// Saving is guarded against this rather than fired unconditionally. Without
@@ -555,13 +588,41 @@ async function linkSuggestion(s: SuggestionDto) {
   await refreshInterlinks()
 }
 
+/// Backlinks and suggestions come from a scan of the whole vault, so running
+/// them from every 400 ms autosave made typing the most expensive thing the app
+/// does. The panel is a reference, not a live readout of the caret: a trailing
+/// debounce that resets on each save settles it about two seconds after you stop
+/// and costs nothing at all while you keep going. Opening a note, and the
+/// explicit actions that rewrite links (rename, extract, linking a suggestion),
+/// still refresh immediately.
+let interlinksTimer: number | undefined
+const INTERLINKS_IDLE_MS = 2000
+
+function scheduleInterlinks() {
+  if (interlinksTimer !== undefined) clearTimeout(interlinksTimer)
+  interlinksTimer = window.setTimeout(() => {
+    interlinksTimer = undefined
+    void refreshInterlinks()
+  }, INTERLINKS_IDLE_MS)
+}
+
 async function refreshInterlinks() {
-  if (!openNoteId) {
+  // An immediate refresh subsumes whatever the debounce was still waiting for.
+  if (interlinksTimer !== undefined) {
+    clearTimeout(interlinksTimer)
+    interlinksTimer = undefined
+  }
+  const id = openNoteId
+  if (!id) {
     currentInterlinks = { links: [], backlinks: [], suggested: [] }
     renderInterlinks()
     return
   }
-  currentInterlinks = await invoke<InterlinksDto>('interlinks', { id: openNoteId })
+  const fetched = await invoke<InterlinksDto>('interlinks', { id })
+  // Another note opened while the scan ran — showing its predecessor's links
+  // is worse than showing none, and the open note has its own refresh coming.
+  if (openNoteId !== id) return
+  currentInterlinks = fetched
   renderInterlinks()
 }
 
@@ -616,10 +677,12 @@ async function followLink(target: string) {
   cancelPendingSave()
   await save()
   const note = await invoke<NoteDto>('open_link', { target })
+  void refreshCompletionSources()
   await runSearch()
   await openNote(note.id)
-  highlighted = results.findIndex((n) => n.id === note.id)
+  highlighted = await indexOfNote(note.id)
   if (highlighted < 0) highlighted = 0
+  await ensureLoaded(highlighted)
   renderList()
   view.focus()
 }
@@ -628,6 +691,14 @@ async function followLink(target: string) {
 // Pasting or dropping an image writes the file into the vault's Attachments/
 // folder and inserts an `![[filename]]` embed the styler renders inline. Mirrors
 // the Mac's paste/drop handlers in MarkdownTextView.
+
+/// The last note this window wrote, and when. Rust already suppresses the
+/// watcher for a moment after a write, but an `index-changed` raised by another
+/// window (or by a rescan that outlasts that window) still arrives, and
+/// re-reading a file we just wrote is a round trip for a string we already hold.
+let lastOwnWriteId: string | null = null
+let lastOwnWriteAt = 0
+const OWN_WRITE_WINDOW_MS = 1500
 
 /// Pulls the open note's text back from disk when it changed underneath the
 /// buffer — a transclusion source edited elsewhere, an attachment renamed (which
@@ -909,10 +980,15 @@ async function save() {
       content,
     })
     openNoteSavedContent = content
+    // What the watcher is about to report, if the suppression window in Rust
+    // misses it, is this write. `reloadOpenNoteFromDisk` would then re-read a
+    // file it already has in the buffer, so the index-changed handler skips it.
+    lastOwnWriteId = saved.id
+    lastOwnWriteAt = Date.now()
     applySavedNote(saved)
     // Editing text can add or remove a [[link]], which changes what this note
-    // points at and what it merely mentions.
-    void refreshInterlinks()
+    // points at and what it merely mentions. Debounced: see scheduleInterlinks.
+    scheduleInterlinks()
   } catch (e) {
     console.error('save failed', e)
   }
@@ -923,22 +999,33 @@ async function save() {
 /// the row, and possibly the sort position — none of which the watcher will
 /// report, since a write suppresses it on purpose.
 function applySavedNote(saved: NoteDto) {
-  const idx = results.findIndex((n) => n.id === saved.id)
+  const idx = results.findIndex((n) => n?.id === saved.id)
   if (idx >= 0) {
     // Keep the content field: `results` entries carry it as null by design,
     // and the row only reads derived values anyway.
     results[idx] = { ...saved, content: null }
   }
-  if (openNoteId === saved.id) renderDueBadge(saved.due)
-  // Re-render so a changed due date or modified time moves the row under the
-  // current sort. The open note keeps the highlight across the reorder.
-  const keepId = results[highlighted]?.id ?? openNoteId
-  renderList()
-  const moved = results.findIndex((n) => n.id === keepId)
-  if (moved >= 0 && moved !== highlighted) {
-    highlighted = moved
-    renderList()
+  if (openNoteId === saved.id) {
+    openNoteDto = saved
+    renderDueBadge(saved.due)
   }
+  // A changed due date or modified time can move the row under the current
+  // sort, so the order has to be recomputed — but resolve the highlight against
+  // the *new* order before painting, rather than rendering once at the old
+  // index and again at the corrected one.
+  const keepId = results[highlighted]?.id ?? openNoteId
+  if (!fullyLoaded()) {
+    // Paged: the row that moved shifts every index after it, so the order has
+    // to come back from the backend rather than be recomputed from the pages
+    // this window happens to hold.
+    void refetchList(keepId)
+    return
+  }
+  markOrderDirty()
+  reorderResults()
+  const moved = results.findIndex((n) => n?.id === keepId)
+  if (moved >= 0) highlighted = moved
+  renderList()
 }
 
 function renderDueBadge(due: string | null) {
@@ -1072,8 +1159,7 @@ function setTagColor(tag: string, color: string | null) {
   if (color) all[tag] = color
   else delete all[tag]
   localStorage.setItem('tagColors', JSON.stringify(all))
-  const open = results.find((n) => n.id === openNoteId)
-  renderTitleBarTags(open?.tags ?? [])
+  renderTitleBarTags(openNoteDto?.tags ?? [])
 }
 
 function tagColorMenu(tag: string): MenuItemSpec[] {
@@ -1301,6 +1387,24 @@ function sortNotes(notes: NoteDto[]): NoteDto[] {
   return sorted
 }
 
+/// Brings `results` back into display order if anything invalidated it.
+///
+/// Only while the whole result set is in memory. Past one page the backend
+/// owns the order — it is the only side that can see the rows this window
+/// doesn't hold — and re-sorting the fragment here would splice a locally
+/// ordered piece into a globally ordered list. Keeping the local path for the
+/// small case is not just an optimisation: `Intl.Collator` is ICU root
+/// collation and the Rust name sort is an approximation of it (see
+/// `fold_char`), so a vault that fits in one page keeps exactly the order it
+/// had before paging existed.
+function reorderResults(): (NoteDto | undefined)[] {
+  if (!orderDirty) return results
+  orderDirty = false
+  if (!fullyLoaded()) return results
+  results = applyPinning(sortNotes(results as NoteDto[]))
+  return results
+}
+
 function renderSortHeader() {
   const fields: Array<[SortField, string]> = [
     ['name', 'Name'],
@@ -1333,7 +1437,15 @@ function renderSortHeader() {
         saveSetting('noteSortField', sortField)
         saveSetting('noteSortAscending', sortAscending)
         renderSortHeader()
-        renderList()
+        if (fullyLoaded()) {
+          markOrderDirty()
+          renderList()
+          return
+        }
+        // Paged: the head of the new order is a different set of rows, so
+        // nothing already fetched survives. The highlight keeps its index
+        // rather than its note, which is what the local re-sort did too.
+        void refetchList(null)
       }
       return b
   })
@@ -1470,7 +1582,13 @@ const STICKY_PIN_LIMIT = 3
 function computeStickyCount(): number {
   if (!settings.keepPinnedNotesVisible) return 0
   let n = 0
-  while (n < STICKY_PIN_LIMIT && n < results.length && pinnedIds.has(results[n].id)) n++
+  // Page 0 is always loaded and the pins always head it, so this never reads a
+  // row that hasn't arrived — but it asks rather than assumes.
+  while (n < STICKY_PIN_LIMIT && n < results.length) {
+    const id = results[n]?.id
+    if (!id || !pinnedIds.has(id)) break
+    n++
+  }
   return n
 }
 
@@ -1492,11 +1610,38 @@ function hidePinnedStrip() {
 /// date style can produce. "Yesterday, 12:46 PM" in Omarchy Mono is wider than
 /// the 102px that was measured for the previous face; measuring live means a
 /// smart date is never ellipsized.
-function syncDateColumnWidth() {
+///
+/// Seven `getBoundingClientRect` calls is a synchronous layout each, and this
+/// ran from every list render — including both renders of an arrow key press.
+/// The result depends only on the face, the interface scale, the bold-rows flag
+/// and the date style (the probe is `max-width:none`, so the pane's width is not
+/// an input), plus the calendar day, which changes what the sample dates format
+/// to. Key on exactly those and re-measure only when one of them moves. Reading
+/// inline custom properties costs no layout, unlike measuring one. `force` is
+/// for the `document.fonts.ready` callers: a web font can land without any of
+/// these changing and shifts every metric when it does.
+let dateColKey: string | null = null
+
+function dateColumnKey(): string {
+  const root = document.documentElement.style
+  return [
+    root.getPropertyValue('--envy-font-family'),
+    root.getPropertyValue('--envy-ui-scale'),
+    document.body.classList.contains('bold-file-list') ? 'b' : '',
+    settings.dateDisplayStyle,
+    new Date().getDate(),
+  ].join('|')
+}
+
+function syncDateColumnWidth(force = false) {
   if (!listPaneEl.classList.contains('has-date')) {
+    dateColKey = null
     listPaneEl.style.removeProperty('--envy-date-col')
     return
   }
+  const key = dateColumnKey()
+  if (!force && key === dateColKey) return
+  dateColKey = key
   const probe = document.createElement('span')
   probe.className = 'row-date'
   probe.style.cssText =
@@ -1534,7 +1679,7 @@ function dateColumnSamples(): string[] {
 
 function renderList() {
   folderColorCache = folderColors()
-  results = applyPinning(sortNotes(results))
+  reorderResults()
   // Whether the trailing value column is reserved at all. There is only one —
   // it shows whichever date the list is sorted by — and "Show date modified"
   // governs it entirely, so with that off the titles get the full width.
@@ -1544,7 +1689,9 @@ function renderList() {
   if (stickyCount === 0) {
     hidePinnedStrip()
   } else {
-    pinnedStripEl.replaceChildren(...results.slice(0, stickyCount).map((n, i) => buildRow(n, i)))
+    pinnedStripEl.replaceChildren(
+      ...(results.slice(0, stickyCount) as NoteDto[]).map((n, i) => buildRow(n, i)),
+    )
     pinnedStripEl.classList.remove('hidden')
   }
   // trash: and template: replace the list's children wholesale, so the spacer
@@ -1564,10 +1711,17 @@ function renderList() {
 /// doesn't exist on screen and never scroll to it.
 let lastScrolledId: string | null = null
 function scrollHighlightIntoView() {
-  const id = results[highlighted]?.id ?? null
+  if (highlighted < 0 || highlighted >= results.length) {
+    lastScrolledId = null
+    return
+  }
+  // Keyed by the note where the row is loaded and by index where it isn't: a
+  // row whose page hasn't arrived still has a position to scroll to, and
+  // returning early on it would leave the highlight off screen until the page
+  // landed.
+  const id = results[highlighted]?.id ?? `#${highlighted}`
   if (id === lastScrolledId) return
   lastScrolledId = id
-  if (id === null) return
   // A row in the sticky strip is always on screen; nothing to scroll to.
   if (highlighted < stickyCount) return
   const top = (highlighted - stickyCount) * rowHeight
@@ -1600,6 +1754,33 @@ function scheduleOverflowMeasure() {
   })
 }
 
+/// A row whose page hasn't arrived yet: the right height and nothing else.
+/// Deliberately not a guess at the note — showing the wrong title for a beat
+/// is worse than showing none, and a list that flickers through other people's
+/// notes as you scroll is exactly the bug virtualization is supposed to avoid.
+/// The zero-width space is what gives it a line's height without painting.
+function buildBlankRow(): HTMLElement {
+  const row = document.createElement('div')
+  row.className = 'row row-pending'
+  row.setAttribute('role', 'option')
+  row.setAttribute('aria-selected', 'false')
+  const title = document.createElement('div')
+  title.className = 'row-title'
+  const text = document.createElement('span')
+  text.className = 'row-title-text'
+  text.textContent = '\u200B'
+  title.append(text)
+  const main = document.createElement('div')
+  main.className = 'row-main'
+  main.append(title)
+  row.append(main)
+  return row
+}
+
+/// Which way the last window moved, so the prefetch goes ahead of the scroll
+/// rather than behind it.
+let lastWindowScrollTop = 0
+
 function renderRowWindow(force = false) {
   const viewport = listViewport()
   // Offsets are in *scrolling* rows — the results minus the ones lifted into
@@ -1610,13 +1791,21 @@ function renderRowWindow(force = false) {
     results.length,
     stickyCount + Math.ceil((listEl.scrollTop + viewport) / rowHeight) + ROW_OVERSCAN,
   )
+  // Fetch what the window needs, plus one page beyond it in the direction of
+  // travel — so a scroll that keeps going finds the next page already there
+  // rather than blank rows while it arrives.
+  const goingDown = listEl.scrollTop >= lastWindowScrollTop
+  lastWindowScrollTop = listEl.scrollTop
+  void loadRange(goingDown ? from : from - PAGE_SIZE, goingDown ? to + PAGE_SIZE : to)
+
   if (!force && from === renderedFrom && to === renderedTo) return
   renderedFrom = from
   renderedTo = to
 
   const rows: HTMLElement[] = []
   for (let i = from; i < to; i++) {
-    const row = buildRow(results[i], i)
+    const note = results[i]
+    const row = note ? buildRow(note, i) : buildBlankRow()
     row.style.top = `${(i - stickyCount) * rowHeight}px`
     rows.push(row)
   }
@@ -1635,8 +1824,11 @@ function renderRowWindow(force = false) {
   // and re-rendering the corrected window with force off, makes it settle in one
   // step and never loop. Measured fractionally (not `offsetHeight`, which rounds)
   // so rows don't drift a fraction of a pixel apart down a long list.
+  // A blank row is not a fair sample — it carries no date and no preview — so
+  // the measurement takes the first row that is actually a note.
   if (force) {
-    const measured = rows[0]?.getBoundingClientRect().height
+    const sample = rows.find((_, k) => results[from + k] !== undefined)
+    const measured = sample?.getBoundingClientRect().height
     if (measured && Math.abs(measured - rowHeight) > 0.5) {
       rowHeight = measured
       listSizer.style.height = `${(results.length - stickyCount) * rowHeight}px`
@@ -1865,9 +2057,10 @@ function buildRow(note: NoteDto, i: number): HTMLElement {
 
       row.onclick = (e) => {
         if (e.shiftKey) {
-          selectRange(i)
-          renderList()
-          void openHighlighted()
+          void selectRange(i).then(() => {
+            renderList()
+            void openHighlighted(false)
+          })
         } else if (e.ctrlKey) {
           toggleMultiSelect(i)
           renderList()
@@ -2104,16 +2297,23 @@ inboxBadgeEl.onclick = () => {
 /// The next fleeting note waiting, excluding the one being acted on — so
 /// working through a backlog is a run of decisions rather than a series of
 /// round trips back to the list.
+/// Only the rows actually in memory are searched. Past one page that means
+/// the backlog has to have a fleeting note among the loaded rows for the
+/// advance to happen — which it does whenever the list is the inbox itself,
+/// the only mode this is reachable from — and otherwise the editor simply
+/// closes, which is what it already did when the backlog ran out.
 function nextFleetingAfter(id: string): NoteDto | null {
-  return results.find((n) => n.isInbox && n.id !== id) ?? null
+  return results.find((n) => n?.isInbox && n.id !== id) ?? null
 }
 
 async function moveToNextFleeting(actedOnId: string) {
   const next = nextFleetingAfter(actedOnId)
   await runSearch()
-  if (next && results.some((n) => n.id === next.id)) {
+  const at = next ? await indexOfNote(next.id) : -1
+  if (next && at >= 0) {
     await openNote(next.id)
-    highlighted = Math.max(0, results.findIndex((n) => n.id === next.id))
+    highlighted = at
+    await ensureLoaded(highlighted)
     renderList()
   } else {
     closeEditor()
@@ -2183,6 +2383,7 @@ document.getElementById('fleeting-delete')!.onclick = async () => {
   cancelPendingSave()
   openNoteId = null
   await invoke('delete_note', { id })
+  void refreshCompletionSources()
   await moveToNextFleeting(id)
 }
 
@@ -2272,11 +2473,13 @@ function trashMenuItems(note: NoteDto): MenuItemSpec[] {
 async function restoreTrashed(note: NoteDto) {
   const restored = await invoke<NoteDto>('restore_from_trash', { id: note.id })
   migratePin(note.id, restored.id)
+  void refreshCompletionSources()
   await runSearch()
 }
 
 async function deleteTrashed(note: NoteDto) {
   await invoke('delete_from_trash', { id: note.id })
+  void refreshCompletionSources()
   await runSearch()
 }
 
@@ -2370,11 +2573,12 @@ document.getElementById('template-create')!.onclick = async () => {
     path: openTemplatePath,
     title: name,
   })
+  void refreshCompletionSources()
   // Leaves template-browsing mode: you asked for a note, so show the note.
   searchInput.value = ''
   await runSearch()
   await openNote(created.id)
-  selectSingle(Math.max(0, results.findIndex((n) => n.id === created.id)))
+  selectSingle(Math.max(0, await indexOfNote(created.id)))
   renderList()
   view.focus()
 }
@@ -2414,8 +2618,198 @@ function jumpToFirstSearchMatch(force = false) {
   })
 }
 
+// --- Paging -----------------------------------------------------------------
+// The list is fetched a page at a time. `results` is sparse past the first
+// page (see its declaration); everything below fills it in.
+
+/// Rows per fetch. Wide enough that any ordinary vault comes back whole in one
+/// call — below this the list behaves exactly as it did when the backend sent
+/// everything — and small enough that the page a keystroke pays for is a
+/// couple of hundred KB rather than nineteen megabytes.
+const PAGE_SIZE = 300
+
+interface SearchSpec {
+  query: string
+  sortField: SortField
+  sortAscending: boolean
+  pinned: string[]
+  hideInbox: boolean
+}
+
+interface SearchPage {
+  notes: NoteDto[]
+  total: number
+}
+
+/// The spec the rows currently in `results` were fetched under. Every later
+/// page has to use this one rather than reading the live search box and sort
+/// header again: a page fetched under a spec the earlier pages weren't would
+/// splice rows from two different orders into one list.
+let activeSpec: SearchSpec = {
+  query: '',
+  sortField: 'date',
+  sortAscending: false,
+  pinned: [],
+  hideInbox: false,
+}
+
+/// What the list *would* be fetched under right now.
+///
+/// The inbox filter is part of it because the list is paged: filtering fleeting
+/// notes out after a page arrives would leave short pages and a total that
+/// counts rows the list never shows. The rule itself is unchanged — never
+/// hidden when the query is already about the inbox, since asking for "inbox:"
+/// and being shown nothing because of a setting elsewhere would be its own bug.
+function currentSpec(): SearchSpec {
+  const query = searchInput.value
+  return {
+    query,
+    sortField,
+    sortAscending,
+    pinned: [...pinnedIds],
+    hideInbox: !settings.showInboxInMainList && !query.toLowerCase().includes('inbox:'),
+  }
+}
+
+/// Whether the whole result set is in memory. Below one page it always is, and
+/// then every path that walks the list — the local sort, a shift-range, the
+/// "where did this note go" lookups — is exactly what it was before paging.
+function fullyLoaded(): boolean {
+  return results.length <= PAGE_SIZE
+}
+
+/// Pages already in `results`, and the fetches still on their way. Keyed by
+/// page index. Both are cleared whenever the list is replaced, so a page from
+/// the previous query can never land in the current one.
+const loadedPages = new Set<number>()
+const pagesInFlight = new Map<number, Promise<void>>()
+/// The full id list for the current spec, once something has needed it.
+let allIdsCache: string[] | null = null
+
+/// Empties the list and everything keyed on it. The browse modes (trash,
+/// templates, the catalogs) replace the list wholesale, so the page
+/// bookkeeping has to go with it rather than survive into the next search.
+function clearResults() {
+  results = []
+  loadedPages.clear()
+  pagesInFlight.clear()
+  allIdsCache = null
+}
+
+/// Installs a freshly fetched page 0 as the whole list.
+function installFirstPage(page: SearchPage) {
+  results = new Array<NoteDto | undefined>(page.total)
+  for (let i = 0; i < page.notes.length; i++) results[i] = page.notes[i]
+  loadedPages.clear()
+  pagesInFlight.clear()
+  allIdsCache = null
+  // Normally one page, but the test hook installs a whole list this way — mark
+  // every page the rows actually cover, so nothing is re-fetched.
+  for (let p = 0; p * PAGE_SIZE < page.notes.length; p++) loadedPages.add(p)
+}
+
+/// Fetches whatever pages `[from, to)` needs and paints them as they land.
+///
+/// Deduped by page, and stamped with the search generation: a page that comes
+/// back after the query moved on is dropped rather than written into a list it
+/// no longer describes.
+async function loadRange(from: number, to: number): Promise<void> {
+  const first = Math.max(0, Math.floor(from / PAGE_SIZE))
+  const last = Math.min(Math.ceil(results.length / PAGE_SIZE), Math.ceil(to / PAGE_SIZE))
+  const waits: Array<Promise<void>> = []
+  for (let page = first; page < last; page++) {
+    if (loadedPages.has(page)) continue
+    const pending = pagesInFlight.get(page)
+    if (pending) {
+      waits.push(pending)
+      continue
+    }
+    const gen = searchGeneration
+    const offset = page * PAGE_SIZE
+    const fetch = invoke<SearchPage>('search', { spec: activeSpec, offset, limit: PAGE_SIZE })
+      .then((got) => {
+        if (gen !== searchGeneration) return
+        for (let i = 0; i < got.notes.length; i++) results[offset + i] = got.notes[i]
+        loadedPages.add(page)
+        // The rows may be on screen already, as blanks.
+        renderRowWindow(true)
+      })
+      .catch((err) => {
+        console.error('could not load a page of results', err)
+      })
+      .finally(() => {
+        if (pagesInFlight.get(page) === fetch) pagesInFlight.delete(page)
+      })
+    pagesInFlight.set(page, fetch)
+    waits.push(fetch)
+  }
+  await Promise.all(waits)
+}
+
+/// Makes sure one row is in memory, for the callers that are about to read it
+/// — the highlight moving, a note being opened. Returns immediately when it
+/// already is, which is every case on a vault of ordinary size.
+async function ensureLoaded(index: number): Promise<void> {
+  if (index < 0 || index >= results.length || results[index]) return
+  await loadRange(index, index + 1)
+}
+
+/// Every matching note's id, in list order — the cheap command, not a page of
+/// notes. Cached for the life of the current result set, since the only things
+/// that can change it also replace the list.
+async function allResultIds(): Promise<string[]> {
+  if (allIdsCache) return allIdsCache
+  const gen = searchGeneration
+  const ids = await invoke<string[]>('search_ids', { spec: activeSpec })
+  if (gen !== searchGeneration) return ids
+  allIdsCache = ids
+  return ids
+}
+
+/// Where a note sits in the full order, or -1. Answers from the loaded rows
+/// when it can — which is always, on a vault that fits in one page — and only
+/// falls back to the id list when the row hasn't been fetched.
+async function indexOfNote(id: string | null): Promise<number> {
+  if (!id) return -1
+  const local = results.findIndex((n) => n?.id === id)
+  if (local >= 0 || fullyLoaded()) return local
+  return (await allResultIds()).indexOf(id)
+}
+
+/// Re-reads the list after something moved a row within it — a save that
+/// changed the sort key, a pin, a sort-header click.
+///
+/// Everything already fetched is dropped rather than patched: one row moving
+/// shifts every index after it, so pages held from before the change would
+/// interleave rows from two different orders. Cheaper than it sounds — it is
+/// one page, the same call a keystroke makes, and it is only ever taken on the
+/// paged path.
+async function refetchList(keepId: string | null): Promise<void> {
+  const gen = ++searchGeneration
+  // Only the ordering is re-read. The query stays as it was last *searched*:
+  // the box may already hold a keystroke whose debounce hasn't run, and this
+  // is a reorder of the list on screen, not a new search.
+  activeSpec = { ...activeSpec, sortField, sortAscending, pinned: [...pinnedIds] }
+  const page = await invoke<SearchPage>('search', {
+    spec: activeSpec,
+    offset: 0,
+    limit: PAGE_SIZE,
+  })
+  if (gen !== searchGeneration) return
+  installFirstPage(page)
+  if (keepId) {
+    const moved = await indexOfNote(keepId)
+    if (gen !== searchGeneration) return
+    if (moved >= 0) highlighted = moved
+  }
+  highlighted = Math.max(0, Math.min(results.length - 1, highlighted))
+  await ensureLoaded(highlighted)
+  if (gen !== searchGeneration) return
+  renderList()
+}
+
 /// The search box searches as you type, but each run fans out into several IPC
-/// calls (the query plus badge/completion/count refreshes) and a full
+/// calls (the query plus the badge and count refreshes) and a full
 /// re-render — firing that on every keystroke was the bulk of the box's typing
 /// cost. Debouncing coalesces a burst of keystrokes into one run. Only this
 /// per-keystroke path is debounced; every other `runSearch` caller (selecting a
@@ -2434,12 +2828,44 @@ function scheduleSearch() {
 /// Run `fn` only once the query on screen has actually been searched. Enter and
 /// the arrow keys act on `results`; if a debounced search is still pending they
 /// would otherwise act on the previous query's list, so flush it first.
+///
+/// Waits on whatever run is in flight *last*, not merely on the one it started:
+/// the watcher or a setting change can supersede ours mid-flight, and acting on
+/// a list that is about to be replaced is the same bug in a different disguise.
 function afterPendingSearch(fn: () => void) {
-  if (searchDebounceTimer === undefined) fn()
-  else void runSearch().then(fn)
+  if (searchDebounceTimer === undefined) {
+    fn()
+    return
+  }
+  void runSearch().then(function settled(): void | Promise<void> {
+    if (searchInFlight) return searchInFlight.then(settled)
+    fn()
+  })
 }
 
-async function runSearch() {
+/// Which run's reply is still wanted. Overlapping searches are ordinary here —
+/// a keystroke, the watcher and a settings toggle can all be in flight at once —
+/// and nothing orders the replies, so an older one landing last would leave the
+/// list showing a query that is no longer in the box. Every await inside a run
+/// re-checks its stamp and drops out if a newer run has started.
+let searchGeneration = 0
+
+/// The newest run still in flight, for callers that must act on the final list.
+let searchInFlight: Promise<void> | undefined
+
+function runSearch(): Promise<void> {
+  // The flag is cleared inside `finally`, which runs before `run` itself
+  // settles — so a `.then` on the returned promise always sees it already
+  // cleared unless a *newer* run has begun in the meantime.
+  const run: Promise<void> = performSearch().finally(() => {
+    if (searchInFlight === run) searchInFlight = undefined
+  })
+  searchInFlight = run
+  return run
+}
+
+async function performSearch() {
+  const gen = ++searchGeneration
   // A direct run supersedes any keystroke-debounced one still waiting.
   if (searchDebounceTimer !== undefined) {
     clearTimeout(searchDebounceTimer)
@@ -2455,8 +2881,11 @@ async function runSearch() {
 
   const template = templateFragment()
   if (template !== null) {
-    templateResults = await invoke<TemplateDto[]>('list_templates', { fragment: template })
-    results = []
+    const found = await invoke<TemplateDto[]>('list_templates', { fragment: template })
+    if (gen !== searchGeneration) return
+    templateResults = found
+    clearResults()
+    markOrderDirty()
     trashResults = []
     highlighted = 0
     trashPreviewEl.classList.add('hidden')
@@ -2466,8 +2895,11 @@ async function runSearch() {
 
   const trash = trashFragment()
   if (trash !== null) {
-    trashResults = await invoke<NoteDto[]>('trashed_notes', { fragment: trash })
-    results = []
+    const found = await invoke<NoteDto[]>('trashed_notes', { fragment: trash })
+    if (gen !== searchGeneration) return
+    trashResults = found
+    clearResults()
+    markOrderDirty()
     templateResults = []
     highlighted = 0
     // The editor belongs to the Index, not to the trash — hide it rather than
@@ -2479,8 +2911,11 @@ async function runSearch() {
 
   const catalog = catalogMode()
   if (catalog !== null) {
-    catalogRows = await invoke<CatalogRow[]>(catalog === 'tag' ? 'tag_catalog' : 'folder_catalog')
-    results = []
+    const rows = await invoke<CatalogRow[]>(catalog === 'tag' ? 'tag_catalog' : 'folder_catalog')
+    if (gen !== searchGeneration) return
+    catalogRows = rows
+    clearResults()
+    markOrderDirty()
     trashResults = []
     templateResults = []
     highlighted = 0
@@ -2492,16 +2927,19 @@ async function runSearch() {
   trashResults = []
   templateResults = []
   trashPreviewEl.classList.add('hidden')
-  void refreshCompletionSources()
   void refreshVaultCounts()
-  results = await invoke<NoteDto[]>('search', { query: searchInput.value })
-  // Fleeting notes can be kept out of the way until you go looking for them.
-  // Never hidden when the query is already about the inbox, though — asking
-  // for "inbox:" and being shown nothing because of a setting elsewhere would
-  // be its own bug.
-  if (!settings.showInboxInMainList && !searchInput.value.toLowerCase().includes('inbox:')) {
-    results = results.filter((n) => !n.isInbox)
-  }
+  // Fleeting notes can be kept out of the way until you go looking for them —
+  // the backend applies that now, along with the sort and the pins, because
+  // only it can see the rows this window hasn't fetched. See `currentSpec`.
+  activeSpec = currentSpec()
+  const page = await invoke<SearchPage>('search', {
+    spec: activeSpec,
+    offset: 0,
+    limit: PAGE_SIZE,
+  })
+  if (gen !== searchGeneration) return
+  installFirstPage(page)
+  markOrderDirty()
   highlighted = 0
   renderList()
 }
@@ -2521,6 +2959,8 @@ async function openNote(id: string) {
   const note = await invoke<NoteDto | null>('read_note', { id })
   if (!note) return
   openNoteId = note.id
+  // Held for the title bar, which used to hunt for this row in `results`.
+  openNoteDto = note
   openTemplatePath = null
   openNoteSavedContent = note.content ?? ''
   titleEl.value = note.title
@@ -2550,11 +2990,15 @@ async function openNote(id: string) {
   await refreshInterlinks()
 }
 
-async function openHighlighted() {
+/// `rerender` is off for callers that have already painted the new highlight —
+/// opening a note changes nothing in `results`, so their render is the only one
+/// needed and a second full list render per arrow key is pure waste.
+async function openHighlighted(rerender = true) {
+  await ensureLoaded(highlighted)
   const target = results[highlighted]
   if (!target) return
   await openNote(target.id)
-  renderList()
+  if (rerender) renderList()
 }
 
 /// Moves the list selection by one row and shows what it lands on — the way the
@@ -2564,14 +3008,14 @@ async function openHighlighted() {
 /// note list. Shared by the search box and the window-level handler, so arrows
 /// navigate whether or not the search field happens to hold focus — otherwise
 /// they fall through to the browser and merely scroll the list.
-function arrowNavigate(delta: number, extend: boolean) {
+async function arrowNavigate(delta: number, extend: boolean) {
   const catalog = catalogMode()
   const inTemplate = templateFragment() !== null
   const inTrash = trashFragment() !== null
   if (extend && !inTemplate && !inTrash && catalog === null) {
-    extendSelection(delta)
+    await extendSelection(delta)
     renderList()
-    void openHighlighted()
+    void openHighlighted(false)
     return
   }
   const next = Math.max(0, Math.min(currentListLength() - 1, highlighted + delta))
@@ -2587,9 +3031,14 @@ function arrowNavigate(delta: number, extend: boolean) {
     highlighted = next
     renderCatalog(catalog)
   } else {
+    // The row being moved onto has to exist before it can be selected and
+    // opened — otherwise arrowing past the loaded pages lands on a blank row
+    // and the editor is left showing the note before it. Usually already
+    // loaded, since the render window prefetches a page ahead of itself.
+    await ensureLoaded(next)
     selectSingle(next)
     renderList()
-    void openHighlighted()
+    void openHighlighted(false)
   }
 }
 
@@ -2622,19 +3071,29 @@ function selectSingle(index: number) {
 /// Selects everything between the anchor and `index`, inclusive, in the list's
 /// current order. The clicked note becomes the primary, so the editor follows
 /// the end you're dragging rather than the end you started from.
-function selectRange(index: number) {
-  const anchorIndex = results.findIndex((n) => n.id === anchorId)
+///
+/// A range can span rows no page has fetched — shift-clicking near the bottom
+/// of a long list is exactly that — and a selection that quietly skipped them
+/// would delete or move fewer notes than it said it would. So when the range
+/// isn't fully in memory the ids come from `search_ids`, which is the whole
+/// list's ids and nothing else. Below one page nothing changes.
+async function selectRange(index: number) {
+  const anchorIndex = await indexOfNote(anchorId)
   if (anchorIndex < 0) {
     selectSingle(index)
     return
   }
   const [lo, hi] = anchorIndex < index ? [anchorIndex, index] : [index, anchorIndex]
   multiSelected.clear()
-  for (let i = lo; i <= hi; i++) {
-    const id = results[i]?.id
-    if (id) multiSelected.add(id)
+  let ids: Array<string | undefined>
+  if (fullyLoaded()) {
+    ids = results.slice(lo, hi + 1).map((n) => n?.id)
+  } else {
+    ids = (await allResultIds()).slice(lo, hi + 1)
   }
+  for (const id of ids) if (id) multiSelected.add(id)
   highlighted = index
+  await ensureLoaded(index)
   multiSelected.delete(results[index]?.id ?? '')
 }
 
@@ -2648,7 +3107,9 @@ function toggleMultiSelect(index: number) {
     const next = [...multiSelected][0]
     if (next) {
       multiSelected.delete(next)
-      highlighted = results.findIndex((n) => n.id === next)
+      // Ctrl-clicking only ever reaches rows that are on screen, so the note
+      // being promoted is in a loaded page by construction.
+      highlighted = results.findIndex((n) => n?.id === next)
     }
     return
   }
@@ -2656,10 +3117,10 @@ function toggleMultiSelect(index: number) {
   else multiSelected.add(note.id)
 }
 
-function extendSelection(delta: number) {
+async function extendSelection(delta: number) {
   if (results.length === 0) return
   if (!anchorId) anchorId = results[highlighted]?.id ?? null
-  selectRange(Math.max(0, Math.min(results.length - 1, highlighted + delta)))
+  await selectRange(Math.max(0, Math.min(results.length - 1, highlighted + delta)))
 }
 
 async function deleteSelection() {
@@ -2673,6 +3134,7 @@ async function deleteSelection() {
   // One call, not a loop: the store treats a single delete as one undo step,
   // so a bulk delete restores as one action.
   await invoke('delete_notes', { ids })
+  void refreshCompletionSources()
   multiSelected.clear()
   anchorId = null
   if (openNoteId === null) closeEditor()
@@ -2749,8 +3211,7 @@ function setFolderColor(folder: string, color: string | null) {
 /// reopened.
 function repaintFolderColors() {
   renderList()
-  const open = results.find((n) => n.id === openNoteId)
-  renderTitleBarFolder(open?.subfolder ?? null)
+  renderTitleBarFolder(openNoteDto?.subfolder ?? null)
 }
 
 /// Every folder is born coloured, tag-style: any folder seen without a colour
@@ -3001,20 +3462,23 @@ async function moveNotes(ids: string[], subfolder: string | null) {
   }
   // A folder that didn't exist a moment ago is born coloured, like the rest.
   if (subfolder && moved.size > 0) ensureFolderColors([subfolder])
+  // A move is suppressed from the watcher, so nothing else will tell the
+  // autofill that a folder (and a note's path) just changed.
+  if (moved.size > 0) void refreshCompletionSources()
   const primary = results[highlighted]?.id
   const primaryAfter = primary ? (moved.get(primary) ?? primary) : null
   await runSearch()
   if (primaryAfter) {
-    const idx = results.findIndex((n) => n.id === primaryAfter)
+    const idx = await indexOfNote(primaryAfter)
     if (idx >= 0) {
       highlighted = idx
+      await ensureLoaded(highlighted)
       renderList()
     }
   }
   if (openNoteId && [...moved.values()].includes(openNoteId)) {
     // The title-bar chip names the folder the open note now sits in.
-    const open = results.find((n) => n.id === openNoteId)
-    renderTitleBarFolder(open?.subfolder ?? null)
+    renderTitleBarFolder(openNoteDto?.subfolder ?? null)
   }
   if (refused.length > 0) {
     void alertModal(
@@ -3066,14 +3530,14 @@ function noteMenuItems(note: NoteDto): MenuItemSpec[] {
       // `.disabled(!isPinned && pinLimitReached)` the Mac's menu applies.
       disabled: !pinnedIds.has(note.id) && pinLimitReached(),
       run: () => {
-        highlighted = results.findIndex((n) => n.id === note.id)
+        highlighted = results.findIndex((n) => n?.id === note.id)
         togglePin()
       },
     },
     {
       label: note.id === trayPinnedId ? 'Unpin from Tray' : 'Pin to Tray',
       run: async () => {
-        highlighted = results.findIndex((n) => n.id === note.id)
+        highlighted = results.findIndex((n) => n?.id === note.id)
         await toggleTrayPin()
       },
     },
@@ -3113,7 +3577,7 @@ function noteMenuItems(note: NoteDto): MenuItemSpec[] {
       label: 'Move to Trash',
       destructive: true,
       run: async () => {
-        selectSingle(results.findIndex((n) => n.id === note.id))
+        selectSingle(results.findIndex((n) => n?.id === note.id))
         await deleteSelection()
       },
     },
@@ -3138,6 +3602,8 @@ const pinnedIds = new Set<string>(
 )
 
 function persistPins() {
+  // Pinned notes sort to the front, so any change to the set reorders the list.
+  markOrderDirty()
   localStorage.setItem('pinnedIds', JSON.stringify([...pinnedIds]))
 }
 
@@ -3193,14 +3659,19 @@ function togglePin() {
   else if (pinLimitReached()) return
   else pinnedIds.add(target.id)
   persistPins()
-  renderList()
   // Keep the highlight on the note that just moved, rather than on whatever
-  // row happens to sit at the old index now.
-  const moved = results.findIndex((n) => n.id === target.id)
-  if (moved >= 0) {
-    highlighted = moved
-    renderList()
+  // row happens to sit at the old index now — resolved against the reordered
+  // list before painting, so pinning costs one render rather than two.
+  if (!fullyLoaded()) {
+    // Paged: pinning changes the head of the order, and the pin set is part of
+    // the spec every page is fetched under, so the list is re-read.
+    void refetchList(target.id)
+    return
   }
+  reorderResults()
+  const moved = results.findIndex((n) => n?.id === target.id)
+  if (moved >= 0) highlighted = moved
+  renderList()
 }
 
 // --- Query shapes -----------------------------------------------------------
@@ -3304,7 +3775,11 @@ async function openOrCreate() {
   const inbox = inboxFragment()
   if (inbox !== null) {
     const title = inbox.trim()
-    const existing = results.some((n) => n.title.toLowerCase() === title.toLowerCase())
+    // Loaded rows only. Past one page an inbox holding more fleeting notes
+    // than a page could carry could capture a second note under a title
+    // already further down the list — a duplicate title, which the Index
+    // tolerates, rather than anything lost.
+    const existing = results.some((n) => n?.title.toLowerCase() === title.toLowerCase())
     if (!title || existing) {
       await openHighlighted()
       focusEditorIfWanted()
@@ -3321,10 +3796,13 @@ async function openOrCreate() {
   }
 
   // An exact title match opens rather than duplicating.
-  const exact = results.find((n) => n.title.toLowerCase() === query.toLowerCase())
+  // Loaded rows only, same as the inbox check above: what falls through is a
+  // new note rather than the existing one being opened.
+  const exact = results.find((n) => n?.title.toLowerCase() === query.toLowerCase())
   if (exact) {
     await openNote(exact.id)
-    highlighted = results.findIndex((n) => n.id === exact.id)
+    highlighted = await indexOfNote(exact.id)
+    await ensureLoaded(highlighted)
     renderList()
     focusEditorIfWanted()
     return
@@ -3341,6 +3819,7 @@ async function openOrCreate() {
       title: targeted.title,
       subfolder: targeted.folder,
     })
+    void refreshCompletionSources()
     searchInput.value = ''
     await runSearch()
     await openNote(created.id)
@@ -3363,6 +3842,7 @@ async function openOrCreate() {
   const command =
     settings.newNotesStartInInbox && settings.inboxEnabled ? 'create_inbox_note' : 'create_note'
   const created = await invoke<NoteDto>(command, { title: query })
+  void refreshCompletionSources()
   searchInput.value = ''
   await runSearch()
   await openNote(created.id)
@@ -3372,13 +3852,15 @@ async function openOrCreate() {
 
 async function captureToInbox(title: string) {
   const note = await invoke<NoteDto>('create_inbox_note', { title })
+  void refreshCompletionSources()
   // Back to a bare "inbox:" — you're still in the box, ready for the next
   // thought, rather than leaving the last capture sitting there looking like
   // a filter.
   searchInput.value = 'inbox:'
   await runSearch()
   await openNote(note.id)
-  highlighted = Math.max(0, results.findIndex((n) => n.id === note.id))
+  highlighted = Math.max(0, await indexOfNote(note.id))
+  await ensureLoaded(highlighted)
   renderList()
   view.focus()
 }
@@ -3393,7 +3875,23 @@ let knownTags: string[] = []
 let knownFolders: string[] = []
 let knownTitles: string[] = []
 
+/// Whether the store handed back a different set of titles. A length check
+/// then an element-wise compare: N string comparisons against N `toLowerCase`
+/// allocations plus a Set rebuild, on a list that almost never changes between
+/// refreshes. Order is stable (the store returns them by recency), so a plain
+/// positional compare is enough.
+function titlesUnchanged(next: string[]): boolean {
+  if (next.length !== knownTitles.length) return false
+  for (let i = 0; i < next.length; i++) if (next[i] !== knownTitles[i]) return false
+  return true
+}
+
 function updateKnownTitles(titles: string[]) {
+  // The lowercased set is what wiki-link styling consults, and the restyle is
+  // what makes a ghost link resolve the moment its target exists — but neither
+  // means anything when the titles came back identical, and a restyle of the
+  // open note is not free.
+  if (titlesUnchanged(titles)) return
   knownTitles = titles
   knownTitlesLower = new Set(titles.map((t) => t.toLowerCase()))
   // Nothing in the open note's text changed, so nudge the styler to repaint —
@@ -3425,10 +3923,16 @@ const COMPLETION_OPERATORS: Record<string, CompletionSpec> = {
   'title:': { source: () => knownTitles, lower: false },
 }
 
-/// Refreshes the autofill sources. Folders and titles change as notes are
-/// edited or moved, and an in-app move is suppressed from the watcher, so this
-/// runs on each search rather than only on an external change — all three are
-/// cheap (a tag/title projection, a shallow dir walk).
+/// Refreshes the autofill sources — and, through `updateKnownTitles`, the set
+/// the styler uses to tell a resolved wiki-link from a ghost.
+///
+/// Three IPC calls and a whole-vault title projection, which is far too much to
+/// run per keystroke: this used to fire from every search, so typing in the box
+/// re-listed every title in the vault on each debounce tick. The note set only
+/// changes when something changes it, so this runs at startup, on
+/// `index-changed` (anything outside the app), and after each in-app create,
+/// rename, move or delete — an in-app move being suppressed from the watcher is
+/// exactly why those explicit calls have to be there.
 async function refreshCompletionSources() {
   try {
     const [tags, folders, titles] = await Promise.all([
@@ -3527,7 +4031,7 @@ searchInput.addEventListener('keydown', (e) => {
     e.preventDefault()
     const dir = e.key === 'ArrowDown' ? 1 : -1
     const shift = e.shiftKey
-    afterPendingSearch(() => arrowNavigate(dir, shift))
+    afterPendingSearch(() => void arrowNavigate(dir, shift))
   } else if (e.key === 'Enter') {
     e.preventDefault()
     afterPendingSearch(() => void openOrCreate())
@@ -3577,17 +4081,15 @@ window.addEventListener('keydown', (e) => {
     return
   }
   e.preventDefault()
-  arrowNavigate(e.key === 'ArrowDown' ? 1 : -1, e.shiftKey)
+  void arrowNavigate(e.key === 'ArrowDown' ? 1 : -1, e.shiftKey)
 })
 
 async function restoreDeleted() {
   const restored = await invoke<NoteDto[]>('restore_last_deleted')
   await runSearch()
   if (restored.length > 0) {
-    highlighted = Math.max(
-      0,
-      results.findIndex((n) => n.id === restored[0].id),
-    )
+    highlighted = Math.max(0, await indexOfNote(restored[0].id))
+    await ensureLoaded(highlighted)
     renderList()
   }
 }
@@ -3601,7 +4103,7 @@ async function restoreDeleted() {
 async function commitRename() {
   if (!openNoteId) return
   const next = titleEl.value.trim()
-  const current = results.find((n) => n.id === openNoteId)?.title ?? ''
+  const current = openNoteDto?.title ?? ''
   if (!next || next === current) {
     titleEl.value = current
     return
@@ -3611,12 +4113,19 @@ async function commitRename() {
     // The file moved, so its id did too — carry any pin across with it.
     migratePin(openNoteId, renamed.id)
     openNoteId = renamed.id
+    openNoteDto = renamed
     // The sanitizer may have changed what was typed — a title Windows can't
     // represent as a filename comes back altered, and showing the typed text
     // would be a lie about what's on disk.
     titleEl.value = renamed.title
+    // A rename changes both what completes and what links to this note, and
+    // neither can wait for the idle debounce — the panel is showing the old
+    // title right now.
+    void refreshCompletionSources()
+    void refreshInterlinks()
     await runSearch()
-    highlighted = Math.max(0, results.findIndex((n) => n.id === renamed.id))
+    highlighted = Math.max(0, await indexOfNote(renamed.id))
+    await ensureLoaded(highlighted)
     renderList()
   } catch (e) {
     console.error('rename failed', e)
@@ -3630,7 +4139,7 @@ titleEl.addEventListener('keydown', (e) => {
     void commitRename().then(() => view.focus())
   } else if (e.key === 'Escape') {
     e.preventDefault()
-    titleEl.value = results.find((n) => n.id === openNoteId)?.title ?? ''
+    titleEl.value = openNoteDto?.title ?? ''
     view.focus()
   }
 })
@@ -3666,6 +4175,7 @@ titleEl.addEventListener('mouseleave', () => {
 
 function closeEditor() {
   openNoteId = null
+  openNoteDto = null
   openTemplatePath = null
   openNoteSavedContent = ''
   titleEl.value = ''
@@ -3781,6 +4291,10 @@ async function extractSelectionToNote() {
     selection: { anchor: from + link.length },
   })
   view.focus()
+  // Extraction creates a note and writes a link to it in one move, so both the
+  // completion sources and the panel are stale the instant it returns.
+  void refreshCompletionSources()
+  void refreshInterlinks()
   await runSearch()
 }
 
@@ -3798,18 +4312,50 @@ window.addEventListener('resize', () => view.requestMeasure())
 // The backend rescans and emits; the frontend re-runs its own query rather
 // than being handed results, so a reload can't clobber whatever has since been
 // typed into the search box.
-void listen('index-changed', async () => {
+//
+// Bursts are the normal case, not the exception: one action can touch many
+// files (an attachment rename rewrites every note that referenced it, a sync
+// drops in a folder's worth at once) and the watcher reports each. A trailing
+// window collapses the burst into a single refresh, so a hundred events cost
+// one search instead of a hundred.
+let indexChangedTimer: number | undefined
+const INDEX_CHANGED_COALESCE_MS = 300
+
+async function handleIndexChanged() {
   setLoading(true)
   try {
     await runSearch()
   } finally {
     setLoading(false)
   }
+  // Titles, tags and folders can only have moved if the index did, so this is
+  // where the autofill and wiki-link sources are brought back up to date.
+  void refreshCompletionSources()
   // The "always current" half of transclusion: a source note edited elsewhere
   // should update where it's embedded, not keep showing what it looked like
   // when the host note was opened.
   refreshEmbeds()
+  // An attachment may have been renamed or replaced under us, so the cached
+  // bytes behind every picture are no longer trustworthy.
+  invalidateAttachments()
+  // Our own save is the likeliest cause of this event, and re-reading a file
+  // whose text is already in the buffer is a round trip for nothing.
+  if (
+    openNoteId !== null &&
+    openNoteId === lastOwnWriteId &&
+    Date.now() - lastOwnWriteAt < OWN_WRITE_WINDOW_MS
+  ) {
+    return
+  }
   await reloadOpenNoteFromDisk()
+}
+
+void listen('index-changed', () => {
+  if (indexChangedTimer !== undefined) clearTimeout(indexChangedTimer)
+  indexChangedTimer = window.setTimeout(() => {
+    indexChangedTimer = undefined
+    void handleIndexChanged()
+  }, INDEX_CHANGED_COALESCE_MS)
 })
 
 // Summoning should land in the search box — the point of summoning is to type.
@@ -3829,7 +4375,8 @@ void listen('summoned', () => {
 // forward on a particular note.
 void listen<string>('open-note', async (e) => {
   await openNote(e.payload)
-  highlighted = Math.max(0, results.findIndex((n) => n.id === e.payload))
+  highlighted = Math.max(0, await indexOfNote(e.payload))
+  await ensureLoaded(highlighted)
   renderList()
 })
 
@@ -3884,7 +4431,7 @@ const darkQuery = window.matchMedia('(prefers-color-scheme: dark)')
 function syncTheme() {
   applyStoredAppearance()
   applyZoom()
-  void document.fonts.ready.then(() => syncDateColumnWidth())
+  void document.fonts.ready.then(() => syncDateColumnWidth(true))
 }
 function syncFontSettingsRow() {
   const custom = settings.fontSource === 'custom'
@@ -4242,10 +4789,9 @@ bindToggle('setting-inbox-enabled', 'inboxEnabled', () => {
     await runSearch()
     // The open note's review buttons follow the switch too, rather than
     // waiting for the note to be reopened.
-    const open = results.find((n) => n.id === openNoteId)
     fleetingActionsEl.classList.toggle(
       'hidden',
-      !(open?.isInbox && settings.inboxEnabled),
+      !(openNoteDto?.isInbox && settings.inboxEnabled),
     )
   })()
 })
@@ -4253,17 +4799,14 @@ bindToggle('setting-inbox-new', 'newNotesStartInInbox')
 bindToggle('setting-inbox-in-list', 'showInboxInMainList', () => void runSearch())
 bindToggle('setting-vault-counts', 'showFooterVaultCounts', () => void refreshVaultCounts())
 bindToggle('setting-show-tags', 'showTagsInTitleBar', () => {
-  const open = results.find((n) => n.id === openNoteId)
-  renderTitleBarTags(open?.tags ?? [])
+  renderTitleBarTags(openNoteDto?.tags ?? [])
 })
 bindToggle('setting-show-folder-titlebar', 'showFolderInTitleBar', () => {
-  const open = results.find((n) => n.id === openNoteId)
-  renderTitleBarFolder(open?.subfolder ?? null)
+  renderTitleBarFolder(openNoteDto?.subfolder ?? null)
 })
 bindToggle('setting-folder-trailing', 'folderDotTrailing', renderList)
 bindToggle('setting-show-due-pill', 'showDuePill', () => {
-  const open = results.find((n) => n.id === openNoteId)
-  renderDueBadge(open?.due ?? null)
+  renderDueBadge(openNoteDto?.due ?? null)
 })
 bindToggle('setting-domain-pills', 'linkDomainPills', () =>
   view.dispatch({ effects: restyle.of(null) }),
@@ -4489,6 +5032,7 @@ el('setting-change-index').onclick = async () => {
     el('settings-index-path').textContent = picked
     closeEditor()
     searchInput.value = ''
+    void refreshCompletionSources()
     await runSearch()
   } catch (err) {
     console.error('could not change the Index folder', err)
@@ -4498,6 +5042,7 @@ el<HTMLInputElement>('setting-subfolders').onchange = async (e) => {
   settings.includeSubfolders = (e.target as HTMLInputElement).checked
   saveSetting('indexIncludeSubfolders', settings.includeSubfolders)
   await invoke('set_include_subfolders', { include: settings.includeSubfolders })
+  void refreshCompletionSources()
   await runSearch()
   // Submit's folder arrow exists only while folders are listed.
   applyFleetingSubmitShape()
@@ -4665,17 +5210,50 @@ try {
 
 async function boot() {
   installSmoothScroll()
+  // Startup was a chain of nine awaited round trips, each waiting on the one
+  // before it for no reason: these are one-way pushes of stored preferences,
+  // and none of them reads anything another one writes. Fired together they
+  // cost one round trip's latency rather than nine. The two the search genuinely
+  // depends on — subfolders decides what is in scope, inbox decides what the
+  // store calls fleeting — are still awaited before `runSearch`, because they
+  // are in this group and the whole group is.
+  //
+  // `Promise.all` is built here, not at the await, so a rejection always has a
+  // handler attached and the failure still aborts boot exactly as it used to.
+  const pushes: Array<Promise<unknown>> = [
+    invoke('set_template_date_format', { pattern: settings.templateDateFormat }),
+    pushInboxEnabled(),
+    // Registers the global chords with the OS. Nothing is registered in Rust at
+    // startup, so this is the only path — defaults and remaps go the same way.
+    syncGlobalShortcuts(),
+    // The placeholder stays "Search or Create Note" — the Index path belongs in
+    // Settings, where it can be changed. Repeating it in the box a person looks
+    // at all day is noise about something that never varies.
+    invoke<string>('index_directory').then((dir) => {
+      el('settings-index-path').textContent = dir
+    }),
+    // The on-top state is a Rust-side preference (toggled from the tray), so
+    // read the remembered value once at startup for the hide-on-focus-loss
+    // guard. Swallowed rather than fatal: this is the one call that has to
+    // survive running outside Tauri.
+    invoke<boolean>('keep_on_top')
+      .then((on) => {
+        keepOnTopActive = on
+      })
+      .catch(() => {}),
+  ]
+  // The backend keeps the tray pin only in memory, so hand it back the value
+  // that survived the restart.
+  if (trayPinnedId) pushes.push(invoke('set_pinned_note', { id: trayPinnedId }))
+  if (settings.includeSubfolders) {
+    pushes.push(invoke('set_include_subfolders', { include: true }))
+  }
+  if (!settings.showInTaskbar) pushes.push(invoke('set_show_in_taskbar', { show: false }))
+  const pushed = Promise.all(pushes)
   await initAppearance(() => {
     applyZoom()
-    void document.fonts.ready.then(() => syncDateColumnWidth())
+    void document.fonts.ready.then(() => syncDateColumnWidth(true))
   })
-  // The on-top state is a Rust-side preference (toggled from the tray), so read
-  // the remembered value once at startup for the hide-on-focus-loss guard.
-  try {
-    keepOnTopActive = await invoke<boolean>('keep_on_top')
-  } catch {
-    // Outside Tauri.
-  }
   applyChromeSettings()
   document.body.classList.toggle('fade-focus', settings.fadeFocusHighlight)
   applyZoom()
@@ -4683,23 +5261,10 @@ async function boot() {
   startClockTick()
   applyLayout()
   renderSortHeader()
-  // The backend keeps the tray pin only in memory, so hand it back the value
-  // that survived the restart.
-  if (trayPinnedId) await invoke('set_pinned_note', { id: trayPinnedId })
-  // The placeholder stays "Search or Create Note" — the Index path belongs in
-  // Settings, where it can be changed. Repeating it in the box a person looks
-  // at all day is noise about something that never varies.
-  const dir = await invoke<string>('index_directory')
-  el('settings-index-path').textContent = dir
-  if (settings.includeSubfolders) {
-    await invoke('set_include_subfolders', { include: true })
-  }
-  await invoke('set_template_date_format', { pattern: settings.templateDateFormat })
-  await pushInboxEnabled()
-  // Registers the global chords with the OS. Nothing is registered in Rust at
-  // startup, so this is the only path — defaults and remaps go the same way.
-  await syncGlobalShortcuts()
-  if (!settings.showInTaskbar) await invoke('set_show_in_taskbar', { show: false })
+  await pushed
+  // The autofill and wiki-link title sources, seeded once. From here they only
+  // refresh when the note set actually changes — see refreshCompletionSources.
+  void refreshCompletionSources()
   // The Mac empties on launch and then hourly: a summon/hide app can run for
   // weeks without a relaunch, so a launch-only check can't keep an "every N
   // days" schedule honest. Cheap on the ticks it isn't due — just a date compare.
@@ -4791,7 +5356,10 @@ async function boot() {
   // needed, unlike the on-screen widget).
   editorGhostForTest: () => ghostRemainderForTest(view.state),
   setResultsForTest: (r: NoteDto[]) => {
-    results = r
+    // Through the same installer a real search uses, so a test list is a
+    // fully loaded one page rather than a sparse array with no bookkeeping.
+    installFirstPage({ notes: r, total: r.length })
+    markOrderDirty()
     multiSelected.clear()
     anchorId = null
     highlighted = 0

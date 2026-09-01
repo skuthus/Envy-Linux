@@ -18,10 +18,11 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use chrono::{DateTime, Duration, Local, NaiveDate, TimeZone, Weekday};
+use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, TimeZone, Weekday};
+use rayon::prelude::*;
 
 use crate::due::parse_flexible_date;
-use crate::note::{AiProvenance, Note};
+use crate::note::{AiProvenance, FoldedContent, Note};
 
 pub const INBOX_FOLDER_NAME: &str = "Inbox";
 
@@ -245,6 +246,98 @@ fn fast_contains(haystack: &str, needle: &str) -> bool {
 
 fn is_word_char(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
+}
+
+/// Byte index of the first occurrence of `needle` in `hay` at or after
+/// `from`, comparing ASCII letters case-insensitively. `needle` is already
+/// lowercased by the caller, so only the haystack is folded.
+///
+/// Byte-wise rather than character-wise on purpose, and safe for UTF-8: every
+/// byte outside ASCII is left alone by the fold, and a valid-UTF-8 needle can
+/// only ever line up on a character boundary — so the answer is the same one a
+/// decoded scan would give, at the same offset.
+///
+/// `memchr2` over the two spellings of the first byte, rather than a
+/// Boyer-Moore-style skip loop: a note is under a kilobyte, so a vectorised
+/// scan of the whole of it beats a scalar walk taking short shifts. Measured
+/// over a 30,000-note corpus, the skip loop was 2-8x slower depending on the
+/// term.
+///
+/// This is still slower than `str::contains` over a pre-lowercased copy — a
+/// corpus-wide term costs roughly 8 ms here against 2 ms there — which is the
+/// price of not keeping that copy. It is paid across every core (`filtered`
+/// matches in parallel), so a keystroke over 30,000 notes lands at 3 ms
+/// rather than the 8 ms the stored copy cost when the scan was serial.
+fn ascii_ci_find(hay: &[u8], needle: &[u8], from: usize) -> Option<usize> {
+    if needle.is_empty() {
+        return (from <= hay.len()).then_some(from);
+    }
+    if hay.len() < needle.len() {
+        return None;
+    }
+    let last = hay.len() - needle.len();
+    if from > last {
+        return None;
+    }
+    let (lower, upper) = (needle[0], needle[0].to_ascii_uppercase());
+    // The candidates are the positions of the needle's first byte in either
+    // case; each is confirmed by a fold-insensitive compare of the rest.
+    for rel in memchr::memchr2_iter(lower, upper, &hay[from..]) {
+        let start = from + rel;
+        if start > last {
+            break;
+        }
+        if hay[start..start + needle.len()].eq_ignore_ascii_case(needle) {
+            return Some(start);
+        }
+    }
+    None
+}
+
+fn ascii_ci_contains(haystack: &str, needle: &str) -> bool {
+    ascii_ci_find(haystack.as_bytes(), needle.as_bytes(), 0).is_some()
+}
+
+/// [`whole_word_contains`] against a body that is folded as it is scanned —
+/// the same walk, with the same "advance one character past a rejected match"
+/// rule, so the two arms cannot drift apart.
+fn ascii_ci_whole_word_contains(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return false;
+    }
+    let bytes = haystack.as_bytes();
+    let mut from = 0;
+    while let Some(start) = ascii_ci_find(bytes, needle.as_bytes(), from) {
+        let end = start + needle.len();
+        let before_ok = haystack[..start].chars().next_back().is_none_or(|c| !is_word_char(c));
+        let after_ok = haystack[end..].chars().next().is_none_or(|c| !is_word_char(c));
+        if before_ok && after_ok {
+            return true;
+        }
+        from = start + haystack[start..].chars().next().map_or(1, char::len_utf8);
+        if from >= haystack.len() {
+            break;
+        }
+    }
+    false
+}
+
+impl FoldedContent<'_> {
+    /// Whether the (already lowercased) `needle` appears anywhere.
+    pub fn contains(&self, needle: &str) -> bool {
+        match self {
+            FoldedContent::AsciiFold(text) => ascii_ci_contains(text, needle),
+            FoldedContent::Lowered(text) => fast_contains(text, needle),
+        }
+    }
+
+    /// The same, on word boundaries — what a closed quote searches for.
+    pub fn whole_word_contains(&self, needle: &str) -> bool {
+        match self {
+            FoldedContent::AsciiFold(text) => ascii_ci_whole_word_contains(text, needle),
+            FoldedContent::Lowered(text) => whole_word_contains(text, needle),
+        }
+    }
 }
 
 /// Whether `needle` appears in `haystack` on word boundaries.
@@ -737,11 +830,11 @@ fn score_by_term_presence(note: &Note, terms: &[String]) -> Option<i32> {
         return Some(0);
     }
     let title = note.lowercased_title();
-    let content = note.lowercased_content();
+    let content = note.folded_content();
     let mut title_matches = 0;
     for term in terms {
         let in_title = fast_contains(title, term);
-        if !in_title && !fast_contains(content, term) {
+        if !in_title && !content.contains(term) {
             return None;
         }
         if in_title {
@@ -810,8 +903,13 @@ fn matched<'a>(
         q.folder.is_some() || !q.exclude_folders.is_empty() || q.foldered_only || q.root_only;
     let root_lower = root.map(|r| r.to_string_lossy().replace('\\', "/").to_lowercase());
 
+    // Per-note matching is independent and read-only (a note's derived caches
+    // are `OnceLock`s, safe to race), and at tens of thousands of notes the
+    // scan is the whole cost of a keystroke. `par_iter().collect()` keeps the
+    // input order, which the score sort below then refines — so results are
+    // identical to the sequential walk, not merely equivalent.
     notes
-        .iter()
+        .par_iter()
         .filter_map(|note| {
             // Membership is the folder the file sits in — there's no flag on a
             // note saying it's fleeting, and there shouldn't be: moving it out
@@ -907,21 +1005,21 @@ fn matched<'a>(
                 }
             }
             if !q.phrase_terms.is_empty() {
-                let (t, c) = (note.lowercased_title(), note.lowercased_content());
+                let (t, c) = (note.lowercased_title(), note.folded_content());
                 if !q
                     .phrase_terms
                     .iter()
-                    .all(|p| whole_word_contains(t, p) || whole_word_contains(c, p))
+                    .all(|p| whole_word_contains(t, p) || c.whole_word_contains(p))
                 {
                     return None;
                 }
             }
             if !q.exclude_phrases.is_empty() {
-                let (t, c) = (note.lowercased_title(), note.lowercased_content());
+                let (t, c) = (note.lowercased_title(), note.folded_content());
                 if q
                     .exclude_phrases
                     .iter()
-                    .any(|p| whole_word_contains(t, p) || whole_word_contains(c, p))
+                    .any(|p| whole_word_contains(t, p) || c.whole_word_contains(p))
                 {
                     return None;
                 }
@@ -1004,11 +1102,11 @@ fn matched<'a>(
                 }
             }
             if !q.exclude_terms.is_empty() {
-                let (t, c) = (note.lowercased_title(), note.lowercased_content());
+                let (t, c) = (note.lowercased_title(), note.folded_content());
                 if q
                     .exclude_terms
                     .iter()
-                    .any(|x| fast_contains(t, x) || fast_contains(c, x))
+                    .any(|x| fast_contains(t, x) || c.contains(x))
                 {
                     return None;
                 }
@@ -1032,7 +1130,7 @@ fn matched<'a>(
                 3
             } else if fast_contains(title, term) {
                 2
-            } else if fast_contains(note.lowercased_content(), term) {
+            } else if note.folded_content().contains(term) {
                 1
             } else {
                 return None;
@@ -1047,6 +1145,189 @@ fn ranked_higher_first(a: &(&Note, i32), b: &(&Note, i32)) -> std::cmp::Ordering
     b.1.cmp(&a.1).then(b.0.modified.cmp(&a.0.modified))
 }
 
+/// Which column the list is ordered by, mirroring the frontend's `SortField`.
+///
+/// Ordering used to live entirely in TypeScript, applied to the whole result
+/// set after it arrived. It moved here when the list started being fetched a
+/// page at a time: page 0 has to be the true head of the chosen order, and
+/// only the side that can see every hit can produce that.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SortField {
+    Name,
+    Date,
+    Due,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SortSpec {
+    pub field: SortField,
+    pub ascending: bool,
+}
+
+/// Folds one character for the name sort: case folded, and a Latin-1 accent
+/// reduced to its base letter.
+///
+/// The frontend used `Intl.Collator(undefined, { numeric: true, sensitivity:
+/// 'base' })` — ICU root collation, where "é" sorts among the e's and "Note 2"
+/// before "Note 10". There is no ICU here, so this is the approximation:
+/// exact for ASCII (what a filename usually is) and for the Latin-1 accents,
+/// falling back to code-point order beyond that where ICU would apply its own
+/// weights. It is the one place the ported ordering is not identical to what
+/// the browser did, which is why the frontend still sorts for itself whenever
+/// the whole result set fits in one page.
+fn fold_char(c: char) -> char {
+    let base = match c {
+        'À'..='Å' => 'A',
+        'Æ' => 'A',
+        'Ç' => 'C',
+        'È'..='Ë' => 'E',
+        'Ì'..='Ï' => 'I',
+        'Ñ' => 'N',
+        'Ò'..='Ö' | 'Ø' => 'O',
+        'Ù'..='Ü' => 'U',
+        'Ý' => 'Y',
+        'à'..='å' => 'a',
+        'æ' => 'a',
+        'ç' => 'c',
+        'è'..='ë' => 'e',
+        'ì'..='ï' => 'i',
+        'ñ' => 'n',
+        'ò'..='ö' | 'ø' => 'o',
+        'ù'..='ü' => 'u',
+        'ý' | 'ÿ' => 'y',
+        other => other,
+    };
+    base.to_ascii_lowercase()
+}
+
+/// `numeric: true` collation: runs of digits compare by value, everything else
+/// by folded character. Allocation-free — it walks both titles in step rather
+/// than building a sort key per note, because it runs O(n log n) times on a
+/// vault where n is tens of thousands.
+fn natural_title_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    let (mut x, mut y) = (a.chars().peekable(), b.chars().peekable());
+    loop {
+        // Whichever ran out first is the shorter, so it sorts first.
+        let (ca, cb) = match (x.peek().copied(), y.peek().copied()) {
+            (Some(ca), Some(cb)) => (ca, cb),
+            (None, None) => return Ordering::Equal,
+            (None, Some(_)) => return Ordering::Less,
+            (Some(_), None) => return Ordering::Greater,
+        };
+        if ca.is_ascii_digit() && cb.is_ascii_digit() {
+            // Leading zeros are not part of the value, but they do break a tie
+            // between otherwise equal numbers — "007" after "7", as ICU does.
+            let (da, za) = digit_run(&mut x);
+            let (db, zb) = digit_run(&mut y);
+            match da
+                .len()
+                .cmp(&db.len())
+                .then_with(|| da.cmp(&db))
+                .then_with(|| za.cmp(&zb))
+            {
+                Ordering::Equal => continue,
+                other => return other,
+            }
+        }
+        x.next();
+        y.next();
+        match fold_char(ca).cmp(&fold_char(cb)) {
+            Ordering::Equal => continue,
+            other => return other,
+        }
+    }
+}
+
+/// Consumes a run of digits, returning it without leading zeros plus how many
+/// were stripped.
+fn digit_run(it: &mut std::iter::Peekable<std::str::Chars>) -> (String, usize) {
+    let mut digits = String::new();
+    let mut zeros = 0;
+    while let Some(&c) = it.peek() {
+        if !c.is_ascii_digit() {
+            break;
+        }
+        it.next();
+        if digits.is_empty() && c == '0' {
+            zeros += 1;
+        } else {
+            digits.push(c);
+        }
+    }
+    (digits, zeros)
+}
+
+/// Milliseconds since the epoch, the same truncation `NoteDto.modifiedMs`
+/// ships — so two notes the frontend saw as equally recent stay equal here.
+fn modified_ms(note: &Note) -> u64 {
+    note.modified
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// Applies the list's sort to already-filtered hits. A stable sort, so ties
+/// keep relevance order — the same thing `Array.prototype.sort` gave the
+/// frontend.
+fn sort_hits(hits: &mut [&Note], sort: SortSpec) {
+    use std::cmp::Ordering;
+    let flip = |o: Ordering| if sort.ascending { o } else { o.reverse() };
+    match sort.field {
+        // ~25 ms over 18,900 notes — the one sort that pays for a real
+        // comparison rather than a number, since a numeric-aware collation
+        // has no single-value sort key to cache. Still a fraction of what the
+        // `Intl.Collator` pass it replaces cost in the webview.
+        SortField::Name => hits.sort_by(|a, b| flip(natural_title_cmp(a.title(), b.title()))),
+        SortField::Date => hits.sort_by_cached_key(|n| {
+            let ms = modified_ms(n) as i64;
+            if sort.ascending {
+                ms
+            } else {
+                -ms
+            }
+        }),
+        // An undated note always sorts to the end, whichever direction is
+        // chosen — "no due date" isn't smaller or larger than a date, it's
+        // absent. Mirrors the frontend's sortNotes exactly, including that the
+        // direction does not flip that rule, which is why the key is a pair
+        // and only its second half is negated.
+        //
+        // Keyed rather than compared: `due()` walks the note's cached due
+        // dates, and a comparator runs O(n log n) times — computing it once
+        // per note took an 18,900-note due sort from 22 ms to 1.5.
+        SortField::Due => hits.sort_by_cached_key(|n| match n.due() {
+            // `NaiveDate`'s day ordinal orders chronologically, which is what
+            // comparing the ISO strings the frontend formatted did.
+            Some(d) => {
+                let day = d.num_days_from_ce();
+                (0u8, if sort.ascending { day } else { -day })
+            }
+            None => (1u8, 0),
+        }),
+    }
+}
+
+/// Lifts the pinned notes to the head, keeping the order they already had
+/// among themselves and among the rest. The frontend's `applyPinning` is a
+/// pair of `filter`s over the sorted array, which is exactly this partition.
+fn pin_to_head<'a>(hits: Vec<&'a Note>, pinned: &HashSet<&str>) -> Vec<&'a Note> {
+    if pinned.is_empty() {
+        return hits;
+    }
+    let mut head = Vec::new();
+    let mut rest = Vec::with_capacity(hits.len());
+    for note in hits {
+        if pinned.contains(note.id()) {
+            head.push(note);
+        } else {
+            rest.push(note);
+        }
+    }
+    head.append(&mut rest);
+    head
+}
+
 /// `root` is the Index's own directory, needed so `folder:` can resolve a
 /// note's path relative to the vault. `None` falls back to matching the
 /// immediate parent folder's name — enough for a flat search, and what the
@@ -1057,20 +1338,49 @@ pub fn filtered<'a>(
     ctx: &SearchContext,
     root: Option<&Path>,
 ) -> Vec<&'a Note> {
-    let trimmed = query.trim();
-    if trimmed.is_empty() {
-        return notes.iter().collect();
-    }
+    filtered_sorted(notes, query, ctx, root, None, &[])
+}
 
-    let groups = split_groups(trimmed);
+/// `filtered`, plus the list's own ordering: the sort the header is set to,
+/// and the pinned notes lifted to the head of it.
+///
+/// One function rather than two passes because the relevance sort inside is
+/// what a display sort replaces — running both and throwing the first away is
+/// the shape this deliberately avoids. `sort` of `None` leaves relevance order
+/// (what every non-list caller wants); `pinned` is the frontend's pin set,
+/// which only it knows, so it is passed in with the request.
+pub fn filtered_sorted<'a>(
+    notes: &'a [Note],
+    query: &str,
+    ctx: &SearchContext,
+    root: Option<&Path>,
+    sort: Option<SortSpec>,
+    pinned: &[String],
+) -> Vec<&'a Note> {
+    let pinned: HashSet<&str> = pinned.iter().map(String::as_str).collect();
+    let finish = |mut hits: Vec<&'a Note>| {
+        if let Some(sort) = sort {
+            sort_hits(&mut hits, sort);
+        }
+        pin_to_head(hits, &pinned)
+    };
+
+    let trimmed = query.trim();
+    let groups = if trimmed.is_empty() {
+        Vec::new()
+    } else {
+        split_groups(trimmed)
+    };
     if groups.is_empty() {
-        return notes.iter().collect();
+        return finish(notes.iter().collect());
     }
 
     if groups.len() == 1 {
         let mut hits = matched(notes, &groups[0], ctx, root);
+        // Relevance order still decides ties under a display sort, so it is
+        // established first either way.
         hits.sort_by(ranked_higher_first);
-        return hits.into_iter().map(|(n, _)| n).collect();
+        return finish(hits.into_iter().map(|(n, _)| n).collect());
     }
 
     // Several groups OR together, each note keeping its best score across the
@@ -1085,7 +1395,7 @@ pub fn filtered<'a>(
     }
     let mut hits: Vec<(&Note, i32)> = best.into_values().collect();
     hits.sort_by(ranked_higher_first);
-    hits.into_iter().map(|(n, _)| n).collect()
+    finish(hits.into_iter().map(|(n, _)| n).collect())
 }
 
 #[cfg(test)]
@@ -1663,5 +1973,146 @@ mod tests {
             titles(&notes, "interlink:\"Debrief (Sep 24, 2025)\""),
             vec!["Linker"]
         );
+    }
+
+    // --- Display ordering ---------------------------------------------------
+    // The list's own sort and its pins, which moved here from the frontend
+    // when the list started being fetched a page at a time.
+
+    fn dated(title: &str, secs: u64) -> Note {
+        Note::new(
+            format!("C:/Index/{title}.md"),
+            "body",
+            SystemTime::UNIX_EPOCH + StdDuration::from_secs(secs),
+        )
+    }
+
+    fn ordered(notes: &[Note], sort: SortSpec, pinned: &[String]) -> Vec<String> {
+        filtered_sorted(notes, "", &ctx(), None, Some(sort), pinned)
+            .into_iter()
+            .map(|n| n.title().to_string())
+            .collect()
+    }
+
+    fn name_sort(ascending: bool) -> SortSpec {
+        SortSpec { field: SortField::Name, ascending }
+    }
+
+    #[test]
+    fn name_sort_is_case_insensitive_and_numeric() {
+        let notes = vec![note("note 10", ""), note("Note 2", ""), note("apple", "")];
+        assert_eq!(
+            ordered(&notes, name_sort(true), &[]),
+            vec!["apple", "Note 2", "note 10"]
+        );
+        assert_eq!(
+            ordered(&notes, name_sort(false), &[]),
+            vec!["note 10", "Note 2", "apple"]
+        );
+    }
+
+    #[test]
+    fn name_sort_folds_latin_accents() {
+        // sensitivity: 'base' put "Émile" among the E's rather than after Z,
+        // which is what code-point order would have done.
+        let notes = vec![note("Zoe", ""), note("Émile", ""), note("Adam", "")];
+        assert_eq!(
+            ordered(&notes, name_sort(true), &[]),
+            vec!["Adam", "Émile", "Zoe"]
+        );
+    }
+
+    #[test]
+    fn date_sort_runs_both_ways() {
+        let notes = vec![dated("old", 10), dated("new", 300), dated("mid", 100)];
+        let spec = |ascending| SortSpec { field: SortField::Date, ascending };
+        assert_eq!(ordered(&notes, spec(false), &[]), vec!["new", "mid", "old"]);
+        assert_eq!(ordered(&notes, spec(true), &[]), vec!["old", "mid", "new"]);
+    }
+
+    #[test]
+    fn undated_notes_sort_last_in_either_direction() {
+        let notes = vec![
+            note("none", "no token here"),
+            note("later", "@2026-08-01"),
+            note("sooner", "@2026-07-26"),
+        ];
+        let spec = |ascending| SortSpec { field: SortField::Due, ascending };
+        assert_eq!(
+            ordered(&notes, spec(true), &[]),
+            vec!["sooner", "later", "none"]
+        );
+        assert_eq!(
+            ordered(&notes, spec(false), &[]),
+            vec!["later", "sooner", "none"]
+        );
+    }
+
+    #[test]
+    fn pinned_notes_head_the_list_under_every_sort_and_appear_once() {
+        let notes = vec![note("Alpha", ""), note("Beta", ""), note("Zulu", "")];
+        let pinned = vec!["C:/Index/Zulu.md".to_string()];
+        for ascending in [true, false] {
+            let order = ordered(&notes, name_sort(ascending), &pinned);
+            assert_eq!(order[0], "Zulu");
+            assert_eq!(order.iter().filter(|t| *t == "Zulu").count(), 1);
+            assert_eq!(order.len(), 3);
+        }
+    }
+
+    #[test]
+    fn pinning_keeps_the_pinned_notes_in_sorted_order_among_themselves() {
+        let notes = vec![note("Alpha", ""), note("Beta", ""), note("Gamma", "")];
+        let pinned = vec![
+            "C:/Index/Gamma.md".to_string(),
+            "C:/Index/Alpha.md".to_string(),
+        ];
+        // The frontend pinned with two `filter` passes over the sorted array,
+        // so the pins keep sort order rather than the order they were pinned.
+        assert_eq!(
+            ordered(&notes, name_sort(true), &pinned),
+            vec!["Alpha", "Gamma", "Beta"]
+        );
+    }
+
+    #[test]
+    fn sorting_applies_to_a_filtered_query_not_just_the_whole_vault() {
+        let notes = vec![
+            note("Press Zebra", ""),
+            note("Press Apple", ""),
+            note("Unrelated", ""),
+        ];
+        let hits: Vec<String> = filtered_sorted(
+            &notes,
+            "press",
+            &ctx(),
+            None,
+            Some(name_sort(true)),
+            &[],
+        )
+        .into_iter()
+        .map(|n| n.title().to_string())
+        .collect();
+        assert_eq!(hits, vec!["Press Apple", "Press Zebra"]);
+    }
+
+    #[test]
+    fn a_page_is_a_window_on_the_same_order_the_whole_list_has() {
+        let notes: Vec<Note> = (0..25).map(|i| note(&format!("Note {i:02}"), "")).collect();
+        let all = filtered_sorted(&notes, "", &ctx(), None, Some(name_sort(true)), &[]);
+        assert_eq!(all.len(), 25);
+        // What the `search` command slices out: offset/limit over this vector,
+        // with `total` the full length.
+        let page: Vec<&str> = all.iter().skip(10).take(5).map(|n| n.title()).collect();
+        assert_eq!(page, vec!["Note 10", "Note 11", "Note 12", "Note 13", "Note 14"]);
+        // Past the end is empty rather than an error.
+        assert_eq!(all.iter().skip(100).take(5).count(), 0);
+    }
+
+    #[test]
+    fn no_sort_spec_leaves_relevance_order_untouched() {
+        let notes = vec![note("Zulu press", ""), note("press", "")];
+        // Exact title match outranks a substring one, whatever the names are.
+        assert_eq!(titles(&notes, "press"), vec!["press", "Zulu press"]);
     }
 }

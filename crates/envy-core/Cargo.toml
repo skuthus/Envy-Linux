@@ -8,6 +8,8 @@ authors.workspace = true
 [dependencies]
 fancy-regex.workspace = true
 rayon.workspace = true
+aho-corasick.workspace = true
+memchr.workspace = true
 dunce.workspace = true
 notify.workspace = true
 serde.workspace = true

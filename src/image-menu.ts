@@ -9,7 +9,7 @@
 import { EditorView } from '@codemirror/view'
 import { EditorSelection } from '@codemirror/state'
 import { invoke } from '@tauri-apps/api/core'
-import { buildImageMarker, type ImageEmbedSpec } from './styler'
+import { buildImageMarker, invalidateAttachment, type ImageEmbedSpec } from './styler'
 import { openContextMenu } from './context-menu'
 import { textPrompt, alertModal } from './prompt-modal'
 
@@ -124,6 +124,10 @@ export async function renameAttachmentFlow(
     await alertModal(typeof e === 'string' ? e : 'Could not rename the image.')
     return
   }
+  // Both names are stale now: nothing answers to the old one any more, and the
+  // new one may be reusing bytes cached for a file that has since been replaced.
+  invalidateAttachment(oldName)
+  invalidateAttachment(next)
   await hooks.reload()
 }
 

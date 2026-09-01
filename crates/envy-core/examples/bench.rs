@@ -103,8 +103,8 @@ fn main() {
         let ms = start.elapsed().as_secs_f64() * 1000.0;
         println!("{label:<44} {ms:>8.2} ms  ({n})");
     };
-    once("first touch: lowercased content", &|s| {
-        s.notes().iter().map(|n| n.lowercased_content().len()).sum()
+    once("first touch: folded content", &|s| {
+        s.notes().iter().filter(|n| n.folded_content().contains("the")).count()
     });
     once("first touch: tags", &|s| {
         s.notes().iter().map(|n| n.tags().len()).sum()

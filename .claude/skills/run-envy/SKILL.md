@@ -18,6 +18,16 @@ Change Location). It prints PASS/FAIL and leaves screenshots + `dev.log` in
 `$XDG_RUNTIME_DIR/envy-smoke/`. Read `2-table-and-image.png`: the word "good"
 must be underlined, "bad" must be plain text, the image must show.
 
+## Release binary
+
+`cargo build --release` inside `src-tauri/` produces a binary that still tries
+to load the Vite dev URL, and with no dev server up the navigation guard
+refuses it, so the window comes up blank. Build the real thing with
+`npm run tauri build -- --no-bundle` (about 40 s) and run
+`./target/release/envy-linux`. `./build.sh` is the same plus .deb/AppImage.
+The release build has its own localStorage origin, so settings such as list
+previews differ from the dev build until you set them there too.
+
 ## Doing it by hand
 
 - Launch: `nohup npm run tauri dev > dev.log 2>&1 &` — first Rust build takes
@@ -28,6 +38,10 @@ must be underlined, "bad" must be plain text, the image must show.
   warning instead of failing; confirm with `hyprctl activewindow -j | jq .class`.
 - Screenshot: `grim -g "X,Y WxH" shot.png` with the numbers from `at`/`size`,
   then Read the PNG and look at it.
+- Don't send more than ~20 keys/s: the app opens a note on every arrow press
+  (~35 ms each at 19k notes) and faster input queues up, so a screenshot taken
+  right after shows the highlight still moving. Ctrl+Alt+P collides with
+  fcitx5's toggle-preedit binding, so pin cannot be tested from the keyboard.
 - Type: `wtype "text"`, keys `wtype -k Return`, chords `wtype -M ctrl l -m ctrl`.
   Search box: Ctrl+L; clear it: Alt+Backspace; Return opens the top match or
   creates the note and focuses the editor. `template:Name` + Return opens a

@@ -13,8 +13,10 @@
 //! Anything looser produces suggestions for fragments of longer words, which
 //! is worse than missing one.
 
+use std::collections::HashMap;
 use std::sync::LazyLock;
 
+use aho_corasick::{AhoCorasick, MatchKind};
 use fancy_regex::Regex;
 
 use crate::note::Note;
@@ -93,42 +95,115 @@ fn prev_is_word(text: &str, byte_index: usize) -> bool {
         .is_some_and(|c| c.is_alphanumeric())
 }
 
-/// Titles mentioned in `text` but not linked. One result per title — the first
-/// occurrence that qualifies, matching the Mac's `break` after a hit.
-pub fn suggested_links(text: &str, candidates: &[(&str, &str)]) -> Vec<Suggestion> {
-    if text.is_empty() || candidates.is_empty() {
-        return Vec::new();
+/// One candidate note, as the suggestion pass sees it.
+struct TitleEntry {
+    id: String,
+    /// The title as a suggestion would name it — trimmed, original case.
+    title: String,
+    /// Which automaton pattern this title lowercases to, or `None` for a
+    /// title that can never be suggested (empty, or one whose lowercase
+    /// changes byte length — see [`TitleMatcher`]).
+    pattern: Option<usize>,
+}
+
+/// Every note title in the Index, prepared to be found in one pass over one
+/// note's text.
+///
+/// This used to be a loop: lowercase each of the N titles, then substring-scan
+/// the note for it. That is N scans of the same text per lookup, and at 30,000
+/// notes it cost 36 ms for a well-linked note — on the Interlinks footer, which
+/// redraws as you move between notes. An Aho-Corasick automaton finds all N at
+/// once in a single pass, and since it depends only on the *set* of titles it
+/// can be built once per Index instead of once per lookup (`NoteStore` caches
+/// one and drops it when a note is created, renamed or deleted).
+///
+/// The matching rule is unchanged, and deliberately so: the automaton's
+/// patterns are the same lowercased titles the loop searched for, run against
+/// the same lowercased text, with the same word-boundary, code-span and
+/// existing-link checks applied to each hit and the same "first qualifying
+/// occurrence only" stop.
+pub struct TitleMatcher {
+    ac: AhoCorasick,
+    entries: Vec<TitleEntry>,
+}
+
+impl TitleMatcher {
+    /// `candidates` is `(note id, title)` in Index order — the order
+    /// suggestions come back in.
+    pub fn new(candidates: &[(&str, &str)]) -> Self {
+        let mut patterns: Vec<String> = Vec::new();
+        let mut pattern_of: HashMap<String, usize> = HashMap::new();
+        let mut entries: Vec<TitleEntry> = Vec::with_capacity(candidates.len());
+
+        for (id, raw_title) in candidates {
+            let title = raw_title.trim();
+            // Lowercasing can change byte lengths for some scripts, so a
+            // match's offsets only index back into the original text when the
+            // lowered title is the same length — which it is for the
+            // overwhelming majority. When it isn't, the title is dropped
+            // rather than reported at a wrong range: a missing suggestion is a
+            // far smaller harm than a click that wraps the wrong span of
+            // someone's note.
+            let lower = title.to_lowercase();
+            let pattern = if title.is_empty() || lower.len() != title.len() {
+                None
+            } else {
+                Some(*pattern_of.entry(lower.clone()).or_insert_with(|| {
+                    patterns.push(lower);
+                    patterns.len() - 1
+                }))
+            };
+            entries.push(TitleEntry {
+                id: (*id).to_string(),
+                title: title.to_string(),
+                pattern,
+            });
+        }
+
+        // `Standard` is what `find_overlapping_iter` requires, and overlapping
+        // is what a title that is a substring of another needs: with "Art" and
+        // "Artwork" both in the Index, a leftmost-first automaton would report
+        // only one of them at a shared position.
+        let ac = AhoCorasick::builder()
+            .match_kind(MatchKind::Standard)
+            .build(&patterns)
+            // Only reachable at pattern counts far past any real vault; an
+            // Index that large loses suggestions rather than failing to open.
+            .unwrap_or_else(|_| AhoCorasick::new(Vec::<String>::new()).expect("empty automaton"));
+        Self { ac, entries }
     }
-    let linked = ranges_of(&WIKI_LINK_FULL_RE, text);
-    let mut code = ranges_of(&FENCED_CODE_RE, text);
-    code.extend(ranges_of(&INLINE_CODE_RE, text));
 
-    let lower_text = text.to_lowercase();
-    let mut out = Vec::new();
-
-    for (_, raw_title) in candidates {
-        let title = raw_title.trim();
-        if title.is_empty() {
-            continue;
+    /// Titles mentioned in `text` but not linked. One result per title — the
+    /// first occurrence that qualifies, matching the Mac's `break` after a
+    /// hit. The note doing the mentioning is excluded by its own `self_id`.
+    pub fn suggestions_in(&self, text: &str, self_id: &str) -> Vec<Suggestion> {
+        if text.is_empty() || self.entries.is_empty() {
+            return Vec::new();
         }
-        // Case-insensitive search. Lowercasing can change byte lengths for
-        // some scripts, so this only works as an index into `text` when the
-        // lowered form is the same length — which it is for the overwhelming
-        // majority of titles. When it isn't, skip rather than report a wrong
-        // range: a missing suggestion is a far smaller harm than a click that
-        // wraps the wrong span of someone's note.
+        let lower_text = text.to_lowercase();
+        // Same length rule as for a title, for the same reason: without it the
+        // offsets below would not index into `text`.
         if lower_text.len() != text.len() {
-            continue;
+            return Vec::new();
         }
-        let needle = title.to_lowercase();
-        if needle.len() != title.len() {
-            continue;
-        }
+        let linked = ranges_of(&WIKI_LINK_FULL_RE, text);
+        let mut code = ranges_of(&FENCED_CODE_RE, text);
+        code.extend(ranges_of(&INLINE_CODE_RE, text));
 
-        let mut from = 0usize;
-        while let Some(rel) = lower_text[from..].find(&needle) {
-            let start = from + rel;
-            let end = start + needle.len();
+        // Sparse rather than one slot per title: a note mentions a handful of
+        // the Index, not tens of thousands of it.
+        let mut found: HashMap<usize, (usize, usize)> = HashMap::new();
+        // Where a pattern's next candidate may start, after a rejected match —
+        // the `from = end.max(start + 1)` the per-title loop used, kept so a
+        // title that overlaps itself is walked exactly as it was.
+        let mut resume: HashMap<usize, usize> = HashMap::new();
+
+        for hit in self.ac.find_overlapping_iter(&lower_text) {
+            let pattern = hit.pattern().as_usize();
+            let (start, end) = (hit.start(), hit.end());
+            if found.contains_key(&pattern) || start < *resume.get(&pattern).unwrap_or(&0) {
+                continue;
+            }
             let before_word = start > 0 && prev_is_word(text, start);
             let after_word = end < text.len() && is_word_byte(text, end);
             if !before_word
@@ -136,20 +211,36 @@ pub fn suggested_links(text: &str, candidates: &[(&str, &str)]) -> Vec<Suggestio
                 && !overlaps(&linked, start, end)
                 && !overlaps(&code, start, end)
             {
-                out.push(Suggestion {
-                    title: title.to_string(),
-                    start: utf16_offset(text, start),
-                    end: utf16_offset(text, end),
-                });
-                break;
-            }
-            from = end.max(start + 1);
-            if from >= text.len() {
-                break;
+                found.insert(pattern, (utf16_offset(text, start), utf16_offset(text, end)));
+            } else {
+                resume.insert(pattern, end.max(start + 1));
             }
         }
+
+        self.entries
+            .iter()
+            .filter(|e| e.id != self_id)
+            .filter_map(|e| {
+                let (start, end) = *found.get(&e.pattern?)?;
+                Some(Suggestion {
+                    title: e.title.clone(),
+                    start,
+                    end,
+                })
+            })
+            .collect()
     }
-    out
+}
+
+/// Titles mentioned in `text` but not linked, against a one-off matcher.
+///
+/// The shape callers without an Index-wide cache use — the automaton is built
+/// and thrown away, which is the right trade only when `candidates` is small.
+pub fn suggested_links(text: &str, candidates: &[(&str, &str)]) -> Vec<Suggestion> {
+    if candidates.is_empty() {
+        return Vec::new();
+    }
+    TitleMatcher::new(candidates).suggestions_in(text, "")
 }
 
 /// Approximates `localizedStandardCompare` well enough for a sorted column:
@@ -194,8 +285,16 @@ fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
     }
 }
 
-/// Computes all three relationships for `note` against the whole Index.
+/// Computes all three relationships for `note` against the whole Index,
+/// building a throwaway [`TitleMatcher`]. `NoteStore::interlinks` is the
+/// same thing over the cached one, and is what the app calls.
 pub fn interlinks_for(note: &Note, all: &[Note]) -> Interlinks {
+    let candidates: Vec<(&str, &str)> = all.iter().map(|n| (n.id(), n.title())).collect();
+    interlinks_with(note, all, &TitleMatcher::new(&candidates))
+}
+
+/// [`interlinks_for`] against a matcher already built over `all`.
+pub fn interlinks_with(note: &Note, all: &[Note], titles: &TitleMatcher) -> Interlinks {
     let self_title = note.lowercased_title().to_string();
     let outgoing = note.wiki_links();
 
@@ -215,12 +314,7 @@ pub fn interlinks_for(note: &Note, all: &[Note]) -> Interlinks {
         .collect();
     links.sort_by(|a, b| natural_cmp(a.title(), b.title()));
 
-    let candidates: Vec<(&str, &str)> = all
-        .iter()
-        .filter(|n| n.id() != note.id())
-        .map(|n| (n.id(), n.title()))
-        .collect();
-    let mut suggested = suggested_links(note.content(), &candidates);
+    let mut suggested = titles.suggestions_in(note.content(), note.id());
     suggested.sort_by(|a, b| natural_cmp(&a.title, &b.title));
 
     let to_ref = |n: &&Note| InterlinkRef {
@@ -351,6 +445,29 @@ mod tests {
             note("Bauhaus", "target"),
         ];
         assert!(interlinks_for(&all[0], &all).suggested.is_empty());
+    }
+
+    /// One title being a substring of another is exactly what a single-pass
+    /// multi-pattern matcher can get wrong: "Art" sits inside "Artwork", and a
+    /// leftmost-first scan would report only the longer one and lose the
+    /// shorter note's suggestion (or vice versa). Both are real mentions here,
+    /// and both must be offered.
+    #[test]
+    fn a_title_inside_another_title_is_still_suggested() {
+        let all = vec![
+            note("Source", "the Artwork sat beside the Art"),
+            note("Artwork", "t"),
+            note("Art", "t"),
+        ];
+        let got = interlinks_for(&all[0], &all);
+        let named: Vec<(&str, usize, usize)> = got
+            .suggested
+            .iter()
+            .map(|s| (s.title.as_str(), s.start, s.end))
+            .collect();
+        // "Art" is rejected inside "Artwork" by the word-boundary rule, so it
+        // resolves to the standalone mention at the end.
+        assert_eq!(named, vec![("Art", 27, 30), ("Artwork", 4, 11)]);
     }
 
     #[test]
