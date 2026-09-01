@@ -14,8 +14,7 @@ use fancy_regex::Regex;
 use rayon::prelude::*;
 
 use crate::filename::{
-    available_attachment_name, available_path, sanitize_attachment_name, sanitize_title,
-    unique_filename,
+    available_attachment_name, sanitize_attachment_name, sanitize_title, unique_filename,
 };
 use crate::note::Note;
 use crate::search::INBOX_FOLDER_NAME;
@@ -39,6 +38,31 @@ pub const ATTACHMENTS_FOLDER_NAME: &str = "Attachments";
 /// scanned, and it can never collide with a real folder the user named
 /// "Trash".
 pub const TRASH_FOLDER_NAME: &str = ".trash";
+
+/// The Mac's trash: one visible `Trash/` at the Index root (1.8.3 made it
+/// visible so sync clients carry it). Linux keeps the per-folder `.trash`
+/// layout above and does not read or write this folder — but an Index synced
+/// from a Mac will have one, and its contents are deleted notes, not live
+/// ones. So it is excluded from the note scan and the folder list by name
+/// like the other service folders, and is reserved as a folder name.
+pub const MAC_TRASH_FOLDER_NAME: &str = "Trash";
+
+/// A visible service folder at the Index root for Envy's vault-bound derived
+/// state — data that belongs to *this* collection of notes and travels with
+/// it across machines (the Kindle import ledger today). Visible, not a
+/// dot-folder, for the same sync reason as `Attachments/`. Not notes, so the
+/// scan and the folder list exclude it by name. Mirrors the Mac's
+/// `NoteStore.dataFolderName`.
+pub const DATA_FOLDER_NAME: &str = "Envy Data";
+
+/// The root-level folders that are Envy's own rather than the user's: never
+/// scanned for notes, never listed as a folder, never a rename target.
+const SERVICE_FOLDER_NAMES: [&str; 4] = [
+    TEMPLATES_FOLDER_NAME,
+    ATTACHMENTS_FOLDER_NAME,
+    MAC_TRASH_FOLDER_NAME,
+    DATA_FOLDER_NAME,
+];
 
 /// A template is a plain `.md` file in the Index's `Templates/` subfolder —
 /// never a `Note`. The scan skips descending into `Templates/` even when
@@ -133,8 +157,9 @@ impl NoteStore {
     /// Every folder under the Index that could hold notes, relative to the
     /// root, sorted.
     ///
-    /// `Templates/` and `Inbox/` are excluded along with everything beneath
-    /// them — neither is a place you file a note, and both already mean
+    /// The service folders (`Templates/`, `Attachments/`, the Mac's `Trash/`,
+    /// `Envy Data/`) and `Inbox/` are excluded along with everything beneath
+    /// them — none is a place you file a note, and each already means
     /// something else. Hidden folders are skipped wholesale, which is what
     /// keeps `.trash` out without needing its own case.
     pub fn subfolders(&self) -> Vec<String> {
@@ -154,10 +179,7 @@ impl NoteStore {
                     continue;
                 }
                 let name = path.file_name().unwrap_or_default().to_string_lossy();
-                if name == TEMPLATES_FOLDER_NAME
-                    || name == INBOX_FOLDER_NAME
-                    || name == ATTACHMENTS_FOLDER_NAME
-                {
+                if name == INBOX_FOLDER_NAME || SERVICE_FOLDER_NAMES.contains(&name.as_ref()) {
                     continue;
                 }
                 if let Ok(rel) = path.strip_prefix(root) {
@@ -174,31 +196,73 @@ impl NoteStore {
     /// Moves a note into `subfolder` (relative to the Index root), or to the
     /// root when it is `None` or empty. Creates the destination on demand.
     ///
-    /// The title is unchanged, so `[[links]]` pointing at it still resolve —
-    /// this only changes which folder the file sits in. Returns the note at its
+    /// The title is always unchanged — a move that would collide with a
+    /// same-named note in the destination is **refused** (returns `None`)
+    /// rather than silently de-duped to "Foo (2)", so `[[links]]` pointing at
+    /// either note keep resolving to what they meant. Returns the note at its
     /// new location, or `None` if the move failed. A note already in that
-    /// folder is returned untouched rather than treated as an error.
+    /// folder is returned untouched rather than treated as an error. Mirrors
+    /// the Mac's `moveNote(_:toSubfolder:)` (1.8.1 "Safer moves").
     pub fn move_note(&mut self, id: &str, subfolder: Option<&str>) -> Option<Note> {
+        self.move_note_inner(id, subfolder, false)
+    }
+
+    /// The move shared by `move_note` and `submit_from_inbox` — the Mac's
+    /// `moveNote(_:toSubfolder:filingFromInbox:)`.
+    fn move_note_inner(
+        &mut self,
+        id: &str,
+        subfolder: Option<&str>,
+        filing_from_inbox: bool,
+    ) -> Option<Note> {
         let note = self.notes.iter().find(|n| n.id() == id)?.clone();
+        // A `None`/empty subfolder means "move to the root"; a named one is
+        // sanitized so a `../` can't move the note outside the vault (an
+        // unusable path refuses the move rather than escaping).
         let trimmed = subfolder.unwrap_or("").trim_matches(['/', ' ']);
         let target_dir = if trimmed.is_empty() {
             self.directory.clone()
         } else {
-            self.directory.join(trimmed)
+            self.directory.join(sanitized_subfolder(trimmed)?)
         };
         if note.url().parent() == Some(target_dir.as_path()) {
             return Some(note);
         }
 
         fs::create_dir_all(&target_dir).ok()?;
-        // The same disambiguation a new note gets, so moving onto a name that
-        // is taken in the destination doesn't clobber it.
         let destination = target_dir.join(unique_filename(note.title(), &target_dir));
+        // `unique_filename` de-dups a collision to "Foo (2)" — but for a *move*
+        // that's a silent title change with no single right answer: half the
+        // vault's [[Foo]] links would start resolving to whichever Foo
+        // remained. Refusing keeps every link intact; the note stays put.
+        // Compared against the sanitized base, NOT the raw title — a title can
+        // legally carry characters filenames rewrite to "-", and that
+        // deterministic difference is not a collision (it used to be misread
+        // as one, which made colon-titled notes refuse to move at all).
+        //
+        // A note filed from the Inbox is exempt: it has no incoming links yet,
+        // so there's nothing to protect — it takes the "Foo (2)" name and files
+        // rather than refusing.
+        if !filing_from_inbox {
+            let stem = destination.file_stem()?.to_string_lossy();
+            if stem != sanitize_title(note.title()) {
+                return None;
+            }
+        }
         fs::rename(note.url(), &destination).ok()?;
 
         let moved = Note::new(destination, note.content().to_string(), note.modified);
         if let Some(i) = self.notes.iter().position(|n| n.id() == id) {
             self.notes[i] = moved.clone();
+        }
+        // Sanitization can still change the title ("What?" → "What-"). That's
+        // deterministic, not ambiguous — so rewrite the vault's references the
+        // same way `rename` does, and links keep working. Skipped when filing
+        // from the Inbox: the note has no incoming links, and a collision
+        // rename to "Foo (2)" must not rewrite a same-named note's existing
+        // [[Foo]] links to point at the newcomer.
+        if !filing_from_inbox && moved.title() != note.title() {
+            self.update_wiki_link_references(note.title(), moved.title());
         }
         Some(moved)
     }
@@ -256,15 +320,13 @@ impl NoteStore {
     /// place. Renaming onto an existing folder, or to (or from) a reserved name,
     /// is refused.
     pub fn rename_folder(&mut self, old_path: &str, new_path_raw: &str) -> Option<String> {
-        // Each `/`-segment is sanitized the way a filename is; `/` itself stays
-        // the separator. Empty segments (a doubled or trailing slash) drop out.
-        let new_path = new_path_raw
-            .split('/')
-            .map(sanitize_folder_segment)
-            .filter(|s| !s.is_empty())
-            .collect::<Vec<_>>()
-            .join("/");
-        if new_path.is_empty() || new_path == old_path {
+        // Each `/`-segment is sanitized the way a filename is (`:` → `-`) and
+        // any `.`/`..` is rejected, so a typed path can't traverse out of the
+        // vault; `/` itself stays the separator. The old path is guarded the
+        // same way so neither side can point outside.
+        let new_path = sanitized_subfolder(new_path_raw)?;
+        sanitized_subfolder(old_path)?;
+        if new_path == old_path {
             return None;
         }
 
@@ -275,7 +337,9 @@ impl NoteStore {
             TEMPLATES_FOLDER_NAME,
             INBOX_FOLDER_NAME,
             TRASH_FOLDER_NAME,
+            MAC_TRASH_FOLDER_NAME,
             ATTACHMENTS_FOLDER_NAME,
+            DATA_FOLDER_NAME,
         ];
         let first_segment = |p: &str| p.split('/').next().unwrap_or("").to_string();
         let new_first = first_segment(&new_path);
@@ -288,6 +352,10 @@ impl NoteStore {
 
         let old_url = self.directory.join(old_path);
         let new_url = self.directory.join(&new_path);
+        // Belt-and-suspenders: both endpoints must resolve inside the vault.
+        if !is_contained(&old_url, &self.directory) || !is_contained(&new_url, &self.directory) {
+            return None;
+        }
         if !old_url.is_dir() {
             return None;
         }
@@ -424,15 +492,14 @@ impl NoteStore {
 
     /// Creates a note directly inside `subfolder` (a path relative to the Index
     /// root), making the folder if it doesn't exist. Backs the `Folder/Title`
-    /// quick-create — the Mac's `store.create(title:inSubfolder:)`. An empty or
-    /// slash-only subfolder lands the note at the root, the same normalisation
-    /// `move_note` applies.
+    /// quick-create — the Mac's `store.create(title:inSubfolder:)`. The path is
+    /// sanitized so a `../` component can't create or write outside the vault;
+    /// an unusable path (empty, slash-only, or traversing) just falls back to
+    /// the root, as the Mac's does.
     pub fn create_in_subfolder(&mut self, title: &str, subfolder: &str) -> std::io::Result<Note> {
-        let trimmed = subfolder.trim_matches(['/', ' ']);
-        let dir = if trimmed.is_empty() {
-            self.directory.clone()
-        } else {
-            self.directory.join(trimmed)
+        let dir = match sanitized_subfolder(subfolder) {
+            Some(safe) => self.directory.join(safe),
+            None => self.directory.clone(),
         };
         fs::create_dir_all(&dir)?;
         self.create_in(title, dir)
@@ -494,7 +561,7 @@ impl NoteStore {
 
         // A case-only change ("test" → "Test") collides with the file itself
         // on a case-insensitive volume, so asking for a free name would hand
-        // back "Test 2". Move straight to the new spelling instead.
+        // back "Test (2)". Move straight to the new spelling instead.
         let new_path = if trimmed.eq_ignore_ascii_case(note.title()) {
             dir.join(format!("{}.md", sanitize_title(trimmed)))
         } else {
@@ -584,7 +651,10 @@ impl NoteStore {
                 trashed.push((note.clone(), destination));
             }
         }
-        let deleted_ids: Vec<&str> = notes_to_delete.iter().map(|n| n.id()).collect();
+        // Only the notes whose move actually succeeded leave the list — a note
+        // whose trash move failed is still sitting on disk, and dropping it
+        // from the UI anyway would make it vanish until the next full reload.
+        let deleted_ids: Vec<&str> = trashed.iter().map(|(n, _)| n.id()).collect();
         self.notes.retain(|n| !deleted_ids.contains(&n.id()));
         self.last_deleted = trashed;
         self.refresh_trashed();
@@ -618,7 +688,7 @@ impl NoteStore {
     pub fn restore_from_trash(&mut self, note: &Note) -> Option<Note> {
         let trash_dir = note.url().parent()?;
         let original_dir = trash_dir.parent()?;
-        let destination = available_path(note.title(), original_dir);
+        let destination = original_dir.join(unique_filename(note.title(), original_dir));
         fs::rename(note.url(), &destination).ok()?;
         let restored = Note::new(destination, note.content(), note.modified);
         self.notes.push(restored.clone());
@@ -655,8 +725,15 @@ impl NoteStore {
     /// Resolves a bare attachment filename (already parsed out of `![[…]]`,
     /// before any `|size`) to its path. No existence check — the renderer
     /// decides what a missing file looks like.
+    ///
+    /// The name is untrusted note text, so it is contained to a single leaf
+    /// inside `Attachments/`: any directory parts are stripped and `.`/`..`
+    /// refused, so a crafted embed like `![[../../secret.png]]` can never
+    /// resolve outside the folder (which would otherwise let merely opening a
+    /// note read, open, reveal, or even move an arbitrary file). Mirrors the
+    /// Mac's `attachmentURL(forName:)`.
     pub fn attachment_path(&self, name: &str) -> PathBuf {
-        self.attachments_dir().join(name)
+        self.attachments_dir().join(attachment_leaf(name))
     }
 
     /// Writes raw image bytes as `base.ext`, de-duped, returning the stored
@@ -703,8 +780,14 @@ impl NoteStore {
     /// list. Mirrors the Mac's `renameAttachment` + `updateAttachmentReferences`.
     pub fn rename_attachment(&mut self, old_name: &str, new_name: &str) -> Option<String> {
         let dir = self.attachments_dir();
-        let old_path = dir.join(old_name);
-        if !old_path.exists() {
+        // Contain the source: `old_name` is untrusted note text, and a rename
+        // moves the file, so a `../` source must never point outside the folder
+        // (that would relocate an arbitrary file into the vault).
+        let old_path = self.attachment_path(old_name);
+        if !is_contained(&old_path, &dir)
+            || old_path.parent() != Some(dir.as_path())
+            || !old_path.exists()
+        {
             return None;
         }
         // A rename to the same name (only case or whitespace differing) is a
@@ -856,19 +939,19 @@ impl NoteStore {
     }
 
     /// Files a fleeting note into the Index proper — a plain move out of
-    /// `Inbox/`. The note's text is untouched, so nothing about having been
+    /// `Inbox/`, to the root by default or straight into `subfolder` (created
+    /// on demand). The note's text is untouched, so nothing about having been
     /// fleeting survives in the file.
-    pub fn submit_from_inbox(&mut self, note: &Note) -> Option<Note> {
+    ///
+    /// A thin wrapper over the move, with the Inbox exemption: a fleeting note
+    /// whose title collides with one already in the destination still files,
+    /// as "Foo (2)", rather than refusing — it has no incoming links to
+    /// protect. Mirrors the Mac's `submitFromInbox(_:toSubfolder:)`.
+    pub fn submit_from_inbox(&mut self, note: &Note, subfolder: Option<&str>) -> Option<Note> {
         if !crate::search::is_inbox_note(note) {
             return None;
         }
-        let destination = available_path(note.title(), &self.directory);
-        fs::rename(note.url(), &destination).ok()?;
-        let moved = Note::new(destination, note.content(), note.modified);
-        if let Some(slot) = self.notes.iter_mut().find(|n| n.id() == note.id()) {
-            *slot = moved.clone();
-        }
-        Some(moved)
+        self.move_note_inner(note.id(), subfolder, true)
     }
 }
 
@@ -943,12 +1026,67 @@ fn sanitize_extracted_title(s: &str) -> String {
     }
 }
 
-/// One segment of a folder path, cleaned the way a filename is: `:` becomes `-`
-/// (`/` is the separator and handled by the caller), and surrounding whitespace
-/// is dropped. Unlike [`sanitize_extracted_title`] there is no "Untitled"
-/// fallback — an empty segment is filtered out by the caller instead.
-fn sanitize_folder_segment(seg: &str) -> String {
-    seg.replace(':', "-").trim().to_string()
+/// A subfolder path relative to the Index root, sanitized for safe use: each
+/// component gets the same `:` → `-` rewrite filenames do, empty components
+/// (doubled slashes) are dropped, and any `.` or `..` component is rejected
+/// outright so a typed or imported path can never traverse out of the vault.
+/// `None` when nothing usable remains. Mirrors the Mac's `sanitizedSubfolder`.
+///
+/// Components are cleaned inline rather than through `sanitize_title`, whose
+/// "Untitled" fallback would turn an empty or whitespace component into a real
+/// folder — and, unlike [`sanitize_extracted_title`], nothing here falls back.
+pub fn sanitized_subfolder(path: &str) -> Option<String> {
+    let components: Vec<String> = path
+        .split('/')
+        .map(|raw| raw.replace(':', "-").trim().to_string())
+        .filter(|c| !c.is_empty())
+        .collect();
+    if components.is_empty() || components.iter().any(|c| c == "." || c == "..") {
+        return None;
+    }
+    Some(components.join("/"))
+}
+
+/// Whether `path` is `base` or somewhere beneath it — the guard against a path
+/// escaping the vault via `..`. Both are normalised lexically first, so `..`
+/// segments are collapsed before the prefix check (the Mac's
+/// `standardizedFileURL` does the same; neither touches the disk).
+pub fn is_contained(path: &Path, base: &Path) -> bool {
+    let path = lexically_normalized(path);
+    let base = lexically_normalized(base);
+    path == base || path.starts_with(&base)
+}
+
+/// Collapses `.` and `..` components without consulting the filesystem.
+fn lexically_normalized(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+/// The single filename an attachment reference may name: its last path
+/// component, with `.`/`..`/empty replaced by U+FFFD so the result still
+/// resolves to a (nonexistent) file rather than to the folder itself.
+fn attachment_leaf(name: &str) -> String {
+    let leaf = name
+        .trim_end_matches(['/', '\\'])
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or("");
+    if leaf.is_empty() || leaf == "." || leaf == ".." {
+        "\u{FFFD}".to_string()
+    } else {
+        leaf.to_string()
+    }
 }
 
 /// Keeps only the characters a tag may contain (`[A-Za-z0-9_-]`), dropping a
@@ -995,10 +1133,13 @@ fn set_modified(path: &Path, time: SystemTime) -> std::io::Result<()> {
 
 /// Every `.md` file to treat as a note.
 ///
-/// `Templates/` is skipped whether or not subfolder scanning is on — templates
-/// are never notes. Hidden directories are skipped wholesale, which is what
-/// keeps `.trash` invisible without needing its own special case (the same
-/// property `skipsHiddenFiles` provides on the Mac).
+/// The Index's own service folders — `Templates/`, `Attachments/`, a
+/// Mac-synced `Trash/`, `Envy Data/` — are skipped whether or not subfolder
+/// scanning is on: none of them hold notes. Excluded by root-level path, the
+/// way the Mac's `notesRecursively` does, so a user folder that merely shares
+/// a name deeper down is still scanned. Hidden directories are skipped
+/// wholesale, which is what keeps `.trash` invisible without needing its own
+/// special case (the same property `skipsHiddenFiles` provides on the Mac).
 ///
 /// `Inbox/` is read even when subfolder scanning is off: it isn't a folder the
 /// user made to organise things, it's where captures land, and a fleeting note
@@ -1022,17 +1163,10 @@ fn set_modified(path: &Path, time: SystemTime) -> std::io::Result<()> {
 /// reason a reload here was slower than the Mac's, which gets the same data for
 /// free by asking for `.contentModificationDateKey` during enumeration.
 fn note_paths(directory: &Path, include_subfolders: bool) -> Vec<(PathBuf, SystemTime)> {
-    let templates = directory.join(TEMPLATES_FOLDER_NAME);
-    let attachments = directory.join(ATTACHMENTS_FOLDER_NAME);
+    let service: Vec<PathBuf> = SERVICE_FOLDER_NAMES.iter().map(|n| directory.join(n)).collect();
     let mut out = Vec::new();
 
-    fn walk(
-        dir: &Path,
-        templates: &Path,
-        attachments: &Path,
-        recurse: bool,
-        out: &mut Vec<(PathBuf, SystemTime)>,
-    ) {
+    fn walk(dir: &Path, service: &[PathBuf], recurse: bool, out: &mut Vec<(PathBuf, SystemTime)>) {
         let Ok(entries) = fs::read_dir(dir) else {
             return;
         };
@@ -1048,10 +1182,10 @@ fn note_paths(directory: &Path, include_subfolders: bool) -> Vec<(PathBuf, Syste
                 Err(_) => path.is_dir(),
             };
             if is_dir {
-                if !recurse || is_hidden(&path) || path == templates || path == attachments {
+                if !recurse || is_hidden(&path) || service.contains(&path) {
                     continue;
                 }
-                walk(&path, templates, attachments, true, out);
+                walk(&path, service, true, out);
             } else if is_markdown(&path) && !is_hidden(&path) {
                 let modified = entry
                     .metadata()
@@ -1062,12 +1196,12 @@ fn note_paths(directory: &Path, include_subfolders: bool) -> Vec<(PathBuf, Syste
         }
     }
 
-    walk(directory, &templates, &attachments, include_subfolders, &mut out);
+    walk(directory, &service, include_subfolders, &mut out);
 
     if !include_subfolders {
         let inbox = directory.join(INBOX_FOLDER_NAME);
         if inbox.is_dir() {
-            walk(&inbox, &templates, &attachments, false, &mut out);
+            walk(&inbox, &service, false, &mut out);
         }
     }
     out
@@ -1159,6 +1293,10 @@ mod tests {
             ("Templates/T.md", "x"),
             ("Inbox/Fleeting.md", "x"),
             (".trash/Gone.md", "x"),
+            ("Attachments/pic.png", "x"),
+            // A Mac-synced vault's own service folders.
+            ("Trash/Work/Old.md", "x"),
+            ("Envy Data/kindle.json", "x"),
         ]);
         let _ = &dir;
         assert_eq!(store.subfolders(), vec!["Projects", "Projects/Work"]);
@@ -1215,8 +1353,11 @@ mod tests {
         assert_eq!(same.id(), id);
     }
 
+    /// Mac 1.8.1 "Safer moves": a move onto a taken name is refused, not
+    /// silently renamed to "A (2)" — either outcome would change what half
+    /// the vault's [[A]] links point at.
     #[test]
-    fn moving_onto_a_taken_name_does_not_clobber_it() {
+    fn moving_onto_a_taken_name_is_refused() {
         let (dir, mut store) =
             nested_store_with(&[("A.md", "root copy"), ("Projects/A.md", "folder copy")]);
         let root_id = store
@@ -1226,13 +1367,68 @@ mod tests {
             .unwrap()
             .id()
             .to_string();
-        let moved = store.move_note(&root_id, Some("Projects")).unwrap();
-        assert_eq!(moved.content(), "root copy");
-        // The note already there is untouched.
+        assert!(store.move_note(&root_id, Some("Projects")).is_none());
+        // Both notes are exactly where they were.
+        assert_eq!(fs::read_to_string(dir.path().join("A.md")).unwrap(), "root copy");
         assert_eq!(
             fs::read_to_string(dir.path().join("Projects/A.md")).unwrap(),
             "folder copy"
         );
+        assert!(!dir.path().join("Projects/A (2).md").exists());
+        assert!(store.notes().iter().any(|n| n.id() == root_id));
+        // The collision check is case-insensitive, like the filesystems are.
+        let (dir, mut store) = nested_store_with(&[("b.md", "x"), ("Projects/B.md", "y")]);
+        let id = store.notes().iter().find(|n| n.title() == "b").unwrap().id().to_string();
+        assert!(store.move_note(&id, Some("Projects")).is_none());
+        assert!(dir.path().join("b.md").exists());
+    }
+
+    /// A note filed from the Inbox has no incoming links to protect, so it
+    /// takes the "(2)" name and files rather than refusing.
+    #[test]
+    fn filing_from_inbox_is_exempt() {
+        let (dir, mut store) =
+            store_with(&[("Journal.md", "kept"), ("Inbox/Journal.md", "fleeting")]);
+        let fleeting = store
+            .notes()
+            .iter()
+            .find(|n| crate::search::is_inbox_note(n))
+            .unwrap()
+            .clone();
+        let filed = store.submit_from_inbox(&fleeting, None).unwrap();
+        assert_eq!(filed.title(), "Journal (2)");
+        assert!(!crate::search::is_inbox_note(&filed));
+        assert!(dir.path().join("Journal (2).md").exists());
+        assert!(!dir.path().join("Inbox/Journal.md").exists());
+        // The note already at the root is untouched.
+        assert_eq!(fs::read_to_string(dir.path().join("Journal.md")).unwrap(), "kept");
+    }
+
+    /// Sanitization can still change a title on the way ("What?" is a legal
+    /// filename here but not on Windows). That's deterministic, not a
+    /// collision, so the move goes ahead and references follow, as on rename.
+    #[test]
+    fn moving_a_note_whose_title_sanitizes_rewrites_its_links() {
+        let (dir, mut store) = store_with(&[("What?.md", "x"), ("Hub.md", "see [[What?]]")]);
+        let id = store.notes().iter().find(|n| n.title() == "What?").unwrap().id().to_string();
+        let moved = store.move_note(&id, Some("Projects")).unwrap();
+        assert_eq!(moved.title(), "What-");
+        assert_eq!(
+            fs::read_to_string(dir.path().join("Hub.md")).unwrap(),
+            "see [[What-]]"
+        );
+    }
+
+    /// A `../` in the destination refuses the move rather than escaping the
+    /// vault (Mac 1.10.0 "Security").
+    #[test]
+    fn moving_into_a_traversing_subfolder_is_refused() {
+        let (dir, mut store) = store_with(&[("A.md", "x")]);
+        let id = store.notes()[0].id().to_string();
+        assert!(store.move_note(&id, Some("../outside")).is_none());
+        assert!(store.move_note(&id, Some("Work/../../outside")).is_none());
+        assert!(dir.path().join("A.md").exists());
+        assert!(!dir.path().parent().unwrap().join("outside").exists());
     }
 
     #[test]
@@ -1316,6 +1512,9 @@ mod tests {
         // Onto a reserved name.
         assert_eq!(store.rename_folder("Work", "Templates"), None);
         assert_eq!(store.rename_folder("Work", "Inbox"), None);
+        assert_eq!(store.rename_folder("Work", "Trash"), None);
+        assert_eq!(store.rename_folder("Work", "Envy Data"), None);
+        assert_eq!(store.rename_folder("Work", "envy data/Sub"), None);
         // Onto a folder that already exists.
         assert_eq!(store.rename_folder("Work", "Taken"), None);
         // No-op / empty targets.
@@ -1323,6 +1522,50 @@ mod tests {
         assert_eq!(store.rename_folder("Work", "   "), None);
         // Work is still where it was.
         assert!(dir.path().join("Work/A.md").exists());
+    }
+
+    #[test]
+    fn rename_folder_refuses_traversal_on_either_side() {
+        let (dir, mut store) = nested_store_with(&[("Work/A.md", "x")]);
+        assert_eq!(store.rename_folder("Work", "../Escaped"), None);
+        assert_eq!(store.rename_folder("Work", "Ok/../../Escaped"), None);
+        assert_eq!(store.rename_folder("../Work", "Elsewhere"), None);
+        assert!(dir.path().join("Work/A.md").exists());
+        assert!(!dir.path().parent().unwrap().join("Escaped").exists());
+    }
+
+    // --- Path safety (Mac 1.10.0 "Security") --------------------------------
+
+    #[test]
+    fn sanitized_subfolder_rejects_traversal_and_cleans_components() {
+        // A legit nested path passes through.
+        assert_eq!(
+            sanitized_subfolder("Work/Retro notes").as_deref(),
+            Some("Work/Retro notes")
+        );
+        // Doubled slashes collapse.
+        assert_eq!(sanitized_subfolder("Work//Sub").as_deref(), Some("Work/Sub"));
+        // A component's colon is rewritten.
+        assert_eq!(sanitized_subfolder("Work:X/Sub").as_deref(), Some("Work-X/Sub"));
+        // A `..` component is refused, wherever it sits.
+        assert_eq!(sanitized_subfolder("../../etc"), None);
+        assert_eq!(sanitized_subfolder(".."), None);
+        assert_eq!(sanitized_subfolder("Work/../../etc"), None);
+        // An empty path is None.
+        assert_eq!(sanitized_subfolder("/ /"), None);
+    }
+
+    #[test]
+    fn is_contained_keeps_a_resolved_path_within_the_base() {
+        let base = Path::new("/tmp/TheIndex/Attachments");
+        // A leaf inside the base is contained.
+        assert!(is_contained(&base.join("photo.png"), base));
+        // The base itself is contained.
+        assert!(is_contained(base, base));
+        // A ../ escape is not.
+        assert!(!is_contained(&base.join("../../secret.png"), base));
+        // Nor is a sibling folder.
+        assert!(!is_contained(Path::new("/tmp/TheIndex/Other/x"), base));
     }
 
     #[test]
@@ -1503,6 +1746,24 @@ mod tests {
         assert_eq!(store.trashed_notes().len(), 1);
     }
 
+    /// A vault synced from a Mac carries a visible `Trash/` (its deleted notes)
+    /// and `Envy Data/` (its import ledger). Neither holds live notes, so the
+    /// scan skips them like `Templates/` — while a user folder that merely
+    /// shares the name deeper down is still a folder.
+    #[test]
+    fn mac_trash_and_envy_data_are_never_notes() {
+        let (_d, store) = nested_store_with(&[
+            ("Real.md", "x"),
+            ("Trash/Deleted.md", "y"),
+            ("Trash/Work/Older.md", "y"),
+            ("Envy Data/Note-like.md", "z"),
+            ("Projects/Trash/Kept.md", "w"),
+        ]);
+        assert_eq!(titles(&store), vec!["Kept", "Real"]);
+        // Nothing of the Mac's Trash/ is mistaken for Linux trash either.
+        assert!(store.trashed_notes().is_empty());
+    }
+
     /// Inbox is read even with subfolder scanning off — a fleeting note that
     /// only appears when an unrelated setting is enabled is a lost note.
     #[test]
@@ -1534,8 +1795,10 @@ mod tests {
         assert_eq!(a.title(), "Ideas");
         assert!(dir.path().join("Ideas.md").exists());
 
+        // The Mac's " (2)" shape, so the same collision names the same file on
+        // every platform.
         let b = store.create("Ideas").unwrap();
-        assert_eq!(b.title(), "Ideas 2");
+        assert_eq!(b.title(), "Ideas (2)");
     }
 
     #[test]
@@ -1694,7 +1957,7 @@ mod tests {
         let (dir, mut store) = store_with(&[("test.md", "x")]);
         let note = store.notes()[0].clone();
         let renamed = store.rename(&note, "Test").unwrap();
-        // Not "Test 2" — the collision is with the file itself.
+        // Not "Test (2)" — the collision is with the file itself.
         assert_eq!(renamed.title(), "Test");
         assert!(dir.path().join("Test.md").exists());
     }
@@ -1801,6 +2064,26 @@ mod tests {
         assert_eq!(titles(&store), vec!["A", "B", "C"]);
     }
 
+    /// Only notes whose trash move succeeded leave the list. A note whose file
+    /// is already gone (or whose rename fails) stays listed rather than
+    /// silently vanishing until the next full reload — the Mac's `delete(_:)`
+    /// retains by the trashed set for the same reason.
+    #[test]
+    fn delete_keeps_a_note_whose_move_failed() {
+        let (dir, mut store) = store_with(&[("A.md", "x"), ("B.md", "y")]);
+        let doomed: Vec<Note> = store.notes().to_vec();
+        // A's file disappears under us before the delete runs.
+        fs::remove_file(dir.path().join("A.md")).unwrap();
+
+        store.delete(&doomed);
+        assert_eq!(titles(&store), vec!["A"]);
+        assert!(dir.path().join(".trash/B.md").exists());
+        assert!(!dir.path().join(".trash/A.md").exists());
+        // And undo only knows about what was actually trashed.
+        assert_eq!(store.restore_last_deleted().len(), 1);
+        assert_eq!(titles(&store), vec!["A", "B"]);
+    }
+
     /// A note whose original location has been reused is skipped rather than
     /// overwriting the new occupant.
     #[test]
@@ -1872,6 +2155,36 @@ mod tests {
         );
     }
 
+    /// An embed's name is untrusted note text: `![[../../secret.png]]` must
+    /// resolve to a leaf inside `Attachments/`, never outside it.
+    #[test]
+    fn attachment_path_is_contained_to_a_leaf_in_attachments() {
+        let (dir, store) = store_with(&[]);
+        let attachments = dir.path().join("Attachments");
+        assert_eq!(store.attachment_path("photo.png"), attachments.join("photo.png"));
+        assert_eq!(
+            store.attachment_path("../../secret.png"),
+            attachments.join("secret.png")
+        );
+        assert_eq!(store.attachment_path("sub/dir/pic.png"), attachments.join("pic.png"));
+        // `.`/`..`/empty never resolve to the folder itself.
+        for bad in ["..", ".", "", "../"] {
+            let p = store.attachment_path(bad);
+            assert_eq!(p.parent(), Some(attachments.as_path()), "{bad:?}");
+            assert_ne!(p, attachments, "{bad:?}");
+        }
+    }
+
+    /// A rename moves a file, so a source that isn't a leaf inside
+    /// `Attachments/` must be refused rather than relocating a note into it.
+    #[test]
+    fn rename_attachment_refuses_a_source_outside_attachments() {
+        let (dir, mut store) = store_with(&[("A.md", "x")]);
+        assert_eq!(store.rename_attachment("../A.md", "stolen.md"), None);
+        assert!(dir.path().join("A.md").exists());
+        assert!(!dir.path().join("Attachments/stolen.md").exists());
+    }
+
     #[test]
     fn attachments_folder_is_not_a_note_or_a_listed_folder() {
         let (_dir, mut store) =
@@ -1916,7 +2229,7 @@ mod tests {
     fn submit_moves_a_fleeting_note_into_the_index() {
         let (dir, mut store) = store_with(&[("Inbox/Captured.md", "a thought")]);
         let note = store.notes()[0].clone();
-        let filed = store.submit_from_inbox(&note).unwrap();
+        let filed = store.submit_from_inbox(&note, None).unwrap();
 
         assert_eq!(filed.url().parent().unwrap(), dir.path());
         assert!(dir.path().join("Captured.md").exists());
@@ -1929,7 +2242,31 @@ mod tests {
     fn submit_refuses_a_note_that_is_not_fleeting() {
         let (_d, mut store) = store_with(&[("Filed.md", "x")]);
         let note = store.notes()[0].clone();
-        assert!(store.submit_from_inbox(&note).is_none());
+        assert!(store.submit_from_inbox(&note, None).is_none());
+        assert!(store.submit_from_inbox(&note, Some("Projects")).is_none());
+    }
+
+    /// Mac 1.8.4: submit can file straight into a chosen folder, creating it
+    /// on demand.
+    #[test]
+    fn submit_files_straight_into_a_subfolder() {
+        let (dir, mut store) = nested_store_with(&[("Inbox/Filed Deep.md", "another")]);
+        let note = store.notes()[0].clone();
+        let filed = store.submit_from_inbox(&note, Some("Projects/Work")).unwrap();
+        assert!(dir.path().join("Projects/Work/Filed Deep.md").exists());
+        assert!(!crate::search::is_inbox_note(&filed));
+        assert_eq!(store.subfolder_path(&filed), Some("Projects/Work".to_string()));
+    }
+
+    #[test]
+    fn consecutive_inbox_submits_to_the_same_folder_both_land() {
+        let (dir, mut store) = nested_store_with(&[]);
+        let first = store.create_inbox_note("First Thought").unwrap();
+        let second = store.create_inbox_note("Second Thought").unwrap();
+        assert!(store.submit_from_inbox(&first, Some("Projects")).is_some());
+        assert!(store.submit_from_inbox(&second, Some("Projects")).is_some());
+        assert!(dir.path().join("Projects/First Thought.md").exists());
+        assert!(dir.path().join("Projects/Second Thought.md").exists());
     }
 
     #[test]
@@ -1958,5 +2295,16 @@ mod tests {
         let (dir, mut store) = nested_store_with(&[]);
         store.create_in_subfolder("Loose", "  ").unwrap();
         assert!(dir.path().join("Loose.md").exists());
+    }
+
+    /// An unusable (traversing) subfolder falls back to the root, the way the
+    /// Mac's `create(title:inSubfolder:)` does, rather than escaping the vault.
+    #[test]
+    fn create_in_subfolder_falls_back_to_the_root_on_traversal() {
+        let (dir, mut store) = nested_store_with(&[]);
+        let note = store.create_in_subfolder("Safe", "../Escaped").unwrap();
+        assert_eq!(note.url().parent(), Some(dir.path()));
+        assert!(dir.path().join("Safe.md").exists());
+        assert!(!dir.path().parent().unwrap().join("Escaped").exists());
     }
 }

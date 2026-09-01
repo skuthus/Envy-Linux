@@ -127,32 +127,18 @@ pub fn available_attachment_name(filename: &str, directory: &Path) -> String {
     }
 }
 
-/// A free filename in `directory` for `title`, disambiguating with " 2",
-/// " 3"… — the shape `NoteStore.uniqueFilename` uses.
-pub fn unique_filename(title: &str, directory: &Path) -> String {
-    let base = sanitize_title(title);
-    let mut candidate = format!("{base}.md");
-    let mut suffix = 2;
-    while directory.join(&candidate).exists() {
-        candidate = format!("{base} {suffix}.md");
-        suffix += 1;
-    }
-    candidate
-}
-
-/// A free path in `directory` for `title`, disambiguating with " (2)", " (3)"…
+/// The one free-filename rule for `title` in `directory`, disambiguating
+/// with " (2)", " (3)"… — the Mac's `uniqueFilename`. Every path that names
+/// a file — create, rename, move, trash, template — goes through here, so the
+/// same collision always resolves to the same name on every platform.
 ///
 /// Parenthesised rather than a bare " 2", which reads as part of a title — a
 /// note actually called "Ideas 2" is entirely plausible. Compared
 /// case-insensitively because NTFS is (like APFS): "ideas" and "Ideas" already
 /// collide at the filesystem level, so matching only exact case would happily
-/// generate a name the OS then refuses.
-///
-/// Deliberately a separate function from `unique_filename` with a different
-/// disambiguation shape, because the Mac has both and uses each in different
-/// places — matching that rather than unifying them keeps filenames identical
-/// across platforms for the same action.
-pub fn available_path(title: &str, directory: &Path) -> PathBuf {
+/// generate a name the OS then refuses. One directory read up front rather
+/// than an `exists` syscall per candidate.
+pub fn unique_filename(title: &str, directory: &Path) -> String {
     let existing: Vec<String> = std::fs::read_dir(directory)
         .map(|entries| {
             entries
@@ -168,13 +154,18 @@ pub fn available_path(title: &str, directory: &Path) -> PathBuf {
 
     let base = sanitize_title(title);
     if !existing.contains(&base.to_lowercase()) {
-        return directory.join(format!("{base}.md"));
+        return format!("{base}.md");
     }
     let mut counter = 2;
     while existing.contains(&format!("{base} ({counter})").to_lowercase()) {
         counter += 1;
     }
-    directory.join(format!("{base} ({counter}).md"))
+    format!("{base} ({counter}).md")
+}
+
+/// `unique_filename` joined onto `directory` — the Mac's `availableURL`.
+pub fn available_path(title: &str, directory: &Path) -> PathBuf {
+    directory.join(unique_filename(title, directory))
 }
 
 #[cfg(test)]
@@ -241,14 +232,23 @@ mod tests {
         assert_eq!(sanitize_title("a\tb"), "a-b");
     }
 
+    /// The Mac's `uniqueFilename` shape, everywhere: " (2)", " (3)"… — never
+    /// a bare " 2", which reads as part of a title.
     #[test]
-    fn unique_filename_disambiguates_with_a_bare_number() {
+    fn unique_filename_disambiguates_with_parentheses() {
         let dir = tempfile::tempdir().unwrap();
         assert_eq!(unique_filename("Ideas", dir.path()), "Ideas.md");
         std::fs::write(dir.path().join("Ideas.md"), "").unwrap();
-        assert_eq!(unique_filename("Ideas", dir.path()), "Ideas 2.md");
-        std::fs::write(dir.path().join("Ideas 2.md"), "").unwrap();
-        assert_eq!(unique_filename("Ideas", dir.path()), "Ideas 3.md");
+        assert_eq!(unique_filename("Ideas", dir.path()), "Ideas (2).md");
+        std::fs::write(dir.path().join("Ideas (2).md"), "").unwrap();
+        assert_eq!(unique_filename("Ideas", dir.path()), "Ideas (3).md");
+    }
+
+    #[test]
+    fn unique_filename_collision_check_is_case_insensitive() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("ideas.md"), "").unwrap();
+        assert_eq!(unique_filename("Ideas", dir.path()), "Ideas (2).md");
     }
 
     #[test]
