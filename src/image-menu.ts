@@ -94,7 +94,7 @@ export function openImageMenu(
     { label: 'Open image', run: () => void invoke('open_attachment', { name: spec.name }) },
     { label: 'Rename…', run: () => onRename(spec.name) },
     {
-      label: 'Reveal in Explorer',
+      label: 'Show in Folder',
       run: () => void invoke('reveal_attachment', { name: spec.name }),
     },
   ])

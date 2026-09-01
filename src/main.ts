@@ -1928,7 +1928,7 @@ function renderTrashList() {
 function trashMenuItems(note: NoteDto): MenuItemSpec[] {
   return [
     { label: 'Restore', run: () => restoreTrashed(note) },
-    { label: 'Reveal in Explorer', run: () => invoke('reveal_note', { id: note.id }) },
+    { label: 'Show in Folder', run: () => invoke('reveal_note', { id: note.id }) },
     { label: 'Delete', destructive: true, run: () => deleteTrashed(note) },
   ]
 }
@@ -2277,7 +2277,7 @@ async function deleteSelection() {
 function bulkMenuItems(count: number): MenuItemSpec[] {
   return [
     {
-      label: `Reveal ${count} Notes in Explorer`,
+      label: `Show ${count} Notes in Folder`,
       run: async () => {
         for (const id of fullSelection()) await invoke('reveal_note', { id })
       },
@@ -2641,7 +2641,7 @@ function noteMenuItems(note: NoteDto): MenuItemSpec[] {
     ...(settings.includeSubfolders
       ? [{ label: 'Move to', submenu: () => moveToItems(note) } as MenuItemSpec]
       : []),
-    { label: 'Show in Explorer', run: () => invoke('reveal_note', { id: note.id }) },
+    { label: 'Show in Folder', run: () => invoke('reveal_note', { id: note.id }) },
     {
       label: 'Make This Note a Template',
       run: async () => {
@@ -4012,7 +4012,7 @@ function trashDueAfter(fromMs: number, value: number, unit: string): number {
   return d.getTime()
 }
 
-/// Empties the trash into the Recycle Bin if enough time has passed since the
+/// Empties the trash into the system Trash (XDG Trash on Linux) if enough time has passed since the
 /// last empty, then records now as the new baseline — the Windows half of the
 /// Mac's TrashPreference.emptyIfDue, called at launch and hourly. The schedule
 /// lives here because the interval settings and the baseline are the frontend's.
@@ -4040,7 +4040,7 @@ async function emptyTrashIfDue() {
 }
 
 // Confirmed because it clears the whole trash at once — but recoverable now:
-// the notes go to the Recycle Bin, the same as the Mac sends them to the macOS
+// the notes go to the system Trash (Recycle Bin on Windows), the same as the Mac sends them to the macOS
 // Trash. Empties the same schedule the timer does, so the baseline resets here.
 el('setting-empty-trash').onclick = async () => {
   const waiting = await invoke<NoteDto[]>('trashed_notes', { fragment: '' })
@@ -4049,7 +4049,7 @@ el('setting-empty-trash').onclick = async () => {
     return
   }
   const ok = await confirmModal(
-    `Move ${waiting.length} note${waiting.length === 1 ? '' : 's'} to the Recycle Bin?`,
+    `Move ${waiting.length} note${waiting.length === 1 ? '' : 's'} to the system Trash?`,
     'Empty Trash',
   )
   if (!ok) return
