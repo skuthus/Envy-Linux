@@ -210,6 +210,20 @@ body.fade-focus #editor-pane:focus-within {
    out from under their headings as you type. */
 #list { flex: 1; min-height: 0; overflow-y: auto; scrollbar-gutter: stable; }
 
+/* --- Sticky pinned strip ---------------------------------------------------
+   "Keep pinned notes visible while scrolling": the leading pinned rows lifted
+   out of the scrolling list into the fixed chrome, with a divider beneath so
+   they read as their own zone rather than three rows that happen to stick.
+   Sits outside the scrolling element like the header does, so it never pays
+   the scrollbar gutter — hence the flat 12px trailing padding on its rows. */
+#pinned-strip {
+  flex: none;
+  padding: 3px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--envy-marker) 30%, transparent);
+}
+#pinned-strip.hidden { display: none; }
+#pinned-strip > .row { padding-right: 12px; }
+
 /* The list pane is the sized one in both orientations; the editor takes the
    rest. Sizing the same element either way keeps one persisted fraction
    meaningful per orientation rather than translating between them. */
@@ -579,46 +593,6 @@ body.bold-file-list .row-date { font-weight: 700; }
 .row .pin-mark,
 .row .inbox-dot,
 .row .trash-mark { line-height: 1; }
-
-/* --- Folder colours --------------------------------------------------------
-   One row per folder: its name, then the palette. The chosen swatch is ringed
-   rather than ticked, since the swatch itself is the value. */
-#folder-colors-empty.hidden { display: none; }
-#folder-colors h4 {
-  margin: 12px 0 6px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--envy-blockquote);
-}
-.folder-color-row {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 3px 0;
-}
-.folder-color-name {
-  flex: 1;
-  min-width: 0;
-  font-size: 12.5px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.folder-swatch {
-  flex: none;
-  width: 15px;
-  height: 15px;
-  padding: 0;
-  border-radius: 50%;
-  border: 2px solid transparent;
-  cursor: default;
-}
-.folder-swatch.active { border-color: var(--envy-text); }
-.folder-swatch.none {
-  background: none;
-  border: 1px dashed color-mix(in srgb, var(--envy-marker) 70%, transparent);
-}
-.folder-swatch.none.active { border: 2px solid var(--envy-text); }
 
 #settings-panel .setting-note {
   margin: 6px 0 0;
@@ -1028,6 +1002,8 @@ body.popout-window {
   white-space: nowrap;
 }
 .context-item:hover { background: var(--envy-selection); }
+.context-item:disabled { opacity: 0.45; }
+.context-item:disabled:hover { background: transparent; }
 
 /* --- Submenus ---------------------------------------------------------------
    Nested rather than a second floating layer, so it inherits the menu's own
@@ -1560,6 +1536,22 @@ body.popout-window {
   white-space: nowrap;
 }
 #fleeting-actions button:hover { background: color-mix(in srgb, var(--envy-marker) 20%, transparent); }
+/* Submit is a split control: the label and the arrow are two buttons drawn as
+   one capsule, joined at a shared inner rule. The arrow goes away entirely
+   while subfolders are off — there are no folders to offer then. */
+#fleeting-submit-group { display: inline-flex; }
+#fleeting-submit-group #fleeting-submit {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+#fleeting-submit-group #fleeting-submit-menu {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  border-left: none;
+  padding: 3px 6px;
+}
+#fleeting-submit-group.no-folders #fleeting-submit { border-radius: 6px; }
+#fleeting-submit-group.no-folders #fleeting-submit-menu { display: none; }
 #fleeting-actions button.destructive {
   color: var(--envy-due-overdue);
   border-color: color-mix(in srgb, var(--envy-due-overdue) 55%, transparent);

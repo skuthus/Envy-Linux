@@ -15,6 +15,7 @@ import {
   embedHost,
   envyStyler,
   existingTitles,
+  firstSearchMatch,
   isImageTarget,
   isGhostLinkForTest,
   plainTextField,
@@ -99,6 +100,8 @@ const dividerEl = document.getElementById('divider')!
 const listPaneEl = document.getElementById('list-pane')!
 const listEl = document.getElementById('list')!
 const listHeaderEl = document.getElementById('list-header')!
+/// The sticky pinned rows, between the header and the scrolling list.
+const pinnedStripEl = document.getElementById('pinned-strip')!
 const titleEl = document.getElementById('note-title') as HTMLInputElement
 const dueEl = document.getElementById('note-due')!
 const tagsEl = document.getElementById('note-tags')!
@@ -1074,7 +1077,7 @@ function renderTitleBarTags(tags: string[]) {
     const el = document.createElement('span')
     el.className = 'envy-tag title-tag'
     el.textContent = `#${t}`
-    el.title = `Search tag:${t} — right-click to colour it`
+    el.title = `Search tag:"${t}" — right-click to colour it`
     const tint = colors[t]
     if (tint) {
       // A tinted tag paints its own translucent capsule from its colour, so it
@@ -1084,7 +1087,9 @@ function renderTitleBarTags(tags: string[]) {
       el.style.background = `color-mix(in srgb, ${tint} 18%, transparent)`
     }
     el.onclick = () => {
-      searchInput.value = `tag:${t}`
+      // Quoted, and quoting means exact — clicking #tag must not also surface
+      // #tags, so what you click is exactly what you get (Mac 1.8.8).
+      searchInput.value = `tag:"${t}"`
       void runSearch()
     }
     el.oncontextmenu = (e) => {
@@ -1156,6 +1161,14 @@ const settings = {
   theme: localStorage.getItem('appearanceMode') ?? 'system',
   moveFocusToEditorOnEnter: boolSetting('moveFocusToEditorOnEnter', true),
   dateDisplayStyle: localStorage.getItem('dateDisplayStyle') ?? 'smart',
+  // Whether the Inbox exists at all. Off, there is no capture queue: no badge,
+  // no fleeting marks, no `inbox:` mode, and the two toggles below are moot.
+  // On by default, matching the Mac (1.10.0).
+  inboxEnabled: boolSetting('inboxEnabled', true),
+  // Parks the pinned notes (up to three) in a strip under the list header so
+  // they stay reachable however far the list scrolls. Off — the default, as on
+  // the Mac (1.11.0) — pins sort to the top and scroll away with the rest.
+  keepPinnedNotesVisible: boolSetting('keepPinnedNotesVisible', false),
   newNotesStartInInbox: boolSetting('newNotesStartInInbox', false),
   showInboxInMainList: boolSetting('showInboxInMainList', true),
   showTagsInTitleBar: boolSetting('showTagsInTitleBar', false),
@@ -1415,6 +1428,36 @@ function listViewport(): number {
 /// folder colours instead of decoding inside the row body.
 let folderColorCache: Record<string, string> = {}
 
+/// How many of the leading rows are lifted into the sticky strip — the run of
+/// pinned notes at the top of `results`, capped at three so the strip can
+/// never grow to swallow the list. Zero when the setting is off. `results`
+/// itself is untouched: the strip shows rows 0..n and the scrolling list shows
+/// the rest, so `highlighted` keeps indexing one array either way. Reading
+/// only the leading run keeps this O(pins), not a walk of the whole list.
+let stickyCount = 0
+const STICKY_PIN_LIMIT = 3
+
+function computeStickyCount(): number {
+  if (!settings.keepPinnedNotesVisible) return 0
+  let n = 0
+  while (n < STICKY_PIN_LIMIT && n < results.length && pinnedIds.has(results[n].id)) n++
+  return n
+}
+
+/// Whether the strip is at capacity — a fourth pin, with the strip on, would
+/// just fall back to the old scroll-away behaviour and muddy the model, so it
+/// is refused. Unlimited with the strip off. Mirrors the Mac's pinLimitReached.
+function pinLimitReached(): boolean {
+  return settings.keepPinnedNotesVisible && pinnedIds.size >= STICKY_PIN_LIMIT
+}
+
+/// Every browse mode replaces the list wholesale and shows no pins, so the
+/// strip collapses away there — the same as the Mac's empty stickyPinnedNotes.
+function hidePinnedStrip() {
+  pinnedStripEl.classList.add('hidden')
+  pinnedStripEl.replaceChildren()
+}
+
 function renderList() {
   folderColorCache = folderColors()
   results = applyPinning(sortNotes(results))
@@ -1422,10 +1465,17 @@ function renderList() {
   // it shows whichever date the list is sorted by — and "Show date modified"
   // governs it entirely, so with that off the titles get the full width.
   listPaneEl.classList.toggle('has-date', settings.showDateModified)
+  stickyCount = computeStickyCount()
+  if (stickyCount === 0) {
+    hidePinnedStrip()
+  } else {
+    pinnedStripEl.replaceChildren(...results.slice(0, stickyCount).map((n, i) => buildRow(n, i)))
+    pinnedStripEl.classList.remove('hidden')
+  }
   // trash: and template: replace the list's children wholesale, so the spacer
   // has to be put back rather than assumed to still be there.
   if (listSizer.parentElement !== listEl) listEl.replaceChildren(listSizer)
-  listSizer.style.height = `${results.length * rowHeight}px`
+  listSizer.style.height = `${(results.length - stickyCount) * rowHeight}px`
   scrollHighlightIntoView()
   renderRowWindow(true)
 }
@@ -1443,7 +1493,9 @@ function scrollHighlightIntoView() {
   if (id === lastScrolledId) return
   lastScrolledId = id
   if (id === null) return
-  const top = highlighted * rowHeight
+  // A row in the sticky strip is always on screen; nothing to scroll to.
+  if (highlighted < stickyCount) return
+  const top = (highlighted - stickyCount) * rowHeight
   const viewport = listViewport()
   if (top < listEl.scrollTop) listEl.scrollTop = top
   else if (top + rowHeight > listEl.scrollTop + viewport) {
@@ -1453,10 +1505,13 @@ function scrollHighlightIntoView() {
 
 function renderRowWindow(force = false) {
   const viewport = listViewport()
-  const from = Math.max(0, Math.floor(listEl.scrollTop / rowHeight) - ROW_OVERSCAN)
+  // Offsets are in *scrolling* rows — the results minus the ones lifted into
+  // the strip — so the window and each row's top are shifted by stickyCount.
+  const from =
+    stickyCount + Math.max(0, Math.floor(listEl.scrollTop / rowHeight) - ROW_OVERSCAN)
   const to = Math.min(
     results.length,
-    Math.ceil((listEl.scrollTop + viewport) / rowHeight) + ROW_OVERSCAN,
+    stickyCount + Math.ceil((listEl.scrollTop + viewport) / rowHeight) + ROW_OVERSCAN,
   )
   if (!force && from === renderedFrom && to === renderedTo) return
   renderedFrom = from
@@ -1465,7 +1520,7 @@ function renderRowWindow(force = false) {
   const rows: HTMLElement[] = []
   for (let i = from; i < to; i++) {
     const row = buildRow(results[i], i)
-    row.style.top = `${i * rowHeight}px`
+    row.style.top = `${(i - stickyCount) * rowHeight}px`
     rows.push(row)
   }
   listSizer.replaceChildren(...rows)
@@ -1482,7 +1537,7 @@ function renderRowWindow(force = false) {
   const measured = rows[0]?.getBoundingClientRect().height
   if (measured && Math.abs(measured - rowHeight) > 0.01) {
     rowHeight = measured
-    listSizer.style.height = `${results.length * rowHeight}px`
+    listSizer.style.height = `${(results.length - stickyCount) * rowHeight}px`
     renderedFrom = -1
     renderedTo = -1
     renderRowWindow()
@@ -1799,6 +1854,12 @@ const inboxBadgeEl = document.getElementById('inbox-badge') as HTMLButtonElement
 const fleetingActionsEl = document.getElementById('fleeting-actions')!
 
 async function refreshInboxBadge() {
+  // No inbox, no count — the store reports zero while it's off anyway, but
+  // there's no reason to ask.
+  if (!settings.inboxEnabled) {
+    inboxBadgeEl.classList.add('hidden')
+    return
+  }
   const count = await invoke<number>('inbox_count')
   // Strictly "something is waiting". With the inbox empty there is nowhere to
   // go back *from*, and clearing the query is the ordinary way out of any
@@ -1844,15 +1905,61 @@ async function moveToNextFleeting(actedOnId: string) {
   }
 }
 
-document.getElementById('fleeting-submit')!.onclick = async () => {
+/// Files the open fleeting note — into The Index root, or straight into a
+/// folder. The note is resolved at click time, never captured by the menu:
+/// a submit auto-advances to the next capture, and a captured id would file
+/// the note that just left rather than the one on screen (the Mac's 1.8.6
+/// bug). Either way the same advance-to-the-next-capture flow follows.
+async function submitFleeting(subfolder: string | null) {
   if (!openNoteId) return
   const id = openNoteId
   cancelPendingSave()
   await save()
-  const filed = await invoke<NoteDto>('submit_from_inbox', { id })
+  let filed: NoteDto
+  try {
+    filed = await invoke<NoteDto>('submit_from_inbox', { id, subfolder })
+  } catch (err) {
+    void alertModal(typeof err === 'string' ? err : 'Could not file that note.')
+    return
+  }
   // Filing moves the file out of Inbox/, so the id changes.
   migratePin(id, filed.id)
   await moveToNextFleeting(id)
+}
+
+const fleetingSubmitMenuEl = document.getElementById('fleeting-submit-menu') as HTMLButtonElement
+
+/// Submit's dropdown offers the same folders Move to does; a plain button when
+/// subfolder scanning is off, since folders don't exist then.
+function applyFleetingSubmitShape() {
+  document
+    .getElementById('fleeting-submit-group')!
+    .classList.toggle('no-folders', !settings.includeSubfolders)
+}
+
+document.getElementById('fleeting-submit')!.onclick = () => void submitFleeting(null)
+
+/// The arrow half of Submit: The Index, then every folder with its colour —
+/// the same list Move to offers. Dropped below the button, not at the pointer,
+/// so it reads as the button's own menu.
+fleetingSubmitMenuEl.onclick = async () => {
+  if (!openNoteId) return
+  let folders: string[] = []
+  try {
+    folders = await invoke<string[]>('list_subfolders')
+  } catch (err) {
+    console.error('could not list folders', err)
+  }
+  const colors = folderColors()
+  const items: MenuItemSpec[] = [
+    { label: 'The Index', swatch: null, run: () => submitFleeting(null) },
+  ]
+  if (folders.length) items.push({ label: '', separator: true })
+  for (const f of folders) {
+    items.push({ label: f, swatch: colors[f] ?? null, run: () => submitFleeting(f) })
+  }
+  const r = fleetingSubmitMenuEl.getBoundingClientRect()
+  openContextMenu(r.left, r.bottom + 2, items)
 }
 
 document.getElementById('fleeting-delete')!.onclick = async () => {
@@ -1887,9 +1994,13 @@ function showTrashPreview(note: NoteDto | null) {
   emptyEl.classList.add('hidden')
 }
 
-function renderTrashList() {
+/// `scrollToHighlight` is off for the right-click path: the row under the
+/// pointer is already on screen, and a scroll event would close the context
+/// menu that opens right after this returns.
+function renderTrashList(scrollToHighlight = true) {
   // Trashed rows always carry a date, whatever the notes list was showing.
   listPaneEl.classList.add('has-date')
+  hidePinnedStrip()
   listEl.replaceChildren(
     ...trashResults.map((note, i) => {
       const row = document.createElement('div')
@@ -1916,7 +2027,7 @@ function renderTrashList() {
       row.oncontextmenu = (e) => {
         e.preventDefault()
         highlighted = i
-        renderTrashList()
+        renderTrashList(false)
         showTrashPreview(note)
         openContextMenu(e.clientX, e.clientY, trashMenuItems(note))
       }
@@ -1924,6 +2035,14 @@ function renderTrashList() {
     }),
   )
   showTrashPreview(trashResults[highlighted] ?? null)
+  if (scrollToHighlight) scrollHighlightedRowIntoView()
+}
+
+/// The browse lists (trash, templates, catalogs) build every row in flow rather
+/// than virtualising, so keeping an arrow-key highlight on screen is the plain
+/// DOM call — the note list's own scroll logic works in row offsets instead.
+function scrollHighlightedRowIntoView() {
+  listEl.querySelector('.row.highlighted')?.scrollIntoView({ block: 'nearest' })
 }
 
 function trashMenuItems(note: NoteDto): MenuItemSpec[] {
@@ -1976,6 +2095,7 @@ let openTemplatePath: string | null = null
 function renderTemplateList() {
   // Same as trash: a single trailing label in the value column.
   listPaneEl.classList.add('has-date')
+  hidePinnedStrip()
   listEl.replaceChildren(
     ...templateResults.map((t, i) => {
       const row = document.createElement('div')
@@ -1997,6 +2117,7 @@ function renderTemplateList() {
       return row
     }),
   )
+  scrollHighlightedRowIntoView()
 }
 
 async function openTemplate(t: TemplateDto) {
@@ -2048,9 +2169,38 @@ async function openHighlightedTemplate() {
   renderTemplateList()
 }
 
+/// Scrolls the first search match in the open note into view, about a third
+/// of the way down the editor rather than the bare minimum — a match just
+/// below the fold would otherwise land flush against the bottom edge with no
+/// context under it, which reads as a lurch rather than "here's your result".
+/// The cursor and selection are left where they were: this moves the view,
+/// not the insertion point. Nothing happens for a blank query, or one made
+/// only of operators that name nothing literal, since there's nothing lit up
+/// to go to. Mirrors the Mac's jumpToFirstSearchMatch (1.11.0).
+let lastJumpedQuery: string | null = null
+function jumpToFirstSearchMatch(force = false) {
+  const query = searchInput.value
+  // Only when the query itself changed (or a different note opened). runSearch
+  // also re-runs for the watcher and after edits, and yanking the editor to
+  // the match again while someone is typing would be the lurch this exists to
+  // avoid.
+  if (!force && query === lastJumpedQuery) return
+  lastJumpedQuery = query
+  if (!query.trim() || view.state.doc.length === 0) return
+  const pos = firstSearchMatch(view.state.doc.toString(), query)
+  if (pos === null) return
+  view.dispatch({
+    effects: EditorView.scrollIntoView(pos, {
+      y: 'start',
+      yMargin: view.scrollDOM.clientHeight / 3,
+    }),
+  })
+}
+
 async function runSearch() {
   // Push the query into the editor so matches light up in the open note.
   view.dispatch({ effects: setSearchQuery.of(searchInput.value) })
+  jumpToFirstSearchMatch()
   // Before the branches: the badge's count comes from the store and its
   // in/out state from the query, so it has to update whichever list is about
   // to be shown.
@@ -2133,7 +2283,8 @@ async function openNote(id: string) {
   renderTitleBarFolder(note.subfolder ?? null)
   // Reviewing a fleeting note is a decision — file it or bin it — so the two
   // actions appear only while looking at one.
-  fleetingActionsEl.classList.toggle('hidden', !note.isInbox)
+  fleetingActionsEl.classList.toggle('hidden', !(note.isInbox && settings.inboxEnabled))
+  applyFleetingSubmitShape()
   templateActionsEl.classList.add('hidden')
   emptyEl.classList.add('hidden')
   view.dispatch({
@@ -2145,6 +2296,9 @@ async function openNote(id: string) {
   // styler decorates only what's in view — without a re-measure the viewport
   // it computed a moment ago may not match what's actually on screen.
   view.requestMeasure()
+  // Opening a result of a search lands on what matched, not on the top of the
+  // note — the same jump typing in the box makes for the note already open.
+  jumpToFirstSearchMatch(true)
   renderStats()
   await refreshInterlinks()
 }
@@ -2264,7 +2418,10 @@ function extendSelection(delta: number) {
 async function deleteSelection() {
   const ids = fullSelection()
   if (ids.length === 0) return
+  // Flushed, not dropped: the copy that lands in the trash should be the note
+  // as last typed, so restoring it brings back everything.
   cancelPendingSave()
+  await save()
   if (ids.includes(openNoteId ?? '')) openNoteId = null
   // One call, not a loop: the store treats a single delete as one undo step,
   // so a bulk delete restores as one action.
@@ -2283,6 +2440,16 @@ function bulkMenuItems(count: number): MenuItemSpec[] {
         for (const id of fullSelection()) await invoke('reveal_note', { id })
       },
     },
+    // The single-note menu's Move to, applied to the whole selection. Only
+    // when subfolders are listed, for the same reason as there.
+    ...(settings.includeSubfolders
+      ? [
+          {
+            label: `Move ${count} Notes to`,
+            submenu: () => moveToItems(fullSelection()),
+          } as MenuItemSpec,
+        ]
+      : []),
     { label: `Move ${count} Notes to Trash`, destructive: true, run: deleteSelection },
   ]
 }
@@ -2323,12 +2490,37 @@ function setFolderColor(folder: string, color: string | null) {
   if (color) all[folder] = color
   else delete all[folder]
   localStorage.setItem('folderColors', JSON.stringify(all))
+  // Every folder is born coloured, so "Remove Color" rolls a fresh preset
+  // rather than leaving a gap — the same thing the Mac's rebuild does the
+  // moment the preference changes.
+  if (!color) ensureFolderColors([folder])
+  repaintFolderColors()
+}
+
+/// Repaints everything keyed on a folder's colour: the list rows and the open
+/// note's title-bar chip, in step rather than waiting for the note to be
+/// reopened.
+function repaintFolderColors() {
   renderList()
-  renderFolderColorSettings()
-  // The open note's title-bar chip is keyed on the same colour, so recolour it
-  // in step rather than waiting for the note to be reopened.
   const open = results.find((n) => n.id === openNoteId)
   renderTitleBarFolder(open?.subfolder ?? null)
+}
+
+/// Every folder is born coloured, tag-style: any folder seen without a colour
+/// (newly created in Envy, made in a file manager, or predating this behaviour)
+/// gets a random preset, persisted — so its dot, and the dot's right-click
+/// recolour menu, always exist. Mirrors the Mac's rebuildFolderColors.
+function ensureFolderColors(folders: string[]) {
+  const all = folderColors()
+  let assigned = false
+  for (const folder of folders) {
+    if (all[folder]) continue
+    all[folder] = FOLDER_PRESETS[Math.floor(Math.random() * FOLDER_PRESETS.length)][1]
+    assigned = true
+  }
+  if (!assigned) return
+  localStorage.setItem('folderColors', JSON.stringify(all))
+  repaintFolderColors()
 }
 
 /// The colour menu for a folder's dot — the same palette as tags, plus a
@@ -2405,6 +2597,10 @@ function migrateFolderColors(oldPath: string, newPath: string) {
 }
 
 async function renameTagFlow(oldName: string) {
+  // A rename rewrites every note carrying the tag, the open one included, so
+  // any unsaved typing there is committed first rather than lost or undone.
+  cancelPendingSave()
+  await save()
   const next = (await textPrompt(`Rename #${oldName} to`, oldName))?.trim()
   if (!next || next === oldName) return
   const clean = next.replace(/^#/, '').toLowerCase()
@@ -2427,6 +2623,10 @@ async function renameTagFlow(oldName: string) {
 }
 
 async function renameFolderFlow(oldPath: string) {
+  // Every note inside moves, so a pending edit to one of them is committed
+  // first — the same reason the tag rename flushes.
+  cancelPendingSave()
+  await save()
   const next = (
     await textPrompt(
       `Rename "${oldPath}" to (add a "/" to file it under another folder)`,
@@ -2437,6 +2637,8 @@ async function renameFolderFlow(oldPath: string) {
   void invoke<string>('rename_folder', { oldPath, newPath: next })
     .then((newPath) => {
       migrateFolderColors(oldPath, newPath)
+      // A folder that somehow had no colour to carry across gets one now.
+      ensureFolderColors([newPath])
       return runSearch()
     })
     .catch((err) => {
@@ -2447,8 +2649,9 @@ async function renameFolderFlow(oldPath: string) {
 
 /// Renders the catalog into the list. Rows are keyboard-navigable like the note
 /// list; the primary row is highlighted, click pivots, right-click acts.
-function renderCatalog(kind: CatalogKind) {
+function renderCatalog(kind: CatalogKind, scrollToHighlight = true) {
   listPaneEl.classList.remove('has-date')
+  hidePinnedStrip()
   const colors = kind === 'tag' ? tagColors() : folderColors()
   listEl.replaceChildren(
     ...catalogRows.map((entry, i) => {
@@ -2506,70 +2709,77 @@ function renderCatalog(kind: CatalogKind) {
       row.oncontextmenu = (e) => {
         e.preventDefault()
         highlighted = i
-        renderCatalog(kind)
+        // No highlight scroll here — see renderTrashList.
+        renderCatalog(kind, false)
         openContextMenu(e.clientX, e.clientY, menu())
       }
       return row
     }),
   )
+  if (scrollToHighlight) scrollHighlightedRowIntoView()
 }
 
-/// Settings → Folder Colors: one row per folder, with the palette and a way to
-/// clear it. Rebuilt on open rather than kept in step, since folders change from
-/// outside Envy as readily as from within.
-async function renderFolderColorSettings() {
-  const list = document.getElementById('folder-colors-list')!
-  const empty = document.getElementById('folder-colors-empty')!
-  if (!settings.includeSubfolders) {
-    list.replaceChildren()
-    empty.classList.remove('hidden')
-    return
+/// Moves `ids` into `subfolder` (null = the Index root), the selection following
+/// the notes across the id changes a move makes — one note from the single-note
+/// menu, the whole selection from the bulk menu.
+///
+/// Pending edits are flushed first, so an edit made a moment ago lands wherever
+/// the note goes rather than at a path that no longer exists (the Mac's 1.8.1
+/// "edits follow the note"). When the open note is among them, the editor
+/// follows it too — its id and pin move with the file.
+///
+/// A note whose name collides in the destination is refused by the store, to
+/// keep wikilinks honest. It's skipped, the rest still go, and the refusals are
+/// reported once at the end rather than as one dialog per note.
+async function moveNotes(ids: string[], subfolder: string | null) {
+  if (ids.length === 0) return
+  cancelPendingSave()
+  await save()
+  const moved = new Map<string, string>()
+  const refused: string[] = []
+  for (const id of ids) {
+    try {
+      const note = await invoke<NoteDto>('move_note_to_subfolder', { id, subfolder })
+      moved.set(id, note.id)
+    } catch (err) {
+      refused.push(typeof err === 'string' ? err : 'Could not move that note.')
+    }
   }
-  let folders: string[] = []
-  try {
-    folders = await invoke<string[]>('list_subfolders')
-  } catch (err) {
-    console.error('could not list folders', err)
+  for (const [from, to] of moved) {
+    migratePin(from, to)
+    if (openNoteId === from) openNoteId = to
+    if (anchorId === from) anchorId = to
+    if (multiSelected.delete(from)) multiSelected.add(to)
   }
-  empty.classList.toggle('hidden', folders.length > 0)
-  if (!folders.length) {
-    empty.textContent = 'No subfolders yet. Right-click a note → Move to → New Folder…'
-    list.replaceChildren()
-    return
+  // A folder that didn't exist a moment ago is born coloured, like the rest.
+  if (subfolder && moved.size > 0) ensureFolderColors([subfolder])
+  const primary = results[highlighted]?.id
+  const primaryAfter = primary ? (moved.get(primary) ?? primary) : null
+  await runSearch()
+  if (primaryAfter) {
+    const idx = results.findIndex((n) => n.id === primaryAfter)
+    if (idx >= 0) {
+      highlighted = idx
+      renderList()
+    }
   }
-
-  const colors = folderColors()
-  list.replaceChildren(
-    ...folders.map((folder) => {
-      const row = document.createElement('div')
-      row.className = 'folder-color-row'
-      const name = document.createElement('span')
-      name.className = 'folder-color-name'
-      name.textContent = folder
-      row.append(name)
-
-      for (const [label, hex] of FOLDER_PRESETS) {
-        const b = document.createElement('button')
-        b.type = 'button'
-        b.className = 'folder-swatch' + (colors[folder] === hex ? ' active' : '')
-        b.style.background = hex
-        b.title = label
-        b.onclick = () => setFolderColor(folder, hex)
-        row.append(b)
-      }
-      const clear = document.createElement('button')
-      clear.type = 'button'
-      clear.className = 'folder-swatch none' + (colors[folder] ? '' : ' active')
-      clear.title = 'No colour'
-      clear.onclick = () => setFolderColor(folder, null)
-      row.append(clear)
-      return row
-    }),
-  )
+  if (openNoteId && [...moved.values()].includes(openNoteId)) {
+    // The title-bar chip names the folder the open note now sits in.
+    const open = results.find((n) => n.id === openNoteId)
+    renderTitleBarFolder(open?.subfolder ?? null)
+  }
+  if (refused.length > 0) {
+    void alertModal(
+      refused.length === 1
+        ? refused[0]
+        : `${refused.length} notes could not be moved:\n${refused.join('\n')}`,
+    )
+  }
 }
 
 /// The "Move to" submenu: the Index root, every folder, and a way to make one.
-async function moveToItems(note: NoteDto): Promise<MenuItemSpec[]> {
+/// Takes the ids to move, so the single-note menu and the bulk menu share it.
+async function moveToItems(ids: string[]): Promise<MenuItemSpec[]> {
   let folders: string[] = []
   try {
     folders = await invoke<string[]>('list_subfolders')
@@ -2577,15 +2787,7 @@ async function moveToItems(note: NoteDto): Promise<MenuItemSpec[]> {
     console.error('could not list folders', err)
   }
   const colors = folderColors()
-  const move = (to: string | null) => async () => {
-    try {
-      await invoke<NoteDto>('move_note_to_subfolder', { id: note.id, subfolder: to })
-    } catch (err) {
-      console.error('could not move the note', err)
-      return
-    }
-    await runSearch()
-  }
+  const move = (to: string | null) => () => moveNotes(ids, to)
 
   const items: MenuItemSpec[] = [{ label: 'The Index', swatch: null, run: move(null) }]
   if (folders.length) items.push({ label: '', separator: true })
@@ -2612,6 +2814,9 @@ function noteMenuItems(note: NoteDto): MenuItemSpec[] {
   return [
     {
       label: pinnedIds.has(note.id) ? 'Unpin Note' : 'Pin Note',
+      // Greyed out, not hidden, when the sticky strip is full — the same
+      // `.disabled(!isPinned && pinLimitReached)` the Mac's menu applies.
+      disabled: !pinnedIds.has(note.id) && pinLimitReached(),
       run: () => {
         highlighted = results.findIndex((n) => n.id === note.id)
         togglePin()
@@ -2640,12 +2845,15 @@ function noteMenuItems(note: NoteDto): MenuItemSpec[] {
     // Only when subfolders are actually listed. Filing a note into a folder
     // Envy then hides from the list would look like deleting it.
     ...(settings.includeSubfolders
-      ? [{ label: 'Move to', submenu: () => moveToItems(note) } as MenuItemSpec]
+      ? [{ label: 'Move to', submenu: () => moveToItems([note.id]) } as MenuItemSpec]
       : []),
     { label: 'Show in Folder', run: () => invoke('reveal_note', { id: note.id }) },
     {
       label: 'Make This Note a Template',
       run: async () => {
+        // A pending edit belongs in the template, not lost with the note.
+        cancelPendingSave()
+        await save()
         await invoke('convert_to_template', { id: note.id })
         // It stops being a note at all, so the pin goes rather than moves.
         migratePin(note.id, null)
@@ -2734,6 +2942,7 @@ function togglePin() {
   const target = results[highlighted]
   if (!target) return
   if (pinnedIds.has(target.id)) pinnedIds.delete(target.id)
+  else if (pinLimitReached()) return
   else pinnedIds.add(target.id)
   persistPins()
   renderList()
@@ -2758,7 +2967,11 @@ function prefixFragment(query: string, prefix: string): string | null {
 }
 
 const templateFragment = () => prefixFragment(searchInput.value, 'template:')
-const inboxFragment = () => prefixFragment(searchInput.value, 'inbox:')
+/// With the Inbox switched off `inbox:` is not a mode — neither a browse nor
+/// a capture — so this reads as "no fragment" and the box behaves like any
+/// other query.
+const inboxFragment = () =>
+  settings.inboxEnabled ? prefixFragment(searchInput.value, 'inbox:') : null
 const trashFragment = () => prefixFragment(searchInput.value, 'trash:')
 
 /// Whether any word in the query is a search operator.
@@ -2899,7 +3112,8 @@ async function openOrCreate() {
   // by following a link, or from a template, are unaffected — both are already
   // placed, so routing them through a capture queue asks a question you have
   // already answered.
-  const command = settings.newNotesStartInInbox ? 'create_inbox_note' : 'create_note'
+  const command =
+    settings.newNotesStartInInbox && settings.inboxEnabled ? 'create_inbox_note' : 'create_note'
   const created = await invoke<NoteDto>(command, { title: query })
   searchInput.value = ''
   await runSearch()
@@ -2976,6 +3190,9 @@ async function refreshCompletionSources() {
     ])
     knownTags = tags
     knownFolders = folders
+    // Colours only mean anything once folders are listed — the same gate the
+    // Mac's rebuildFolderColors keeps.
+    if (settings.includeSubfolders) ensureFolderColors(folders)
     // Routes through the setter so the ghost-link title set and a restyle come
     // along with the new titles.
     updateKnownTitles(titles)
@@ -3299,7 +3516,7 @@ async function extractSelectionToNote() {
   try {
     created = await invoke<NoteDto>('extract_to_note', {
       selection: selected,
-      inInbox: settings.newNotesStartInInbox,
+      inInbox: settings.newNotesStartInInbox && settings.inboxEnabled,
     })
   } catch (err) {
     console.error('could not extract the selection', err)
@@ -3623,10 +3840,12 @@ function openSettings() {
   checkbox('setting-date').checked = settings.showDateModified
   checkbox('setting-due').checked = settings.showDueSort
   checkbox('setting-subfolders').checked = settings.includeSubfolders
-  void renderFolderColorSettings()
   checkbox('setting-focus-editor').checked = settings.moveFocusToEditorOnEnter
+  checkbox('setting-keep-pinned-visible').checked = settings.keepPinnedNotesVisible
+  checkbox('setting-inbox-enabled').checked = settings.inboxEnabled
   checkbox('setting-inbox-new').checked = settings.newNotesStartInInbox
   checkbox('setting-inbox-in-list').checked = settings.showInboxInMainList
+  applyInboxDependentToggles()
   checkbox('setting-vault-counts').checked = settings.showFooterVaultCounts
   checkbox('setting-show-tags').checked = settings.showTagsInTitleBar
   checkbox('setting-show-folder-titlebar').checked = settings.showFolderInTitleBar
@@ -3737,6 +3956,46 @@ bindToggle('setting-due', 'showDueSort', () => {
   renderList()
 })
 bindToggle('setting-focus-editor', 'moveFocusToEditorOnEnter')
+/// The two inbox toggles below only mean anything while there is an inbox, so
+/// they grey out with it — the same `.disabled(!inboxEnabled)` the Mac applies.
+function applyInboxDependentToggles() {
+  checkbox('setting-inbox-new').disabled = !settings.inboxEnabled
+  checkbox('setting-inbox-in-list').disabled = !settings.inboxEnabled
+}
+
+/// Tells the store whether Inbox/ is a capture queue or just a folder. The
+/// store owns what "fleeting" means — the badge count, the row mark, and the
+/// `inbox:` operator all come back from it — so the switch has to reach it,
+/// at boot and on every change, before the list is re-run.
+async function pushInboxEnabled() {
+  try {
+    await invoke('set_inbox_enabled', { on: settings.inboxEnabled })
+  } catch (err) {
+    console.error('could not apply the inbox setting', err)
+  }
+}
+
+bindToggle('setting-keep-pinned-visible', 'keepPinnedNotesVisible', () => {
+  // Switching the strip on lifts the rows out of the scrolling list, so the
+  // remembered scroll position no longer points at the same row; re-seat the
+  // highlight rather than leave it possibly off screen.
+  lastScrolledId = null
+  renderList()
+})
+bindToggle('setting-inbox-enabled', 'inboxEnabled', () => {
+  applyInboxDependentToggles()
+  void (async () => {
+    await pushInboxEnabled()
+    await runSearch()
+    // The open note's review buttons follow the switch too, rather than
+    // waiting for the note to be reopened.
+    const open = results.find((n) => n.id === openNoteId)
+    fleetingActionsEl.classList.toggle(
+      'hidden',
+      !(open?.isInbox && settings.inboxEnabled),
+    )
+  })()
+})
 bindToggle('setting-inbox-new', 'newNotesStartInInbox')
 bindToggle('setting-inbox-in-list', 'showInboxInMainList', () => void runSearch())
 bindToggle('setting-vault-counts', 'showFooterVaultCounts', () => void refreshVaultCounts())
@@ -3987,9 +4246,8 @@ el<HTMLInputElement>('setting-subfolders').onchange = async (e) => {
   saveSetting('indexIncludeSubfolders', settings.includeSubfolders)
   await invoke('set_include_subfolders', { include: settings.includeSubfolders })
   await runSearch()
-  // Folder colours only mean anything once folders are listed, so the pane
-  // follows the toggle rather than waiting for Settings to be reopened.
-  await renderFolderColorSettings()
+  // Submit's folder arrow exists only while folders are listed.
+  applyFleetingSubmitShape()
 }
 el<HTMLSelectElement>('setting-layout').onchange = (e) => {
   layoutMode = (e.target as HTMLSelectElement).value as LayoutMode
@@ -4169,6 +4427,7 @@ async function boot() {
     await invoke('set_include_subfolders', { include: true })
   }
   await invoke('set_template_date_format', { pattern: settings.templateDateFormat })
+  await pushInboxEnabled()
   // Registers the global chords with the OS. Nothing is registered in Rust at
   // startup, so this is the only path — defaults and remaps go the same way.
   await syncGlobalShortcuts()

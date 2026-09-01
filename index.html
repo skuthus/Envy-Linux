@@ -30,6 +30,10 @@
       <div id="panes">
         <div id="list-pane">
           <div id="list-header" role="row"></div>
+          <!-- Pinned notes parked below the header so they stay reachable
+               however far the list scrolls (opt-in, up to three). They're the
+               leading rows of the results; the list below skips them. -->
+          <div id="pinned-strip" class="hidden" role="listbox" aria-label="Pinned notes"></div>
           <div id="list" role="listbox" aria-label="Notes"></div>
         </div>
         <div
@@ -56,7 +60,26 @@
             <!-- Only for a note still waiting in Inbox/. Reviewing one is a
                  decision — file it or bin it — so both are one click away. -->
             <span id="fleeting-actions" class="hidden">
-              <button id="fleeting-submit" type="button">Submit Note</button>
+              <!-- A split control: a plain click files to The Index root, the
+                   arrow offers a folder — so "where does this belong?" is one
+                   gesture. The arrow is hidden while subfolders are off. -->
+              <span id="fleeting-submit-group">
+                <button
+                  id="fleeting-submit"
+                  type="button"
+                  title="Click to file into The Index; use the menu to file into a folder"
+                >
+                  Submit Note
+                </button>
+                <button
+                  id="fleeting-submit-menu"
+                  type="button"
+                  aria-label="File into a folder"
+                  title="File into a folder"
+                >
+                  ▾
+                </button>
+              </span>
               <button id="fleeting-delete" type="button" class="destructive">
                 Delete Note
               </button>
@@ -172,14 +195,11 @@
               <input type="checkbox" id="setting-subfolders" />
               Show items in subfolders
             </label>
-            <div id="folder-colors">
-              <h4>Folder Colors</h4>
-              <p class="setting-note" id="folder-colors-empty">
-                Turn on “Show items in subfolders” to colour your folders. Every note
-                inside a coloured folder shows a dot in that colour.
-              </p>
-              <div id="folder-colors-list"></div>
-            </div>
+            <p class="setting-note">
+              Every folder has a colour from the moment it exists. Hover a
+              note's folder dot to see the folder's name; right-click the dot
+              (or name chip) to pick the colour you want.
+            </p>
           </section>
 
           <section>
@@ -283,6 +303,27 @@
               <input type="checkbox" id="setting-due" />
               Allow sorting by due date
             </label>
+            <label>
+              <input type="checkbox" id="setting-keep-pinned-visible" />
+              Keep pinned notes visible while scrolling
+            </label>
+            <p class="setting-note">
+              Parks your pinned notes (up to three) just below the search bar
+              so they stay reachable no matter how far you scroll. Off, they
+              sort to the top of the list as before and scroll away with it.
+            </p>
+            <label>
+              <input type="checkbox" id="setting-inbox-enabled" />
+              Enable Inbox (fleeting notes)
+            </label>
+            <p class="setting-note">
+              The Inbox is a holding pen for captures you haven't filed. With it
+              on, notes in an Inbox/ folder are fleeting: a count sits beside
+              the search box, an amber mark sets them apart in the list, and
+              <code>inbox:</code> finds them. Turn it off and there's no inbox
+              at all: no count, no marker, no <code>inbox:</code> operator, and
+              any notes in an Inbox/ folder are treated as ordinary notes.
+            </p>
             <label>
               <input type="checkbox" id="setting-inbox-new" />
               New notes start in the Inbox
