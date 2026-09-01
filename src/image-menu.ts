@@ -1,10 +1,13 @@
-//! The image attachment's right-click menu — size presets, open, rename, reveal
-//! — shared by every window that renders images. Size and "Custom width…"
-//! rewrite the marker in the given editor; rename is window-specific (its
-//! reference-rewrite reloads the note differently in each window), so the flow
-//! takes the window's own flush/reload hooks.
+//! The image attachment's right-click menu — size presets, caption, open,
+//! rename, reveal — shared by every window that renders images. Size presets
+//! rewrite the marker in the given editor; "Custom width…" and "Caption…" drop
+//! the cursor into the marker's own slot instead of asking through a dialog;
+//! rename is window-specific (its reference-rewrite reloads the note
+//! differently in each window), so the flow takes the window's own flush/reload
+//! hooks.
 
 import { EditorView } from '@codemirror/view'
+import { EditorSelection } from '@codemirror/state'
 import { invoke } from '@tauri-apps/api/core'
 import { buildImageMarker, type ImageEmbedSpec } from './styler'
 import { openContextMenu } from './context-menu'
@@ -33,6 +36,68 @@ export function rewriteEmbedMarker(view: EditorView, oldText: string, newText: s
   const at = view.state.doc.toString().indexOf(oldText)
   if (at === -1) return
   view.dispatch({ changes: { from: at, to: at + oldText.length, insert: newText } })
+}
+
+/// Which part of an image marker an inline edit targets.
+export type ImageMarkerSlot = 'width' | 'caption'
+
+/// Drops the cursor straight into the marker's width or caption slot — the
+/// "no dialog at all" replacement for the modal caption/width prompts, ported
+/// from the Mac's `beginInlineImageEdit`. The marker is rewritten into a
+/// canonical `![[name|width|caption]]` shape with the slot's `|` present (an
+/// empty slot parses identically to an absent one, so the intermediate state
+/// renders the same), then the slot's current text is selected — typing
+/// replaces it, in the note itself, exactly like the click-into-the-marker
+/// editing the styler already teaches.
+///
+/// Keyed on the full marker text rather than a stored position, like
+/// `rewriteEmbedMarker`, so it stays correct after edits above it. Returns
+/// false when the marker is no longer in the document.
+export function beginInlineImageEdit(
+  view: EditorView,
+  raw: string,
+  spec: ImageEmbedSpec,
+  slot: ImageMarkerSlot,
+): boolean {
+  const at = view.state.doc.toString().indexOf(raw)
+  if (at === -1) return false
+
+  const widthToken =
+    spec.width === undefined
+      ? ''
+      : spec.height === undefined
+        ? String(spec.width)
+        : `${spec.width}x${spec.height}`
+  const caption = spec.caption ?? ''
+
+  // Build the canonical marker while tracking where the slot's text lands.
+  // Offsets are in UTF-16 units, the same units CodeMirror positions use.
+  let inner = spec.name
+  let slotStart = 0
+  let slotLength = 0
+  if (slot === 'width') {
+    inner += '|'
+    slotStart = 3 + inner.length
+    inner += widthToken
+    slotLength = widthToken.length
+    if (caption) inner += `|${caption}`
+  } else {
+    if (widthToken) inner += `|${widthToken}`
+    inner += '|'
+    slotStart = 3 + inner.length
+    inner += caption
+    slotLength = caption.length
+  }
+  const replacement = `![[${inner}]]`
+
+  const selection = EditorSelection.range(at + slotStart, at + slotStart + slotLength)
+  view.dispatch({
+    changes: replacement === raw ? [] : { from: at, to: at + raw.length, insert: replacement },
+    selection,
+    effects: EditorView.scrollIntoView(selection.from),
+  })
+  view.focus()
+  return true
 }
 
 /// The prompt-and-rewrite half of renaming an attachment. The file move and the
@@ -80,19 +145,15 @@ export function openImageMenu(
     { label: 'Medium (400)', run: () => resize(400) },
     { label: 'Large (640)', run: () => resize(640) },
     { label: 'Original size', run: () => resize(undefined) },
+    // Caption and width need no dialog at all — both are just text in the
+    // marker (`![[name|400|caption]]`), so the item drops the cursor straight
+    // into the right slot and you type in the note itself, the existing value
+    // pre-selected. Same order as the Mac's menu.
+    { label: 'Custom width…', run: () => void beginInlineImageEdit(view, raw, spec, 'width') },
     { label: '', separator: true },
-    {
-      label: 'Custom width…',
-      run: async () => {
-        const input = await textPrompt('Image width in pixels:', spec.width ? String(spec.width) : '')
-        if (input === null) return
-        const w = Math.round(Number(input))
-        if (Number.isFinite(w) && w > 0) resize(w)
-      },
-    },
-    { label: '', separator: true },
-    { label: 'Open image', run: () => void invoke('open_attachment', { name: spec.name }) },
+    { label: 'Caption…', run: () => void beginInlineImageEdit(view, raw, spec, 'caption') },
     { label: 'Rename…', run: () => onRename(spec.name) },
+    { label: 'Open image', run: () => void invoke('open_attachment', { name: spec.name }) },
     {
       label: 'Show in Folder',
       run: () => void invoke('reveal_attachment', { name: spec.name }),

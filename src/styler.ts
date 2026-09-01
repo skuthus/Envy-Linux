@@ -260,7 +260,24 @@ class CheckboxWidget extends WidgetType {
   toDOM(view: EditorView) {
     const box = document.createElement('span')
     box.className = 'envy-checkbox' + (this.checked ? ' envy-checkbox-checked' : '')
-    box.textContent = this.checked ? '✓' : ''
+    // A vector checkmark rather than a "✓" glyph, so it scales with the box
+    // under editor zoom instead of staying a font-sized symbol beside it, and
+    // draws the same on every theme (the Mac's 1.8.7 redraw). Sized in em by
+    // the CSS, like the box itself.
+    if (this.checked) {
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+      svg.setAttribute('viewBox', '0 0 16 16')
+      svg.setAttribute('aria-hidden', 'true')
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+      path.setAttribute('d', 'M3.5 8.5 6.5 11.5 12.5 4.5')
+      path.setAttribute('fill', 'none')
+      path.setAttribute('stroke', 'currentColor')
+      path.setAttribute('stroke-width', '2.2')
+      path.setAttribute('stroke-linecap', 'round')
+      path.setAttribute('stroke-linejoin', 'round')
+      svg.append(path)
+      box.append(svg)
+    }
     box.setAttribute('aria-checked', String(this.checked))
     box.setAttribute('role', 'checkbox')
     // Matches MarkdownStyler.taskCheckboxRanges: the *glyph* (☑/☐) is a

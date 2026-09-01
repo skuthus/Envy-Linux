@@ -163,7 +163,17 @@
            Deliberately a modifier-click rather than hover: a popover appearing
            from a passing hover can sit exactly where a Ctrl-click was aimed. -->
       <div id="link-preview" class="hidden" role="dialog" aria-label="Linked note">
-        <div id="link-preview-title"></div>
+        <div id="link-preview-title">
+          <span id="link-preview-title-text"></span>
+          <!-- Pin detaches the peek into its own floating window that stays
+               open (the Mac's 1.8.1 pinned peek); the peek itself closes. -->
+          <button
+            id="link-preview-pin"
+            type="button"
+            title="Pin as a floating window"
+            aria-label="Pin as a floating window"
+          >📌</button>
+        </div>
         <div id="link-preview-body"></div>
       </div>
 

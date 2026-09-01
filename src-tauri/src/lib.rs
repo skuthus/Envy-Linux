@@ -1888,9 +1888,26 @@ fn toggle_pinned_window(app: &tauri::AppHandle) {
 /// loop ends up waiting on itself and the app freezes (shell appears, page
 /// never loads). Async runs this on a worker thread, so `run_on_main_thread`
 /// genuinely hands the build to the free loop instead of running it inline.
+///
+/// `inner_size` is the logical size the caller wants the window to open at —
+/// the frontend persists the last size a pop-out was dragged to, so the next
+/// one opens the same size, as the Mac's self-persisting peek panel does.
+/// Absent that, the last size any pop-out was resized to in this session is
+/// used (remembered below off the window's own resize events), and failing
+/// both, the default.
 #[tauri::command]
-async fn pop_out_note(id: String, app: tauri::AppHandle) {
+async fn pop_out_note(id: String, inner_size: Option<(f64, f64)>, app: tauri::AppHandle) {
     use std::hash::{Hash, Hasher};
+
+    /// Last logical size a pop-out was resized to, session-wide.
+    static LAST_POPOUT_SIZE: Mutex<Option<(f64, f64)>> = Mutex::new(None);
+    /// The builder's own minimum; anything smaller (or absurdly large, or not
+    /// a number) is a stale or corrupt value, not a size to honour.
+    fn sane(size: (f64, f64)) -> Option<(f64, f64)> {
+        let (w, h) = size;
+        (w.is_finite() && h.is_finite() && (240.0..=8192.0).contains(&w) && (160.0..=8192.0).contains(&h))
+            .then_some((w, h))
+    }
 
     enum Action {
         Surface(String),
@@ -1927,6 +1944,10 @@ async fn pop_out_note(id: String, app: tauri::AppHandle) {
         }
         Action::Create(label, step) => {
             let handle = app.clone();
+            let (width, height) = inner_size
+                .and_then(sane)
+                .or_else(|| LAST_POPOUT_SIZE.lock().unwrap().and_then(sane))
+                .unwrap_or((440.0, 480.0));
             let _ = app.run_on_main_thread(move || {
                 let built = tauri::WebviewWindowBuilder::new(
                     &handle,
@@ -1936,7 +1957,7 @@ async fn pop_out_note(id: String, app: tauri::AppHandle) {
                 // Blank native title: the note's name lives in the window's own
                 // editable title strip, not doubled in the OS title bar.
                 .title("")
-                .inner_size(440.0, 480.0)
+                .inner_size(width, height)
                 .position(140.0 + step, 120.0 + step)
                 .min_inner_size(240.0, 160.0)
                 .resizable(true)
@@ -1951,10 +1972,26 @@ async fn pop_out_note(id: String, app: tauri::AppHandle) {
                 .always_on_top(true)
                 .skip_taskbar(true)
                 .build();
-                if let Err(e) = built {
-                    eprintln!("could not open pop-out window: {e}");
-                    if let Some(s) = handle.try_state::<AppState>() {
-                        s.popouts.lock().unwrap().remove(&label);
+                match built {
+                    Ok(window) => {
+                        // Remember where the user drags the edges to, so the
+                        // next pop-out this session opens the same size even
+                        // when the caller passes none. Logical units, the same
+                        // the builder takes.
+                        let scale = window.scale_factor().unwrap_or(1.0);
+                        window.on_window_event(move |event| {
+                            if let tauri::WindowEvent::Resized(size) = event {
+                                let logical: tauri::LogicalSize<f64> = size.to_logical(scale);
+                                *LAST_POPOUT_SIZE.lock().unwrap() =
+                                    Some((logical.width, logical.height));
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        eprintln!("could not open pop-out window: {e}");
+                        if let Some(s) = handle.try_state::<AppState>() {
+                            s.popouts.lock().unwrap().remove(&label);
+                        }
                     }
                 }
             });

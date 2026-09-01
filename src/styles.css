@@ -412,11 +412,22 @@ body.fade-focus #editor-pane:focus-within {
   display: flex;
   align-items: center;
 }
+/* A long title yields gracefully (the Mac's HuggingScrollingText): it
+   hard-stops before the date, fades over its last 18px so it reads as
+   continuing rather than cut, and scrolls on hover to reveal the rest. The
+   fade is present only when the text genuinely overflows — `overflows` is set
+   from JS after measuring, since CSS can't tell — and lifted while hovering,
+   when the scroll itself reveals the end and a fade over it would hide the
+   last characters. No ellipsis: the fade is the truncation mark. */
 .row-title-text {
   min-width: 0;
   white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis;
+  text-overflow: clip;
+}
+.row-title-text.overflows:not(.scrolling) {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 18px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 18px), transparent);
 }
 .row-title > :not(.row-title-text) {
   flex: none;
@@ -662,6 +673,17 @@ body.bold-file-list .row-date { font-weight: 700; }
    The scrolling itself is driven from JS, which can measure the actual
    overflow; CSS can't. */
 #note-title.scrolling { text-overflow: clip; }
+/* The same trailing fade the list's titles carry, so a clipped title reads as
+   continuing. On the field's box rather than measured against its text (an
+   input's overflow isn't visible to CSS), so only a title reaching the last
+   18px of the box is touched — one that fits with room to spare is unaffected.
+   Lifted while scrolling, when the sweep reveals the end, and while focused,
+   when it's the rename box and the caret needs to reach the last character. */
+#note-title:not(.scrolling):not(:focus) {
+  text-overflow: clip;
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 18px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 18px), transparent);
+}
 #note-title:hover { border-color: color-mix(in srgb, var(--envy-marker) 50%, transparent); }
 #note-title:focus {
   outline: none;
@@ -1712,6 +1734,15 @@ body.popout-window {
   border-color: var(--envy-checked-checkbox);
   color: var(--envy-background);
 }
+/* The checkmark is an inline SVG stroked in currentColor, so it takes the
+   contrasting ink above and scales with the em-sized box under zoom. Clicks
+   pass through to the box, whose handler toggles the task. */
+.envy-checkbox svg {
+  display: block;
+  width: 78%;
+  height: 78%;
+  pointer-events: none;
+}
 .envy-completed-task { color: var(--envy-completed-task); text-decoration: line-through; }
 
 /* --- Embeds ---------------------------------------------------------------
@@ -1834,14 +1865,46 @@ body.popout-window {
 #link-preview.hidden { display: none; }
 #link-preview-title {
   flex: none;
-  padding: 7px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px 5px 12px;
   font-size: 12px;
   font-weight: 700;
   border-bottom: 1px solid color-mix(in srgb, var(--envy-marker) 30%, transparent);
+}
+#link-preview-title-text {
+  flex: 1;
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* The pin that detaches the peek into a floating window. Quiet until hovered,
+   the same square glyph button the pinned popover's keep-open pin uses — a
+   hollow pin on the Mac, filled once pinned; here the float replaces the peek,
+   so the button only ever shows the unpinned state. */
+#link-preview-pin {
+  flex: none;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 5px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--envy-blockquote);
+  filter: grayscale(1);
+  opacity: 0.55;
+  cursor: default;
+}
+#link-preview-pin:hover {
+  filter: none;
+  opacity: 1;
+  border-color: color-mix(in srgb, var(--envy-marker) 55%, transparent);
+  background: color-mix(in srgb, var(--envy-marker) 20%, transparent);
+}
+#link-preview-pin[hidden] { display: none; }
 #link-preview-body {
   flex: 1;
   min-height: 0;
