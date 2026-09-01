@@ -1374,6 +1374,11 @@ fn build_tray_menu(app: &tauri::AppHandle) -> Result<Menu<tauri::Wry>, Box<dyn s
         None::<&str>,
     )?;
 
+    // The Mac's File → Import from Kindle; the tray is the closest thing to a
+    // menu bar here. With the feature on and a Kindle plugged in it imports
+    // straight away, otherwise it opens Settings → Import.
+    let import_kindle =
+        MenuItem::with_id(app, "import_kindle", "Import from Kindle", true, None::<&str>)?;
     let settings = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
     // The Mac carries "Check for Updates…" as a menu command beside the
     // automatic background check, for anyone who would rather ask than wait.
@@ -1395,6 +1400,7 @@ fn build_tray_menu(app: &tauri::AppHandle) -> Result<Menu<tauri::Wry>, Box<dyn s
             &unpin,
             &PredefinedMenuItem::separator(app)?,
             &keep_on_top,
+            &import_kindle,
             &settings,
             &check_updates,
             &quit,
@@ -1684,6 +1690,17 @@ fn setup_tray(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
                     let handle = app.clone();
                     tauri::async_runtime::spawn(run_update_check(handle, true));
                 }
+                // The frontend owns the enabled flag and the title/body
+                // preferences (they're settings, kept in localStorage), so it
+                // decides between importing and opening Settings.
+                "import_kindle" => {
+                    if let Some(w) = app.get_webview_window("main") {
+                        let _ = w.show();
+                        let _ = w.unminimize();
+                        let _ = w.set_focus();
+                        let _ = w.emit("import-from-kindle", ());
+                    }
+                }
                 "quit" => app.exit(0),
                 _ => {}
             }
@@ -1935,6 +1952,97 @@ fn set_autostart(enabled: bool, app: tauri::AppHandle) -> Result<(), String> {
     }
 }
 
+// MARK: - Kindle import
+
+/// What an import did — the two numbers the Settings status line shows.
+#[derive(Serialize)]
+pub struct KindleImportSummary {
+    imported: usize,
+    #[serde(rename = "alreadyImported")]
+    already_imported: usize,
+}
+
+#[derive(Serialize, Clone)]
+struct KindleProgress {
+    done: usize,
+    total: usize,
+}
+
+/// The plugged-in Kindle's `My Clippings.txt`, if one is mounted (see
+/// `envy_core::kindle::detection_roots` for where Linux is searched).
+#[tauri::command]
+fn detect_kindle_clippings() -> Option<String> {
+    envy_core::kindle::detect_clippings_file().map(|p| p.to_string_lossy().into_owned())
+}
+
+/// Imports highlights from `path` — or from the detected Kindle when `None` —
+/// into `Inbox/` as fleeting notes, one per record not already in the vault's
+/// ledger. Emits `kindle-progress` `{ done, total }` after each note is
+/// written. Async so a large first import stays off the main thread.
+///
+/// `title_reference` is the setting's raw value (`page`, `location`, `both`,
+/// `none`); the two booleans are the *include* sense, the inverse of the
+/// stored `kindleBodyOmit…` flags.
+#[tauri::command]
+async fn import_kindle_clippings(
+    path: Option<String>,
+    title_reference: String,
+    include_author: bool,
+    include_location: bool,
+    state: State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<KindleImportSummary, String> {
+    use envy_core::kindle;
+
+    let file = match path {
+        Some(p) => PathBuf::from(p),
+        None => kindle::detect_clippings_file().ok_or_else(|| {
+            "No Kindle detected: plug it in and refresh, or choose the file by hand.".to_string()
+        })?,
+    };
+    let bytes = std::fs::read(&file)
+        .map_err(|e| format!("Couldn't read the Clippings file: {e}"))?;
+    let raw = String::from_utf8_lossy(&bytes).into_owned();
+
+    let index = state.store.lock().unwrap().directory().to_path_buf();
+    let options = kindle::ImportOptions {
+        title_reference: kindle::TitleReference::from_setting(&title_reference),
+        include_author,
+        include_location,
+    };
+
+    // Our own writes, so the watcher's rescan is redundant — though a long
+    // import outlasts the suppression window, and a stray rescan mid-way is
+    // harmless (the frontend just re-runs its query).
+    state.mark_internal_write();
+    let summary = kindle::import_clippings(&raw, &index, options, |done, total| {
+        let _ = app.emit("kindle-progress", KindleProgress { done, total });
+    });
+    state.mark_internal_write();
+    // Surface the new notes now rather than waiting on the watcher, so the
+    // list and the Inbox badge are current the moment the status line says
+    // "Imported".
+    state.store.lock().unwrap().reload();
+    let _ = app.emit("index-changed", ());
+    Ok(KindleImportSummary {
+        imported: summary.imported,
+        already_imported: summary.already_imported,
+    })
+}
+
+/// Wipes the vault's Kindle ledger so the next import re-offers every
+/// highlight. Notes already in the vault aren't touched.
+#[tauri::command]
+fn forget_kindle_history(state: State<AppState>) -> Result<(), String> {
+    let index = state.store.lock().unwrap().directory().to_path_buf();
+    envy_core::kindle::ledger::clear(&index);
+    let ledger = envy_core::kindle::ledger::path(&index);
+    if ledger.exists() {
+        return Err(format!("Couldn't remove {}", ledger.display()));
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default()
@@ -2113,6 +2221,9 @@ pub fn run() {
             pop_out_note,
             popout_note_id,
             reload,
+            detect_kindle_clippings,
+            import_kindle_clippings,
+            forget_kindle_history,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
