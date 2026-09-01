@@ -38,7 +38,7 @@ use crate::filename;
 /// Kindle import ledger today). Visible, not a dot-folder: cloud clients skip
 /// hidden items, so a hidden ledger would look synced while never leaving one
 /// machine. `NoteStore.dataFolderName` on the Mac.
-pub const DATA_FOLDER_NAME: &str = "Envy Data";
+pub use crate::store::DATA_FOLDER_NAME;
 
 const LEDGER_FILENAME: &str = "kindle-imported.json";
 
