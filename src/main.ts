@@ -1598,8 +1598,13 @@ const TITLE_SCROLL_DELAY_MS = 200
 /// visible — and the trailing fade then ate its last letters on every other
 /// row. Measure against the unrounded box instead.
 function titleOverflow(el: HTMLElement): number {
-  const overflow = el.scrollWidth - el.getBoundingClientRect().width
-  return overflow > 1 ? overflow : 0
+  // The text's own box, measured with a Range so it is sub-pixel exact; the
+  // element's box likewise. `scrollWidth` would round the text up and still
+  // flag some titles that fit by a hair.
+  const range = document.createRange()
+  range.selectNodeContents(el)
+  const overflow = range.getBoundingClientRect().width - el.getBoundingClientRect().width
+  return overflow > 0.5 ? overflow : 0
 }
 
 /// Marks a list title that doesn't fit (`overflows`, which draws the trailing
@@ -1611,8 +1616,8 @@ function titleOverflow(el: HTMLElement): number {
 /// hover (a Mac 1.8.8 fix).
 function hoverScrollTitle(titleText: HTMLElement) {
   requestAnimationFrame(() => {
-    if (titleText.isConnected && titleOverflow(titleText) > 0) {
-      titleText.classList.add('overflows')
+    if (titleText.isConnected) {
+      titleText.classList.toggle('overflows', titleOverflow(titleText) > 0)
     }
   })
   let frame: number | undefined
