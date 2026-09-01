@@ -1462,6 +1462,50 @@ function hidePinnedStrip() {
   pinnedStripEl.replaceChildren()
 }
 
+/// Sizes the trailing date column to the longest label the current font and
+/// date style can produce. "Yesterday, 12:46 PM" in Omarchy Mono is wider than
+/// the 102px that was measured for the previous face; measuring live means a
+/// smart date is never ellipsized.
+function syncDateColumnWidth() {
+  if (!listPaneEl.classList.contains('has-date')) {
+    listPaneEl.style.removeProperty('--envy-date-col')
+    return
+  }
+  const probe = document.createElement('span')
+  probe.className = 'row-date'
+  probe.style.cssText =
+    'position:absolute;visibility:hidden;pointer-events:none;left:0;top:0;width:auto;max-width:none;overflow:visible;white-space:nowrap;'
+  listPaneEl.append(probe)
+  let max = 0
+  for (const s of dateColumnSamples()) {
+    probe.textContent = s
+    max = Math.max(max, probe.getBoundingClientRect().width)
+  }
+  probe.remove()
+  listPaneEl.style.setProperty('--envy-date-col', `${Math.ceil(max)}px`)
+}
+
+/// Representative labels for every date style, plus a wide due-suffix and the
+/// template-list marker, so the column does not jump when the list contents
+/// change and never undershoots a smart "Yesterday, HH:MM PM".
+function dateColumnSamples(): string[] {
+  const wide = new Date()
+  wide.setHours(12, 46, 0, 0)
+  const yesterday = new Date(wide)
+  yesterday.setDate(yesterday.getDate() - 1)
+  const older = new Date(wide)
+  older.setDate(older.getDate() - 40)
+  return [
+    formatModified(wide.getTime()),
+    formatModified(yesterday.getTime()),
+    formatModified(older.getTime()),
+    `${abbrevDate(wide)}, ${shortTime(wide)}`,
+    wide.toLocaleDateString(undefined, { weekday: 'long' }),
+    'Wednesday +9',
+    'Template',
+  ]
+}
+
 function renderList() {
   folderColorCache = folderColors()
   results = applyPinning(sortNotes(results))
@@ -1469,6 +1513,7 @@ function renderList() {
   // it shows whichever date the list is sorted by — and "Show date modified"
   // governs it entirely, so with that off the titles get the full width.
   listPaneEl.classList.toggle('has-date', settings.showDateModified)
+  syncDateColumnWidth()
   stickyCount = computeStickyCount()
   if (stickyCount === 0) {
     hidePinnedStrip()
@@ -2104,6 +2149,7 @@ function showTrashPreview(note: NoteDto | null) {
 function renderTrashList(scrollToHighlight = true) {
   // Trashed rows always carry a date, whatever the notes list was showing.
   listPaneEl.classList.add('has-date')
+  syncDateColumnWidth()
   hidePinnedStrip()
   listEl.replaceChildren(
     ...trashResults.map((note, i) => {
@@ -2199,6 +2245,7 @@ let openTemplatePath: string | null = null
 function renderTemplateList() {
   // Same as trash: a single trailing label in the value column.
   listPaneEl.classList.add('has-date')
+  syncDateColumnWidth()
   hidePinnedStrip()
   listEl.replaceChildren(
     ...templateResults.map((t, i) => {
@@ -2755,6 +2802,7 @@ async function renameFolderFlow(oldPath: string) {
 /// list; the primary row is highlighted, click pivots, right-click acts.
 function renderCatalog(kind: CatalogKind, scrollToHighlight = true) {
   listPaneEl.classList.remove('has-date')
+  syncDateColumnWidth()
   hidePinnedStrip()
   const colors = kind === 'tag' ? tagColors() : folderColors()
   listEl.replaceChildren(
@@ -3738,6 +3786,7 @@ const darkQuery = window.matchMedia('(prefers-color-scheme: dark)')
 function syncTheme() {
   applyStoredAppearance()
   applyZoom()
+  void document.fonts.ready.then(() => syncDateColumnWidth())
 }
 function syncFontSettingsRow() {
   const custom = settings.fontSource === 'custom'
@@ -4029,6 +4078,7 @@ function applyChromeSettings() {
   // and not to a value the row is sized by — the Mac passes it into NoteRow as
   // the `bold` flag on every Text in the row.
   document.body.classList.toggle('bold-file-list', settings.boldFileListText)
+  syncDateColumnWidth()
 }
 
 /// Binds a checkbox to a boolean setting, persisting it and running whatever
@@ -4516,7 +4566,10 @@ try {
 }
 
 async function boot() {
-  await initAppearance(() => applyZoom())
+  await initAppearance(() => {
+    applyZoom()
+    void document.fonts.ready.then(() => syncDateColumnWidth())
+  })
   // The on-top state is a Rust-side preference (toggled from the tray), so read
   // the remembered value once at startup for the hide-on-focus-loss guard.
   try {

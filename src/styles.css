@@ -277,23 +277,16 @@ body.fade-focus #editor-pane:focus-within {
    by — the due date or the modified date, never both — so Due and Date are two
    sort buttons over a single column, which is what the Mac's NoteRow does.
 
-   The width holds the longest string either formatter can produce, measured in
-   the app's own font at 11px: "Yesterday, 12:46 PM" is 96.8px, and every due
-   label is shorter. It scales with the interface text size for the same reason
-   the fonts do.
+   The width is measured in JS (`syncDateColumnWidth`) against the live font
+   and date style, so a smart "Yesterday, 12:46 PM" in Omarchy Mono is never
+   clipped. A hardcoded px was wrong the moment the face changed. Each row is
+   its own grid, so the value is a shared custom property rather than `auto`
+   (which would let rows with shorter dates indent).
 
    Reserved only when there is something to put in it — the "Show date
    modified" setting governs the slot entirely — so a list without it keeps the
-   full width for titles rather than holding open a column that never fills.
-
-   Capped as a share of the pane as well, because the side-by-side layout can be
-   dragged down to 220px, where a full-width column would leave the title
-   nothing at all — it collapsed to zero and the dates spilled out past the right
-   edge. A percentage resolves against the grid container, which is the same
-   width for the header and every row, so they stay aligned with each other while
-   narrowing; the values inside ellipsize instead of overflowing. */
+   full width for titles rather than holding open a column that never fills. */
 #list-pane { --envy-date-col: 0px; }
-#list-pane.has-date { --envy-date-col: min(calc(102px * var(--envy-ui-scale)), 30%); }
 
 #list-header,
 .row {
@@ -474,15 +467,14 @@ body.fade-focus #editor-pane:focus-within {
    value column there is nothing to the right of it that left alignment would
    line up with, only empty track.
 
-   Clipped with an ellipsis for the narrow layout, where the cap above can make
-   the track shorter than the text. */
+   Overflow hidden is a backstop; the column is sized to the longest label, so
+   a smart date should never actually clip. */
 .row-date {
   text-align: right;
   color: var(--envy-blockquote);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis;
 }
 /* "Bold file list text" — the Mac applies its `bold` flag to every Text in the
    row (title, preview and date alike), not to the title alone. */
