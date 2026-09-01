@@ -1530,6 +1530,51 @@ function buildFolderIndicator(subfolder: string): HTMLElement | null {
   return el
 }
 
+/// Speed and delay of the hover reveal, the Mac's `HuggingScrollingText`:
+/// linear at 40pt/s after a 0.2s pause, so a title of any length reads at the
+/// same pace rather than a long one flying past.
+const TITLE_SCROLL_PX_PER_S = 40
+const TITLE_SCROLL_DELAY_MS = 200
+
+/// Marks a list title that doesn't fit (`overflows`, which draws the trailing
+/// fade) and scrolls it on hover to reveal the rest, resetting on leave.
+///
+/// The measurement waits a frame because the row isn't in the DOM yet when
+/// it's built, and `scrollWidth` of a detached span is zero. Decided on the
+/// real overflow — a title that fits exactly must neither fade nor twitch on
+/// hover (a Mac 1.8.8 fix).
+function hoverScrollTitle(titleText: HTMLElement) {
+  requestAnimationFrame(() => {
+    if (titleText.isConnected && titleText.scrollWidth > titleText.clientWidth) {
+      titleText.classList.add('overflows')
+    }
+  })
+  let frame: number | undefined
+  titleText.addEventListener('mouseenter', () => {
+    const overflow = titleText.scrollWidth - titleText.clientWidth
+    if (overflow <= 0) return
+    // A hair past the exact overflow, so the last character clears the clipped
+    // edge rather than stopping flush against it.
+    const distance = overflow + 2
+    titleText.classList.add('scrolling')
+    const started = performance.now()
+    const step = (now: number) => {
+      const elapsed = now - started - TITLE_SCROLL_DELAY_MS
+      const travelled = Math.max(0, (elapsed / 1000) * TITLE_SCROLL_PX_PER_S)
+      titleText.scrollLeft = Math.min(distance, travelled)
+      if (travelled < distance) frame = requestAnimationFrame(step)
+      else frame = undefined
+    }
+    frame = requestAnimationFrame(step)
+  })
+  titleText.addEventListener('mouseleave', () => {
+    if (frame !== undefined) cancelAnimationFrame(frame)
+    frame = undefined
+    titleText.classList.remove('scrolling')
+    titleText.scrollLeft = 0
+  })
+}
+
 function buildRow(note: NoteDto, i: number): HTMLElement {
       const row = document.createElement('div')
       // The primary selection is marked differently from the rest: it's the
@@ -1549,6 +1594,7 @@ function buildRow(note: NoteDto, i: number): HTMLElement {
       titleText.className = 'row-title-text'
       titleText.textContent = note.title
       title.append(titleText)
+      hoverScrollTitle(titleText)
 
       // A fleeting note is marked with an amber dot, always leading — "unfiled"
       // outranks a folder category, and the two never stack. A filed note in a
