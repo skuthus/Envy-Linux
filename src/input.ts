@@ -185,7 +185,17 @@ export function pairingEdit(
 
   // Typing a closer that's already sitting there steps over it rather than
   // adding a second one — otherwise closing a pair by hand doubles it.
-  if (MANAGED_CLOSERS.has(text) && text === after) {
+  //
+  // Exception: the second "*" of a bold opener, where a lone "*" already sits
+  // just before the caret (the "*|*" the first star's pairing left behind).
+  // Typing through it would strand "**|" with no closer; instead it falls
+  // through to the "*" case below, which upgrades the single mirror to a full
+  // "**|**". Only a genuine opener qualifies — a "*" preceded by a word
+  // ("**bold*|*") is the second half of a closing "**" and still types
+  // through, and a third star ("**|*") is never an opener.
+  const secondBoldOpener =
+    text === '*' && beforeChar === '*' && at(from - 2) !== '*' && !isWordChar(at(from - 2))
+  if (MANAGED_CLOSERS.has(text) && text === after && !secondBoldOpener) {
     return { kind: 'through', cursor: to + 1 }
   }
   if (!closer) return null
@@ -251,9 +261,17 @@ export function pairingEdit(
       // the start of *italic*.
       const lineStart = doc.lastIndexOf('\n', from - 1) + 1
       if (/^[ \t]*$/.test(doc.slice(lineStart, from))) return null
-      // A third asterisk completes ***bold italic***, not a new pair.
+      // A third asterisk completes ***bold italic*** (or a thematic break),
+      // not a new pair.
       if (beforeChar === '*' && at(from - 2) === '*') return null
-      return plain('**')
+      // A second "*" right after the first ("**") turns the italic pair into
+      // a bold one: "*|*" is upgraded to "**|**" the same way "[[" becomes
+      // "[[|]]" and "~~" becomes "~~|~~", so one keypress adds one visible
+      // star on each side rather than stranding "**|" or leaving a stray
+      // third star. A "*" that *closes* emphasis after a word was already
+      // ruled out by the after-word check above, so this only fires for
+      // genuine openers.
+      return beforeChar === '*' ? closeSecondOpener('*') : plain('**')
     }
 
     case '[':
