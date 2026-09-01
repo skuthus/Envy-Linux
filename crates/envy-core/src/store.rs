@@ -40,6 +40,31 @@ pub const ATTACHMENTS_FOLDER_NAME: &str = "Attachments";
 /// "Trash".
 pub const TRASH_FOLDER_NAME: &str = ".trash";
 
+/// The Mac's trash: one visible `Trash/` at the Index root (1.8.3 made it
+/// visible so sync clients carry it). Linux keeps the per-folder `.trash`
+/// layout above and does not read or write this folder — but an Index synced
+/// from a Mac will have one, and its contents are deleted notes, not live
+/// ones. So it is excluded from the note scan and the folder list by name
+/// like the other service folders, and is reserved as a folder name.
+pub const MAC_TRASH_FOLDER_NAME: &str = "Trash";
+
+/// A visible service folder at the Index root for Envy's vault-bound derived
+/// state — data that belongs to *this* collection of notes and travels with
+/// it across machines (the Kindle import ledger today). Visible, not a
+/// dot-folder, for the same sync reason as `Attachments/`. Not notes, so the
+/// scan and the folder list exclude it by name. Mirrors the Mac's
+/// `NoteStore.dataFolderName`.
+pub const DATA_FOLDER_NAME: &str = "Envy Data";
+
+/// The root-level folders that are Envy's own rather than the user's: never
+/// scanned for notes, never listed as a folder, never a rename target.
+const SERVICE_FOLDER_NAMES: [&str; 4] = [
+    TEMPLATES_FOLDER_NAME,
+    ATTACHMENTS_FOLDER_NAME,
+    MAC_TRASH_FOLDER_NAME,
+    DATA_FOLDER_NAME,
+];
+
 /// A template is a plain `.md` file in the Index's `Templates/` subfolder —
 /// never a `Note`. The scan skips descending into `Templates/` even when
 /// subfolders are included, so templates are never visible to
@@ -133,8 +158,9 @@ impl NoteStore {
     /// Every folder under the Index that could hold notes, relative to the
     /// root, sorted.
     ///
-    /// `Templates/` and `Inbox/` are excluded along with everything beneath
-    /// them — neither is a place you file a note, and both already mean
+    /// The service folders (`Templates/`, `Attachments/`, the Mac's `Trash/`,
+    /// `Envy Data/`) and `Inbox/` are excluded along with everything beneath
+    /// them — none is a place you file a note, and each already means
     /// something else. Hidden folders are skipped wholesale, which is what
     /// keeps `.trash` out without needing its own case.
     pub fn subfolders(&self) -> Vec<String> {
@@ -154,10 +180,7 @@ impl NoteStore {
                     continue;
                 }
                 let name = path.file_name().unwrap_or_default().to_string_lossy();
-                if name == TEMPLATES_FOLDER_NAME
-                    || name == INBOX_FOLDER_NAME
-                    || name == ATTACHMENTS_FOLDER_NAME
-                {
+                if name == INBOX_FOLDER_NAME || SERVICE_FOLDER_NAMES.contains(&name.as_ref()) {
                     continue;
                 }
                 if let Ok(rel) = path.strip_prefix(root) {
@@ -276,7 +299,9 @@ impl NoteStore {
             TEMPLATES_FOLDER_NAME,
             INBOX_FOLDER_NAME,
             TRASH_FOLDER_NAME,
+            MAC_TRASH_FOLDER_NAME,
             ATTACHMENTS_FOLDER_NAME,
+            DATA_FOLDER_NAME,
         ];
         let first_segment = |p: &str| p.split('/').next().unwrap_or("").to_string();
         let new_first = first_segment(&new_path);
@@ -1067,10 +1092,13 @@ fn set_modified(path: &Path, time: SystemTime) -> std::io::Result<()> {
 
 /// Every `.md` file to treat as a note.
 ///
-/// `Templates/` is skipped whether or not subfolder scanning is on — templates
-/// are never notes. Hidden directories are skipped wholesale, which is what
-/// keeps `.trash` invisible without needing its own special case (the same
-/// property `skipsHiddenFiles` provides on the Mac).
+/// The Index's own service folders — `Templates/`, `Attachments/`, a
+/// Mac-synced `Trash/`, `Envy Data/` — are skipped whether or not subfolder
+/// scanning is on: none of them hold notes. Excluded by root-level path, the
+/// way the Mac's `notesRecursively` does, so a user folder that merely shares
+/// a name deeper down is still scanned. Hidden directories are skipped
+/// wholesale, which is what keeps `.trash` invisible without needing its own
+/// special case (the same property `skipsHiddenFiles` provides on the Mac).
 ///
 /// `Inbox/` is read even when subfolder scanning is off: it isn't a folder the
 /// user made to organise things, it's where captures land, and a fleeting note
@@ -1094,17 +1122,10 @@ fn set_modified(path: &Path, time: SystemTime) -> std::io::Result<()> {
 /// reason a reload here was slower than the Mac's, which gets the same data for
 /// free by asking for `.contentModificationDateKey` during enumeration.
 fn note_paths(directory: &Path, include_subfolders: bool) -> Vec<(PathBuf, SystemTime)> {
-    let templates = directory.join(TEMPLATES_FOLDER_NAME);
-    let attachments = directory.join(ATTACHMENTS_FOLDER_NAME);
+    let service: Vec<PathBuf> = SERVICE_FOLDER_NAMES.iter().map(|n| directory.join(n)).collect();
     let mut out = Vec::new();
 
-    fn walk(
-        dir: &Path,
-        templates: &Path,
-        attachments: &Path,
-        recurse: bool,
-        out: &mut Vec<(PathBuf, SystemTime)>,
-    ) {
+    fn walk(dir: &Path, service: &[PathBuf], recurse: bool, out: &mut Vec<(PathBuf, SystemTime)>) {
         let Ok(entries) = fs::read_dir(dir) else {
             return;
         };
@@ -1120,10 +1141,10 @@ fn note_paths(directory: &Path, include_subfolders: bool) -> Vec<(PathBuf, Syste
                 Err(_) => path.is_dir(),
             };
             if is_dir {
-                if !recurse || is_hidden(&path) || path == templates || path == attachments {
+                if !recurse || is_hidden(&path) || service.contains(&path) {
                     continue;
                 }
-                walk(&path, templates, attachments, true, out);
+                walk(&path, service, true, out);
             } else if is_markdown(&path) && !is_hidden(&path) {
                 let modified = entry
                     .metadata()
@@ -1134,12 +1155,12 @@ fn note_paths(directory: &Path, include_subfolders: bool) -> Vec<(PathBuf, Syste
         }
     }
 
-    walk(directory, &templates, &attachments, include_subfolders, &mut out);
+    walk(directory, &service, include_subfolders, &mut out);
 
     if !include_subfolders {
         let inbox = directory.join(INBOX_FOLDER_NAME);
         if inbox.is_dir() {
-            walk(&inbox, &templates, &attachments, false, &mut out);
+            walk(&inbox, &service, false, &mut out);
         }
     }
     out
@@ -1231,6 +1252,10 @@ mod tests {
             ("Templates/T.md", "x"),
             ("Inbox/Fleeting.md", "x"),
             (".trash/Gone.md", "x"),
+            ("Attachments/pic.png", "x"),
+            // A Mac-synced vault's own service folders.
+            ("Trash/Work/Old.md", "x"),
+            ("Envy Data/kindle.json", "x"),
         ]);
         let _ = &dir;
         assert_eq!(store.subfolders(), vec!["Projects", "Projects/Work"]);
@@ -1400,6 +1425,9 @@ mod tests {
         // Onto a reserved name.
         assert_eq!(store.rename_folder("Work", "Templates"), None);
         assert_eq!(store.rename_folder("Work", "Inbox"), None);
+        assert_eq!(store.rename_folder("Work", "Trash"), None);
+        assert_eq!(store.rename_folder("Work", "Envy Data"), None);
+        assert_eq!(store.rename_folder("Work", "envy data/Sub"), None);
         // Onto a folder that already exists.
         assert_eq!(store.rename_folder("Work", "Taken"), None);
         // No-op / empty targets.
@@ -1629,6 +1657,24 @@ mod tests {
         assert_eq!(titles(&store), vec!["Real"]);
         // But it is visible as trash.
         assert_eq!(store.trashed_notes().len(), 1);
+    }
+
+    /// A vault synced from a Mac carries a visible `Trash/` (its deleted notes)
+    /// and `Envy Data/` (its import ledger). Neither holds live notes, so the
+    /// scan skips them like `Templates/` — while a user folder that merely
+    /// shares the name deeper down is still a folder.
+    #[test]
+    fn mac_trash_and_envy_data_are_never_notes() {
+        let (_d, store) = nested_store_with(&[
+            ("Real.md", "x"),
+            ("Trash/Deleted.md", "y"),
+            ("Trash/Work/Older.md", "y"),
+            ("Envy Data/Note-like.md", "z"),
+            ("Projects/Trash/Kept.md", "w"),
+        ]);
+        assert_eq!(titles(&store), vec!["Kept", "Real"]);
+        // Nothing of the Mac's Trash/ is mistaken for Linux trash either.
+        assert!(store.trashed_notes().is_empty());
     }
 
     /// Inbox is read even with subfolder scanning off — a fleeting note that
