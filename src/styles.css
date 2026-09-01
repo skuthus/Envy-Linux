@@ -866,7 +866,7 @@ body.popout-window {
   align-items: center;
   gap: 0.75em;
   flex: none;
-  padding: 3px var(--envy-inset);
+  padding: 1px var(--envy-inset);
   font-variant-numeric: tabular-nums;
   color: var(--envy-blockquote);
   background: color-mix(in srgb, var(--envy-marker) 10%, var(--envy-title-bar-background));
