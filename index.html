@@ -476,6 +476,80 @@
               </select>
             </label>
           </section>
+
+          <section id="settings-import">
+            <h3>Import</h3>
+            <label>
+              <input type="checkbox" id="setting-kindle-enabled" />
+              Enable Kindle import
+            </label>
+            <p class="setting-note">
+              Plug in your Kindle and pull its highlights and typed notes into
+              the Inbox as fleeting notes, one per highlight, titled by the
+              quote's first words, with the book as a [[link]]. Envy remembers
+              what it has already imported, so re-importing only ever adds
+              what's new.
+            </p>
+            <p class="setting-note">
+              Older Kindles that mount as a USB drive are detected
+              automatically. Newer Kindles use MTP and don't mount as a drive:
+              copy their My Clippings.txt to this machine and use “Choose
+              Clippings File…”.
+            </p>
+            <label>
+              Title locator
+              <select id="setting-kindle-title-reference">
+                <option value="page">Page: first words, p92</option>
+                <option value="location">Location: first words, loc. 210</option>
+                <option value="both">Both: first words, p92 · loc. 210</option>
+                <option value="none">None: first words only</option>
+              </select>
+            </label>
+            <p class="setting-note">
+              A book without page numbers falls back to its location, so a
+              title's never left bare unless you choose None.
+            </p>
+            <label>
+              <input type="checkbox" id="setting-kindle-author" />
+              Include the author in each note
+            </label>
+            <label>
+              <input type="checkbox" id="setting-kindle-location" />
+              Include the location in each note
+            </label>
+            <p class="setting-note">
+              These control the attribution line under each highlight; the book
+              link and page always stay.
+            </p>
+            <div class="setting-row update-check-row">
+              <span id="setting-kindle-detected" class="setting-note"
+                >No Kindle detected: plug it in and refresh, or choose the file
+                by hand.</span
+              >
+              <button
+                id="setting-kindle-refresh"
+                type="button"
+                title="Look for a plugged-in Kindle again"
+              >
+                Refresh
+              </button>
+            </div>
+            <div class="setting-row">
+              <button id="setting-kindle-import" type="button">Import from Kindle</button>
+              <button id="setting-kindle-choose" type="button">Choose Clippings File…</button>
+              <button id="setting-kindle-forget" type="button" class="destructive">
+                Forget Import History…
+              </button>
+            </div>
+            <p class="setting-note" id="setting-kindle-status" hidden></p>
+            <p class="setting-note">
+              Reads the Kindle's My Clippings.txt (every book's highlights in one
+              file). Adjusted highlights are collapsed to their final form, a
+              typed note attaches beneath the passage it belongs to, and
+              bookmarks are skipped. The import history lives in an “Envy Data”
+              folder inside your Index, so it travels with the vault.
+            </p>
+          </section>
         </div>
       </div>
     </div>

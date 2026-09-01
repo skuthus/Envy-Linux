@@ -40,6 +40,7 @@ import { listEditing, listContinuation, isListLine, renumberEdits } from './list
 import { applyTheme, enviousDark, enviousLight } from './theme'
 import { createMiniNoteEditor, type MiniNoteEditor } from './mininote'
 import { renderReference, type ReferenceTab } from './reference'
+import { initKindleImport } from './kindle'
 import {
   SHORTCUT_SPECS,
   bindingFor,
@@ -4185,6 +4186,7 @@ async function boot() {
   }
   await runSearch()
   searchInput.focus()
+  initKindleImport(openSettings)
 }
 
 // Exposed for debugging from the webview console. The decoration pass is
