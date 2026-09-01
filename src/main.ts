@@ -2396,7 +2396,10 @@ function extendSelection(delta: number) {
 async function deleteSelection() {
   const ids = fullSelection()
   if (ids.length === 0) return
+  // Flushed, not dropped: the copy that lands in the trash should be the note
+  // as last typed, so restoring it brings back everything.
   cancelPendingSave()
+  await save()
   if (ids.includes(openNoteId ?? '')) openNoteId = null
   // One call, not a loop: the store treats a single delete as one undo step,
   // so a bulk delete restores as one action.
@@ -2415,6 +2418,16 @@ function bulkMenuItems(count: number): MenuItemSpec[] {
         for (const id of fullSelection()) await invoke('reveal_note', { id })
       },
     },
+    // The single-note menu's Move to, applied to the whole selection. Only
+    // when subfolders are listed, for the same reason as there.
+    ...(settings.includeSubfolders
+      ? [
+          {
+            label: `Move ${count} Notes to`,
+            submenu: () => moveToItems(fullSelection()),
+          } as MenuItemSpec,
+        ]
+      : []),
     { label: `Move ${count} Notes to Trash`, destructive: true, run: deleteSelection },
   ]
 }
@@ -2701,8 +2714,65 @@ async function renderFolderColorSettings() {
   )
 }
 
+/// Moves `ids` into `subfolder` (null = the Index root), the selection following
+/// the notes across the id changes a move makes — one note from the single-note
+/// menu, the whole selection from the bulk menu.
+///
+/// Pending edits are flushed first, so an edit made a moment ago lands wherever
+/// the note goes rather than at a path that no longer exists (the Mac's 1.8.1
+/// "edits follow the note"). When the open note is among them, the editor
+/// follows it too — its id and pin move with the file.
+///
+/// A note whose name collides in the destination is refused by the store, to
+/// keep wikilinks honest. It's skipped, the rest still go, and the refusals are
+/// reported once at the end rather than as one dialog per note.
+async function moveNotes(ids: string[], subfolder: string | null) {
+  if (ids.length === 0) return
+  cancelPendingSave()
+  await save()
+  const moved = new Map<string, string>()
+  const refused: string[] = []
+  for (const id of ids) {
+    try {
+      const note = await invoke<NoteDto>('move_note_to_subfolder', { id, subfolder })
+      moved.set(id, note.id)
+    } catch (err) {
+      refused.push(typeof err === 'string' ? err : 'Could not move that note.')
+    }
+  }
+  for (const [from, to] of moved) {
+    migratePin(from, to)
+    if (openNoteId === from) openNoteId = to
+    if (anchorId === from) anchorId = to
+    if (multiSelected.delete(from)) multiSelected.add(to)
+  }
+  const primary = results[highlighted]?.id
+  const primaryAfter = primary ? (moved.get(primary) ?? primary) : null
+  await runSearch()
+  if (primaryAfter) {
+    const idx = results.findIndex((n) => n.id === primaryAfter)
+    if (idx >= 0) {
+      highlighted = idx
+      renderList()
+    }
+  }
+  if (openNoteId && [...moved.values()].includes(openNoteId)) {
+    // The title-bar chip names the folder the open note now sits in.
+    const open = results.find((n) => n.id === openNoteId)
+    renderTitleBarFolder(open?.subfolder ?? null)
+  }
+  if (refused.length > 0) {
+    void alertModal(
+      refused.length === 1
+        ? refused[0]
+        : `${refused.length} notes could not be moved:\n${refused.join('\n')}`,
+    )
+  }
+}
+
 /// The "Move to" submenu: the Index root, every folder, and a way to make one.
-async function moveToItems(note: NoteDto): Promise<MenuItemSpec[]> {
+/// Takes the ids to move, so the single-note menu and the bulk menu share it.
+async function moveToItems(ids: string[]): Promise<MenuItemSpec[]> {
   let folders: string[] = []
   try {
     folders = await invoke<string[]>('list_subfolders')
@@ -2710,15 +2780,7 @@ async function moveToItems(note: NoteDto): Promise<MenuItemSpec[]> {
     console.error('could not list folders', err)
   }
   const colors = folderColors()
-  const move = (to: string | null) => async () => {
-    try {
-      await invoke<NoteDto>('move_note_to_subfolder', { id: note.id, subfolder: to })
-    } catch (err) {
-      console.error('could not move the note', err)
-      return
-    }
-    await runSearch()
-  }
+  const move = (to: string | null) => () => moveNotes(ids, to)
 
   const items: MenuItemSpec[] = [{ label: 'The Index', swatch: null, run: move(null) }]
   if (folders.length) items.push({ label: '', separator: true })
@@ -2776,12 +2838,15 @@ function noteMenuItems(note: NoteDto): MenuItemSpec[] {
     // Only when subfolders are actually listed. Filing a note into a folder
     // Envy then hides from the list would look like deleting it.
     ...(settings.includeSubfolders
-      ? [{ label: 'Move to', submenu: () => moveToItems(note) } as MenuItemSpec]
+      ? [{ label: 'Move to', submenu: () => moveToItems([note.id]) } as MenuItemSpec]
       : []),
     { label: 'Show in Folder', run: () => invoke('reveal_note', { id: note.id }) },
     {
       label: 'Make This Note a Template',
       run: async () => {
+        // A pending edit belongs in the template, not lost with the note.
+        cancelPendingSave()
+        await save()
         await invoke('convert_to_template', { id: note.id })
         // It stops being a note at all, so the pin goes rather than moves.
         migratePin(note.id, null)
