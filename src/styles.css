@@ -1742,6 +1742,15 @@ body.popout-window {
   border-color: var(--envy-checked-checkbox);
   color: var(--envy-background);
 }
+/* The checkmark is an inline SVG stroked in currentColor, so it takes the
+   contrasting ink above and scales with the em-sized box under zoom. Clicks
+   pass through to the box, whose handler toggles the task. */
+.envy-checkbox svg {
+  display: block;
+  width: 78%;
+  height: 78%;
+  pointer-events: none;
+}
 .envy-completed-task { color: var(--envy-completed-task); text-decoration: line-through; }
 
 /* --- Embeds ---------------------------------------------------------------
