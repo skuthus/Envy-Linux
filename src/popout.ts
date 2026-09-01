@@ -272,6 +272,32 @@ darkQuery.addEventListener('change', syncTheme)
 // blank white page).
 syncTheme()
 
+// The size sticks: drag any edge and the next pop-out opens that size, as the
+// Mac's self-persisting peek panel does. Stored in the origin's localStorage,
+// where the main window reads it back to pass along when it opens the next one.
+// Logical pixels, the units the window builder takes; debounced because a drag
+// fires a resize per frame.
+let resizeTimer: number | undefined
+try {
+  const current = getCurrentWindow()
+  void current.onResized(({ payload }) => {
+    window.clearTimeout(resizeTimer)
+    resizeTimer = window.setTimeout(async () => {
+      try {
+        const { width, height } = payload.toLogical(await current.scaleFactor())
+        localStorage.setItem(
+          'popoutSize',
+          JSON.stringify({ width: Math.round(width), height: Math.round(height) }),
+        )
+      } catch (e) {
+        console.error('could not remember the pop-out size', e)
+      }
+    }, 250)
+  })
+} catch {
+  // Running outside Tauri.
+}
+
 // Escape closes the float (after flushing) — the same quick dismissal the peek
 // and pinned popover offer. The native title bar's close button closes it too.
 // (No onCloseRequested handler: an async close listener deferred the native
