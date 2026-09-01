@@ -1561,6 +1561,27 @@ function scrollHighlightIntoView() {
   }
 }
 
+/// Applies the `overflows` fade to every title that doesn't fit, in one pass
+/// per render. Reads every title's overflow first, then writes every class
+/// toggle, so the layout-forcing measurements don't interleave with the writes
+/// into a reflow per row (the old per-row rAF did exactly that). Coalesced to
+/// one frame — a rebuild that recurses to correct row height only measures once.
+/// Covers both the scrolling window and the pinned strip, since both hold rows.
+let overflowFrame = 0
+function scheduleOverflowMeasure() {
+  if (overflowFrame) return
+  overflowFrame = requestAnimationFrame(() => {
+    overflowFrame = 0
+    const texts = Array.from(
+      document.querySelectorAll<HTMLElement>(
+        '#list-sizer .row-title-text, #pinned-strip .row-title-text',
+      ),
+    )
+    const overflowing = texts.map((el) => titleOverflow(el) > 0)
+    texts.forEach((el, i) => el.classList.toggle('overflows', overflowing[i]))
+  })
+}
+
 function renderRowWindow(force = false) {
   const viewport = listViewport()
   // Offsets are in *scrolling* rows — the results minus the ones lifted into
@@ -1582,6 +1603,9 @@ function renderRowWindow(force = false) {
     rows.push(row)
   }
   listSizer.replaceChildren(...rows)
+  // One batched overflow pass for the new window (coalesced with the pinned
+  // strip's, and with the height-correction re-render below).
+  scheduleOverflowMeasure()
 
   // Correct the assumed height from a real row. The second pass measures the
   // same height it just set, so this settles after one correction rather than
@@ -1602,7 +1626,24 @@ function renderRowWindow(force = false) {
   }
 }
 
-listEl.addEventListener('scroll', () => renderRowWindow(), { passive: true })
+// Coalesce scroll events to one window rebuild per frame. On a large list a
+// momentum scroll fires scroll events faster than a rebuild (and its per-row
+// measurement) can run; doing the work synchronously per event let the
+// layer-promoted scroller outrun it and paint blank rows. A rAF gate runs the
+// rebuild at most once per frame, always reading the latest scrollTop when it
+// fires, so the window still lands on the final position without falling behind.
+let scrollFrame = 0
+listEl.addEventListener(
+  'scroll',
+  () => {
+    if (scrollFrame) return
+    scrollFrame = requestAnimationFrame(() => {
+      scrollFrame = 0
+      renderRowWindow()
+    })
+  },
+  { passive: true },
+)
 
 /// A list row's folder marker, per the folderListDisplay setting: a coloured
 /// dot ('dot', only when the folder has a colour), the folder name as a tinted
@@ -1665,19 +1706,14 @@ function titleOverflow(el: HTMLElement): number {
   return overflow > 0.5 ? overflow : 0
 }
 
-/// Marks a list title that doesn't fit (`overflows`, which draws the trailing
-/// fade) and scrolls it on hover to reveal the rest, resetting on leave.
+/// Scrolls a list title on hover to reveal the rest, resetting on leave.
 ///
-/// The measurement waits a frame because the row isn't in the DOM yet when
-/// it's built, and `scrollWidth` of a detached span is zero. Decided on the
-/// real overflow — a title that fits exactly must neither fade nor twitch on
-/// hover (a Mac 1.8.8 fix).
+/// The `overflows` fade for a title that doesn't fit is applied separately, in
+/// one batched pass per render (`scheduleOverflowMeasure`) rather than a frame
+/// per row — measuring each title forces layout, and doing that per row
+/// reflowed the whole list while it was already rebuilding on scroll. The hover
+/// handler still measures its own one title, which is not a hot path.
 function hoverScrollTitle(titleText: HTMLElement) {
-  requestAnimationFrame(() => {
-    if (titleText.isConnected) {
-      titleText.classList.toggle('overflows', titleOverflow(titleText) > 0)
-    }
-  })
   let frame: number | undefined
   titleText.addEventListener('mouseenter', () => {
     const overflow = titleOverflow(titleText)
