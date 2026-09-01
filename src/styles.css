@@ -1821,16 +1821,22 @@ body.popout-window {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 1.05em;
-  height: 1.05em;
-  margin-right: 0.25em;
-  vertical-align: -0.15em;
+  box-sizing: border-box;
+  flex: none;
+  width: 1.15em;
+  height: 1.15em;
+  margin-right: 0.45em;
+  /* Centre the box on the text rather than letting it ride high above the
+     line. `middle` lines its centre up with the middle of the lowercase text. */
+  vertical-align: middle;
   border: 1.5px solid var(--envy-marker);
-  border-radius: 4px;
-  font-size: 0.8em;
+  border-radius: 3px;
   line-height: 1;
   cursor: pointer;
   user-select: none;
+}
+.envy-checkbox:hover {
+  border-color: var(--envy-text);
 }
 .envy-checkbox-checked {
   background: var(--envy-checked-checkbox);

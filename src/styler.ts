@@ -310,6 +310,7 @@ class CheckboxWidget extends WidgetType {
     // identical to what the Mac build produces for the same action.
     box.onmousedown = (e) => {
       e.preventDefault()
+      e.stopPropagation()
       const toggleFrom = this.pos + 1
       view.dispatch({
         changes: { from: toggleFrom, to: toggleFrom + 1, insert: this.checked ? ' ' : 'x' },
@@ -317,8 +318,10 @@ class CheckboxWidget extends WidgetType {
     }
     return box
   }
+  // Let the widget own its clicks: if the editor also handled them it would put
+  // the cursor in the task, which reveals the raw "[x]" and fights the toggle.
   ignoreEvent() {
-    return false
+    return true
   }
 }
 
