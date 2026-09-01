@@ -1,0 +1,46 @@
+---
+name: run-envy
+description: Launch and drive Envy (Tauri/WebKitGTK, Hyprland) to see a change working — dev build, window screenshots, keyboard-driven smoke test, and what still needs a human.
+---
+
+# Running Envy on the owner's machine (Omarchy / Hyprland / Wayland)
+
+## Fast path
+
+```bash
+./scripts/check.sh --quick     # tests, tsc, build, config invariants (no display)
+./scripts/gui-smoke.sh         # launches the app, drives it, checks the vault, screenshots
+```
+
+`gui-smoke.sh` refuses to run unless the Index is a folder whose path contains
+"Test Vault" (make one with `node scripts/gen-test-vault.mjs`, then Settings →
+Change Location). It prints PASS/FAIL and leaves screenshots + `dev.log` in
+`$XDG_RUNTIME_DIR/envy-smoke/`. Read `2-table-and-image.png`: the word "good"
+must be underlined, "bad" must be plain text, the image must show.
+
+## Doing it by hand
+
+- Launch: `nohup npm run tauri dev > dev.log 2>&1 &` — first Rust build takes
+  a few minutes; later ones ~5s. The window class is `envy-linux`.
+- Wait/locate: `hyprctl clients -j | jq '.[]|select(.class=="envy-linux")|{at,size}'`
+- Focus: `hyprctl dispatch 'hl.dsp.focus({window="class:envy-linux"})'` — this
+  Hyprland takes Lua, not the classic `focuswindow class:x` form, and prints a
+  warning instead of failing; confirm with `hyprctl activewindow -j | jq .class`.
+- Screenshot: `grim -g "X,Y WxH" shot.png` with the numbers from `at`/`size`,
+  then Read the PNG and look at it.
+- Type: `wtype "text"`, keys `wtype -k Return`, chords `wtype -M ctrl l -m ctrl`.
+  Search box: Ctrl+L; clear it: Alt+Backspace; Return opens the top match or
+  creates the note and focuses the editor. `template:Name` + Return opens a
+  template for editing. Ctrl+Backspace deletes the open note (to `.trash`).
+- Don't type markdown tables through wtype — the editor auto-inserts pipes and
+  the table comes out doubled. Write the `.md` file straight into the vault;
+  the watcher reloads it within ~2s.
+- Stop: `pkill -x envy-linux`, then kill the `npm run tauri dev` job (it is the parent of the CLI, vite and cargo).
+
+## Not automatable here
+
+There is no Wayland click tool installed (no ydotool/wlrctl), so anything
+behind a mouse click or the tray menu needs the owner: **pop-out windows**
+(right-click a note → Pop Out) and the **pinned-note window** (Ctrl+Alt+T
+pins; the tray menu shows it). Both share the main window's navigation guard
+and capabilities, so ask for a manual check when those change.
