@@ -494,7 +494,7 @@ impl NoteStore {
 
         // A case-only change ("test" → "Test") collides with the file itself
         // on a case-insensitive volume, so asking for a free name would hand
-        // back "Test 2". Move straight to the new spelling instead.
+        // back "Test (2)". Move straight to the new spelling instead.
         let new_path = if trimmed.eq_ignore_ascii_case(note.title()) {
             dir.join(format!("{}.md", sanitize_title(trimmed)))
         } else {
@@ -1534,8 +1534,10 @@ mod tests {
         assert_eq!(a.title(), "Ideas");
         assert!(dir.path().join("Ideas.md").exists());
 
+        // The Mac's " (2)" shape, so the same collision names the same file on
+        // every platform.
         let b = store.create("Ideas").unwrap();
-        assert_eq!(b.title(), "Ideas 2");
+        assert_eq!(b.title(), "Ideas (2)");
     }
 
     #[test]
@@ -1694,7 +1696,7 @@ mod tests {
         let (dir, mut store) = store_with(&[("test.md", "x")]);
         let note = store.notes()[0].clone();
         let renamed = store.rename(&note, "Test").unwrap();
-        // Not "Test 2" — the collision is with the file itself.
+        // Not "Test (2)" — the collision is with the file itself.
         assert_eq!(renamed.title(), "Test");
         assert!(dir.path().join("Test.md").exists());
     }
