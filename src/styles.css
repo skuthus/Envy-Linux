@@ -10,10 +10,11 @@
      prose, and the Mac keeps them apart for the same reason. */
   --envy-ui-scale: 1;
   --envy-row-padding: 1px;
-  /* Kept in step with the ::-webkit-scrollbar width below. The list header sits
-     outside the scrolling element, so it has to account for the same gutter to
-     stay aligned with the rows. */
-  --envy-scrollbar-width: 10px;
+  /* Matches the ::-webkit-scrollbar width below. The scrolling panes reserve a
+     stable gutter of this width and subtract it from their trailing padding, so
+     their content ends the same distance from the pane edge as the leading
+     inset — symmetric margins whether or not a scrollbar is showing. */
+  --envy-scrollbar-width: 8px;
   --envy-radius: 0px;
   --envy-radius-lg: 0px;
   --envy-focus-thickness: 1px;
@@ -22,6 +23,10 @@
   /* Regular weight, matching the terminal — no synthetic emboldening. */
   --envy-font-weight: 400;
   --envy-font-embolden: 0;
+  /* The inset shared by the list, the title bar, the editor and the footer, so
+     text starts in the same column down the whole window and the left and right
+     margins match. */
+  --envy-inset: 12px;
 }
 
 /* --- Scrollbars ------------------------------------------------------------
@@ -103,7 +108,7 @@ body.popout-window {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 12px;
+  padding: 6px var(--envy-inset);
   background: var(--envy-title-bar-background);
   border-bottom: 1px solid color-mix(in srgb, var(--envy-marker) 40%, transparent);
   /* No OS title bar on this variant; the search chrome is the drag handle.
@@ -263,7 +268,10 @@ body.fade-focus #editor-pane:focus-within {
   border-bottom: 1px solid color-mix(in srgb, var(--envy-marker) 30%, transparent);
 }
 #pinned-strip.hidden { display: none; }
-#pinned-strip > .row { padding-right: 12px; }
+/* The strip sits outside the scrolling list, so it pays no gutter: a plain
+   inset on the trailing side lands its content the same distance from the pane
+   edge as the scrolling rows (which reserve the gutter and subtract it). */
+#pinned-strip > .row { padding-right: var(--envy-inset); }
 
 /* The list pane is the sized one in both orientations; the editor takes the
    rest. Sizing the same element either way keeps one persisted fraction
@@ -322,13 +330,11 @@ body.fade-focus #editor-pane:focus-within {
 
 #list-header {
   align-items: center;
-  padding: 8px 12px 6px;
-  /* A flat 12px, unlike the rows below, and for the same reason they are not
-     flat: this header sits *outside* the scrolling element, so it never pays
-     the scrollbar gutter. The rows subtract the gutter from their trailing
-     padding, which lands their content edge at 12px from the pane — so plain
-     12px here is what puts the headings over their values. */
-  padding-right: 12px;
+  padding: 8px var(--envy-inset) 6px;
+  /* The header sits *outside* the scrolling element, so it pays no gutter: a
+     plain inset on the trailing side lands its content the same distance from
+     the pane edge as the rows (which reserve the gutter and subtract it), so
+     the headings stay over their values and both match the leading inset. */
   border-bottom: 1px solid color-mix(in srgb, var(--envy-marker) 30%, transparent);
 }
 .sort-button {
@@ -404,8 +410,8 @@ body.fade-focus #editor-pane:focus-within {
      this problem: its scrollbars overlay the content rather than taking width
      from it. Subtracting the gutter puts the trailing edge back at the Mac's
      12px, without giving up the stability the reserved gutter buys. */
-  padding: var(--envy-row-padding) calc(12px - var(--envy-scrollbar-width))
-    var(--envy-row-padding) 12px;
+  padding: var(--envy-row-padding) calc(var(--envy-inset) - var(--envy-scrollbar-width))
+    var(--envy-row-padding) var(--envy-inset);
   cursor: default;
 }
 .row.highlighted {
@@ -682,7 +688,7 @@ body.bold-file-list .row-date { font-weight: 700; }
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 6px 12px;
-  padding: 6px 28px;
+  padding: 3px var(--envy-inset);
   font-weight: 600;
   background: var(--envy-title-bar-background);
   border-bottom: 1px solid color-mix(in srgb, var(--envy-marker) 30%, transparent);
@@ -694,7 +700,12 @@ body.bold-file-list .row-date { font-weight: 700; }
   flex: 1;
   min-width: 0;
   font: inherit;
-  padding: 3px 6px;
+  /* No horizontal padding: the title reads as a label most of the time and has
+     to start in the same column as the list and the editor. The 1px border
+     (transparent until focus) is absorbed by a matching negative margin so the
+     text — not the box — is what aligns. */
+  padding: 3px 0;
+  margin-left: -1px;
   border: 1px solid transparent;
   border-radius: 0;
   background: transparent;
@@ -855,7 +866,7 @@ body.popout-window {
   align-items: center;
   gap: 0.75em;
   flex: none;
-  padding: 3px 12px;
+  padding: 3px var(--envy-inset);
   font-variant-numeric: tabular-nums;
   color: var(--envy-blockquote);
   background: color-mix(in srgb, var(--envy-marker) 10%, var(--envy-title-bar-background));
@@ -1664,11 +1675,23 @@ body.popout-window {
      and one that fits shows none. (A dynamic version that dropped the space
      only when a note fit ran into WebKitGTK not repainting the scrollbar for a
      long note until the window was refocused.) */
-  padding: 12px 16px 24px;
+  /* Symmetric margins: the leading side is the shared inset; the trailing side
+     reserves the scrollbar gutter (stable, so it is there whether or not a note
+     is long enough to scroll) and subtracts it, landing the text the same
+     distance from the pane edge as the list and the title bar. */
+  padding: 12px calc(var(--envy-inset) - var(--envy-scrollbar-width)) 24px var(--envy-inset);
+  scrollbar-gutter: stable;
   /* Long fenced lines scroll inside their panel, not the whole note. */
   overflow-x: hidden;
   overflow-y: auto;
   will-change: scroll-position;
+}
+/* CodeMirror's default line padding (0 2px 0 6px) would start the text 6px in
+   from the scroller's inset, out of column with the list and the title bar.
+   Zero the leading side so the editor text shares their inset; the scroller's
+   own padding still keeps the caret off the very edge. */
+.cm-editor .cm-line {
+  padding-left: 0;
 }
 /* Real Bold is already heavier; the Regular hairline would fatten it twice. */
 .envy-bold, .envy-h1, .envy-h2 {
