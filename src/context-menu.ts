@@ -20,6 +20,9 @@ export interface MenuItemSpec {
   /// A swatch drawn before the label — the colour of the folder an item files
   /// into, so the menu reads the same way the list does.
   swatch?: string | null
+  /// Shown greyed out and inert — for an action that exists but can't apply
+  /// right now (a fourth pin with the sticky strip full).
+  disabled?: boolean
 }
 
 export function closeContextMenu() {
@@ -51,6 +54,10 @@ function menuRows(items: MenuItemSpec[], onPick: () => void): HTMLElement[] {
       b.append(dot)
     }
     b.append(document.createTextNode(item.label))
+    if (item.disabled) {
+      b.disabled = true
+      return b
+    }
 
     if (item.submenu) {
       const panel = document.createElement('div')

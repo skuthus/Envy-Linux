@@ -210,6 +210,20 @@ body.fade-focus #editor-pane:focus-within {
    out from under their headings as you type. */
 #list { flex: 1; min-height: 0; overflow-y: auto; scrollbar-gutter: stable; }
 
+/* --- Sticky pinned strip ---------------------------------------------------
+   "Keep pinned notes visible while scrolling": the leading pinned rows lifted
+   out of the scrolling list into the fixed chrome, with a divider beneath so
+   they read as their own zone rather than three rows that happen to stick.
+   Sits outside the scrolling element like the header does, so it never pays
+   the scrollbar gutter — hence the flat 12px trailing padding on its rows. */
+#pinned-strip {
+  flex: none;
+  padding: 3px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--envy-marker) 30%, transparent);
+}
+#pinned-strip.hidden { display: none; }
+#pinned-strip > .row { padding-right: 12px; }
+
 /* The list pane is the sized one in both orientations; the editor takes the
    rest. Sizing the same element either way keeps one persisted fraction
    meaningful per orientation rather than translating between them. */
@@ -1028,6 +1042,8 @@ body.popout-window {
   white-space: nowrap;
 }
 .context-item:hover { background: var(--envy-selection); }
+.context-item:disabled { opacity: 0.45; }
+.context-item:disabled:hover { background: transparent; }
 
 /* --- Submenus ---------------------------------------------------------------
    Nested rather than a second floating layer, so it inherits the menu's own

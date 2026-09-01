@@ -98,6 +98,8 @@ const dividerEl = document.getElementById('divider')!
 const listPaneEl = document.getElementById('list-pane')!
 const listEl = document.getElementById('list')!
 const listHeaderEl = document.getElementById('list-header')!
+/// The sticky pinned rows, between the header and the scrolling list.
+const pinnedStripEl = document.getElementById('pinned-strip')!
 const titleEl = document.getElementById('note-title') as HTMLInputElement
 const dueEl = document.getElementById('note-due')!
 const tagsEl = document.getElementById('note-tags')!
@@ -1159,6 +1161,10 @@ const settings = {
   // no fleeting marks, no `inbox:` mode, and the two toggles below are moot.
   // On by default, matching the Mac (1.10.0).
   inboxEnabled: boolSetting('inboxEnabled', true),
+  // Parks the pinned notes (up to three) in a strip under the list header so
+  // they stay reachable however far the list scrolls. Off — the default, as on
+  // the Mac (1.11.0) — pins sort to the top and scroll away with the rest.
+  keepPinnedNotesVisible: boolSetting('keepPinnedNotesVisible', false),
   newNotesStartInInbox: boolSetting('newNotesStartInInbox', false),
   showInboxInMainList: boolSetting('showInboxInMainList', true),
   showTagsInTitleBar: boolSetting('showTagsInTitleBar', false),
@@ -1418,6 +1424,36 @@ function listViewport(): number {
 /// folder colours instead of decoding inside the row body.
 let folderColorCache: Record<string, string> = {}
 
+/// How many of the leading rows are lifted into the sticky strip — the run of
+/// pinned notes at the top of `results`, capped at three so the strip can
+/// never grow to swallow the list. Zero when the setting is off. `results`
+/// itself is untouched: the strip shows rows 0..n and the scrolling list shows
+/// the rest, so `highlighted` keeps indexing one array either way. Reading
+/// only the leading run keeps this O(pins), not a walk of the whole list.
+let stickyCount = 0
+const STICKY_PIN_LIMIT = 3
+
+function computeStickyCount(): number {
+  if (!settings.keepPinnedNotesVisible) return 0
+  let n = 0
+  while (n < STICKY_PIN_LIMIT && n < results.length && pinnedIds.has(results[n].id)) n++
+  return n
+}
+
+/// Whether the strip is at capacity — a fourth pin, with the strip on, would
+/// just fall back to the old scroll-away behaviour and muddy the model, so it
+/// is refused. Unlimited with the strip off. Mirrors the Mac's pinLimitReached.
+function pinLimitReached(): boolean {
+  return settings.keepPinnedNotesVisible && pinnedIds.size >= STICKY_PIN_LIMIT
+}
+
+/// Every browse mode replaces the list wholesale and shows no pins, so the
+/// strip collapses away there — the same as the Mac's empty stickyPinnedNotes.
+function hidePinnedStrip() {
+  pinnedStripEl.classList.add('hidden')
+  pinnedStripEl.replaceChildren()
+}
+
 function renderList() {
   folderColorCache = folderColors()
   results = applyPinning(sortNotes(results))
@@ -1425,10 +1461,17 @@ function renderList() {
   // it shows whichever date the list is sorted by — and "Show date modified"
   // governs it entirely, so with that off the titles get the full width.
   listPaneEl.classList.toggle('has-date', settings.showDateModified)
+  stickyCount = computeStickyCount()
+  if (stickyCount === 0) {
+    hidePinnedStrip()
+  } else {
+    pinnedStripEl.replaceChildren(...results.slice(0, stickyCount).map((n, i) => buildRow(n, i)))
+    pinnedStripEl.classList.remove('hidden')
+  }
   // trash: and template: replace the list's children wholesale, so the spacer
   // has to be put back rather than assumed to still be there.
   if (listSizer.parentElement !== listEl) listEl.replaceChildren(listSizer)
-  listSizer.style.height = `${results.length * rowHeight}px`
+  listSizer.style.height = `${(results.length - stickyCount) * rowHeight}px`
   scrollHighlightIntoView()
   renderRowWindow(true)
 }
@@ -1446,7 +1489,9 @@ function scrollHighlightIntoView() {
   if (id === lastScrolledId) return
   lastScrolledId = id
   if (id === null) return
-  const top = highlighted * rowHeight
+  // A row in the sticky strip is always on screen; nothing to scroll to.
+  if (highlighted < stickyCount) return
+  const top = (highlighted - stickyCount) * rowHeight
   const viewport = listViewport()
   if (top < listEl.scrollTop) listEl.scrollTop = top
   else if (top + rowHeight > listEl.scrollTop + viewport) {
@@ -1456,10 +1501,13 @@ function scrollHighlightIntoView() {
 
 function renderRowWindow(force = false) {
   const viewport = listViewport()
-  const from = Math.max(0, Math.floor(listEl.scrollTop / rowHeight) - ROW_OVERSCAN)
+  // Offsets are in *scrolling* rows — the results minus the ones lifted into
+  // the strip — so the window and each row's top are shifted by stickyCount.
+  const from =
+    stickyCount + Math.max(0, Math.floor(listEl.scrollTop / rowHeight) - ROW_OVERSCAN)
   const to = Math.min(
     results.length,
-    Math.ceil((listEl.scrollTop + viewport) / rowHeight) + ROW_OVERSCAN,
+    stickyCount + Math.ceil((listEl.scrollTop + viewport) / rowHeight) + ROW_OVERSCAN,
   )
   if (!force && from === renderedFrom && to === renderedTo) return
   renderedFrom = from
@@ -1468,7 +1516,7 @@ function renderRowWindow(force = false) {
   const rows: HTMLElement[] = []
   for (let i = from; i < to; i++) {
     const row = buildRow(results[i], i)
-    row.style.top = `${i * rowHeight}px`
+    row.style.top = `${(i - stickyCount) * rowHeight}px`
     rows.push(row)
   }
   listSizer.replaceChildren(...rows)
@@ -1485,7 +1533,7 @@ function renderRowWindow(force = false) {
   const measured = rows[0]?.getBoundingClientRect().height
   if (measured && Math.abs(measured - rowHeight) > 0.01) {
     rowHeight = measured
-    listSizer.style.height = `${results.length * rowHeight}px`
+    listSizer.style.height = `${(results.length - stickyCount) * rowHeight}px`
     renderedFrom = -1
     renderedTo = -1
     renderRowWindow()
@@ -1899,6 +1947,7 @@ function showTrashPreview(note: NoteDto | null) {
 function renderTrashList() {
   // Trashed rows always carry a date, whatever the notes list was showing.
   listPaneEl.classList.add('has-date')
+  hidePinnedStrip()
   listEl.replaceChildren(
     ...trashResults.map((note, i) => {
       const row = document.createElement('div')
@@ -1985,6 +2034,7 @@ let openTemplatePath: string | null = null
 function renderTemplateList() {
   // Same as trash: a single trailing label in the value column.
   listPaneEl.classList.add('has-date')
+  hidePinnedStrip()
   listEl.replaceChildren(
     ...templateResults.map((t, i) => {
       const row = document.createElement('div')
@@ -2458,6 +2508,7 @@ async function renameFolderFlow(oldPath: string) {
 /// list; the primary row is highlighted, click pivots, right-click acts.
 function renderCatalog(kind: CatalogKind) {
   listPaneEl.classList.remove('has-date')
+  hidePinnedStrip()
   const colors = kind === 'tag' ? tagColors() : folderColors()
   listEl.replaceChildren(
     ...catalogRows.map((entry, i) => {
@@ -2621,6 +2672,9 @@ function noteMenuItems(note: NoteDto): MenuItemSpec[] {
   return [
     {
       label: pinnedIds.has(note.id) ? 'Unpin Note' : 'Pin Note',
+      // Greyed out, not hidden, when the sticky strip is full — the same
+      // `.disabled(!isPinned && pinLimitReached)` the Mac's menu applies.
+      disabled: !pinnedIds.has(note.id) && pinLimitReached(),
       run: () => {
         highlighted = results.findIndex((n) => n.id === note.id)
         togglePin()
@@ -2743,6 +2797,7 @@ function togglePin() {
   const target = results[highlighted]
   if (!target) return
   if (pinnedIds.has(target.id)) pinnedIds.delete(target.id)
+  else if (pinLimitReached()) return
   else pinnedIds.add(target.id)
   persistPins()
   renderList()
@@ -3639,6 +3694,7 @@ function openSettings() {
   checkbox('setting-subfolders').checked = settings.includeSubfolders
   void renderFolderColorSettings()
   checkbox('setting-focus-editor').checked = settings.moveFocusToEditorOnEnter
+  checkbox('setting-keep-pinned-visible').checked = settings.keepPinnedNotesVisible
   checkbox('setting-inbox-enabled').checked = settings.inboxEnabled
   checkbox('setting-inbox-new').checked = settings.newNotesStartInInbox
   checkbox('setting-inbox-in-list').checked = settings.showInboxInMainList
@@ -3772,6 +3828,13 @@ async function pushInboxEnabled() {
   }
 }
 
+bindToggle('setting-keep-pinned-visible', 'keepPinnedNotesVisible', () => {
+  // Switching the strip on lifts the rows out of the scrolling list, so the
+  // remembered scroll position no longer points at the same row; re-seat the
+  // highlight rather than leave it possibly off screen.
+  lastScrolledId = null
+  renderList()
+})
 bindToggle('setting-inbox-enabled', 'inboxEnabled', () => {
   applyInboxDependentToggles()
   void (async () => {

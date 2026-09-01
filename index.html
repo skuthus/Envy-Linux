@@ -30,6 +30,10 @@
       <div id="panes">
         <div id="list-pane">
           <div id="list-header" role="row"></div>
+          <!-- Pinned notes parked below the header so they stay reachable
+               however far the list scrolls (opt-in, up to three). They're the
+               leading rows of the results; the list below skips them. -->
+          <div id="pinned-strip" class="hidden" role="listbox" aria-label="Pinned notes"></div>
           <div id="list" role="listbox" aria-label="Notes"></div>
         </div>
         <div
@@ -283,6 +287,15 @@
               <input type="checkbox" id="setting-due" />
               Allow sorting by due date
             </label>
+            <label>
+              <input type="checkbox" id="setting-keep-pinned-visible" />
+              Keep pinned notes visible while scrolling
+            </label>
+            <p class="setting-note">
+              Parks your pinned notes (up to three) just below the search bar
+              so they stay reachable no matter how far you scroll. Off, they
+              sort to the top of the list as before and scroll away with it.
+            </p>
             <label>
               <input type="checkbox" id="setting-inbox-enabled" />
               Enable Inbox (fleeting notes)
