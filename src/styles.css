@@ -14,8 +14,9 @@
      outside the scrolling element, so it has to account for the same gutter to
      stay aligned with the rows. */
   --envy-scrollbar-width: 10px;
-  --envy-radius: 6px;
-  --envy-radius-lg: 10px;
+  --envy-radius: 0px;
+  --envy-radius-lg: 0px;
+  --envy-focus-thickness: 1px;
   --envy-font-family: ui-monospace, monospace;
   --envy-mono-family: ui-monospace, monospace;
   /* MultiplanetaryMono only ships Regular and Bold. 500 still resolves to
@@ -32,15 +33,13 @@
 
    `color-scheme` is set on <html> from the theme too (see syncTheme) — without
    it the engine paints native light-mode controls whatever the CSS says. */
-::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-corner { background: transparent; }
 ::-webkit-scrollbar-thumb {
   background: transparent;
-  border-radius: 999px;
-  /* Transparent border + content-box clip insets the thumb from the edge so
-     it reads as a floating pill rather than a full-width bar. */
-  border: 3px solid transparent;
+  border-radius: 0;
+  border: 2px solid transparent;
   background-clip: content-box;
   transition: background 140ms ease;
 }
@@ -93,8 +92,8 @@ body.popout-window {
 #search-bar {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
+  gap: 8px;
+  padding: 6px 12px;
   background: var(--envy-title-bar-background);
   border-bottom: 1px solid color-mix(in srgb, var(--envy-marker) 40%, transparent);
   /* No OS title bar on this variant; the search chrome is the drag handle.
@@ -114,14 +113,14 @@ body.popout-window {
 #search-ghost {
   position: absolute;
   inset: 0;
-  padding: 6px 10px;
+  padding: 4px 0;
   font-size: calc(15px * var(--envy-ui-scale));
   line-height: normal;
   color: var(--envy-marker);
   pointer-events: none;
   white-space: pre;
   overflow: hidden;
-  border: 1px solid transparent;
+  border: none;
 }
 #search-ghost.hidden { display: none; }
 
@@ -137,16 +136,17 @@ body.popout-window {
   flex: 1;
   font: inherit;
   font-size: 15px;
-  padding: 6px 10px;
-  border-radius: var(--envy-radius);
-  border: 1px solid color-mix(in srgb, var(--envy-marker) 55%, transparent);
-  background: color-mix(in srgb, var(--envy-marker) 12%, transparent);
+  padding: 4px 0;
+  border-radius: 0;
+  border: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--envy-marker) 55%, transparent);
+  background: transparent;
   color: var(--envy-text);
 }
 #search:focus {
   outline: none;
-  border-color: var(--envy-link);
-  box-shadow: 0 0 0 3px var(--envy-focus-highlight, transparent);
+  border-bottom-color: var(--envy-link);
+  box-shadow: none;
 }
 #search::placeholder { color: var(--envy-marker); }
 
@@ -164,7 +164,7 @@ body.popout-window {
   font-size: 12px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
-  border-radius: 50%;
+  border-radius: 0;
   border: 1px solid color-mix(in srgb, var(--envy-marker) 55%, transparent);
   background: color-mix(in srgb, var(--envy-due-soon) 18%, transparent);
   color: var(--envy-due-soon);
@@ -210,8 +210,8 @@ body.popout-window {
    dissolves after a moment, so it reads as a brief "you're here now" rather
    than a permanent outline around wherever the cursor happens to be. */
 #list-pane, #editor-pane {
-  outline: var(--envy-focus-thickness, 3px) solid transparent;
-  outline-offset: -3px;
+  outline: var(--envy-focus-thickness, 1px) solid transparent;
+  outline-offset: -1px;
   transition: outline-color 120ms ease;
 }
 #list-pane:focus-within, #editor-pane:focus-within {
@@ -409,7 +409,10 @@ body.fade-focus #editor-pane:focus-within {
     var(--envy-row-padding) 12px;
   cursor: default;
 }
-.row.highlighted { background: var(--envy-selection); }
+.row.highlighted {
+  background: color-mix(in srgb, var(--envy-link) 22%, transparent);
+  box-shadow: inset 2px 0 0 var(--envy-link);
+}
 /* Dimmer than the primary. The primary is the one the editor is showing, and
    a multi-selection where every row looks identical makes it impossible to
    tell which note you're actually looking at. */
@@ -758,7 +761,7 @@ body.bold-file-list .row-date { font-weight: 700; }
 
 body.popover {
   border: 1px solid color-mix(in srgb, var(--envy-marker) 70%, transparent);
-  border-radius: var(--envy-radius-lg);
+  border-radius: 0;
   overflow: hidden;
 }
 #pinned-app { display: flex; flex-direction: column; height: 100%; }
@@ -1036,11 +1039,11 @@ body.popout-window {
   position: fixed;
   z-index: 20;
   min-width: 200px;
-  padding: 4px;
-  border-radius: var(--envy-radius);
+  padding: 2px;
+  border-radius: 0;
   background: var(--envy-title-bar-background);
   border: 1px solid color-mix(in srgb, var(--envy-marker) 55%, transparent);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  box-shadow: none;
 }
 #context-menu.hidden { display: none; }
 
@@ -1055,13 +1058,16 @@ body.popout-window {
   font-size: 13px;
   padding: 5px 10px;
   border: none;
-  border-radius: 5px;
+  border-radius: 0;
   background: none;
   color: var(--envy-text);
   cursor: default;
   white-space: nowrap;
 }
-.context-item:hover { background: var(--envy-selection); }
+.context-item:hover {
+  background: color-mix(in srgb, var(--envy-link) 22%, transparent);
+  box-shadow: inset 2px 0 0 var(--envy-link);
+}
 .context-item:disabled { opacity: 0.45; }
 .context-item:disabled:hover { background: transparent; }
 
@@ -1083,11 +1089,11 @@ body.popout-window {
   min-width: 170px;
   max-height: 60vh;
   overflow-y: auto;
-  padding: 4px;
-  border-radius: var(--envy-radius);
+  padding: 2px;
+  border-radius: 0;
   background: var(--envy-title-bar-background);
   border: 1px solid color-mix(in srgb, var(--envy-marker) 55%, transparent);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  box-shadow: none;
 }
 .context-submenu.hidden { display: none; }
 .context-submenu.flip { left: auto; right: 100%; }
@@ -1265,11 +1271,11 @@ body.popout-window {
   width: min(460px, 90vw);
   max-height: 85vh;
   overflow-y: auto;
-  padding: 18px 22px 22px;
-  border-radius: var(--envy-radius-lg);
+  padding: 14px 18px 18px;
+  border-radius: 0;
   background: var(--envy-title-bar-background);
-  border: 1px solid color-mix(in srgb, var(--envy-marker) 45%, transparent);
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--envy-link);
+  box-shadow: none;
 }
 #settings-panel header {
   display: flex;
@@ -1292,12 +1298,25 @@ body.popout-window {
   gap: 8px;
   padding: 4px 0;
 }
+#settings-panel select,
+#settings-panel button,
+#settings-panel input[type='text'],
+#settings-panel input[type='number'],
+#prompt-input,
+#prompt-buttons button,
+#template-actions button,
+#pinned-title-bar button,
+#trash-preview-bar button,
+#fleeting-actions button,
+.shortcut-key {
+  border-radius: 0;
+}
 #settings-panel select {
   margin-left: auto;
   font: inherit;
   font-size: 12px;
   padding: 3px 6px;
-  border-radius: 6px;
+  border-radius: 0;
   border: 1px solid color-mix(in srgb, var(--envy-marker) 55%, transparent);
   background: var(--envy-background);
   color: var(--envy-text);
@@ -1416,11 +1435,11 @@ body.popout-window {
 #prompt.hidden { display: none; }
 #prompt-panel {
   width: min(360px, 88vw);
-  padding: 18px 20px 16px;
-  border-radius: var(--envy-radius-lg);
+  padding: 14px 16px 12px;
+  border-radius: 0;
   background: var(--envy-title-bar-background);
-  border: 1px solid color-mix(in srgb, var(--envy-marker) 45%, transparent);
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--envy-link);
+  box-shadow: none;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -1640,7 +1659,7 @@ body.popout-window {
   font-weight: var(--envy-font-weight);
   line-height: var(--envy-line-height, 24px);
   -webkit-text-stroke: var(--envy-font-embolden) currentColor;
-  padding: 20px 28px 40vh;
+  padding: 12px 16px 40vh;
 }
 /* Real Bold is already heavier; the Regular hairline would fatten it twice. */
 .envy-bold, .envy-h1, .envy-h2 {
@@ -1701,8 +1720,8 @@ body.popout-window {
   font-size: 0.92em;
   background: var(--envy-code-background);
 }
-.envy-code { border-radius: 4px; padding: 1px 3px; }
-.envy-code-block { border-radius: 6px; }
+.envy-code { border-radius: 0; padding: 1px 3px; }
+.envy-code-block { border-radius: 0; }
 
 /* --- Links --------------------------------------------------------------- */
 .envy-link, .envy-wikilink { color: var(--envy-link); }
