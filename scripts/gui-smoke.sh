@@ -1,39 +1,97 @@
 #!/usr/bin/env bash
 # Drive the real app under Hyprland and check what lands on disk.
 #
-# Launches the dev build, then — through the window, as a user would — creates
-# a note, edits it, opens and edits a template, and deletes the note. Each
-# step is verified by what appears in the vault, not by what the script typed,
-# so it exercises save, the template read/save path, the file watcher, the
+# Launches the app, then — through the window, as a user would — creates a
+# note, edits it, opens and edits a template, and deletes the note. Each step
+# is verified by what appears in the vault, not by what the script typed, so it
+# exercises save, the template read/save path, the file watcher, the
 # table/link/image renderer (see the screenshots) and delete-to-trash.
 #
-#   ./scripts/gui-smoke.sh [output-dir]      # screenshots + dev.log go there
+#   ./scripts/gui-smoke.sh [output-dir]              # dev build (npm run tauri dev)
+#   ./scripts/gui-smoke.sh --release [output-dir]    # ./target/release/envy-linux
+#   ./scripts/gui-smoke.sh --release --big-vault [path]   # paging pass, 19k notes
 #
-# Needs: hyprctl, grim, wtype, jq. It writes into the Index, so it refuses to
-# run unless the Index path contains "Test Vault" or ENVY_SMOKE_ALLOW=1.
+# --release is the only way to exercise the production CSP: the dev build uses
+# devCsp, and `cargo build --release` alone still points at the Vite URL.
+# Build it with `npm run tauri build -- --no-bundle` (~40 s).
+#
+# --big-vault temporarily repoints ~/.config/app.envynote.linux/index-path at a
+# large vault (default $ENVY_BIG_VAULT, else ~/.cache/envy-bench/vault20k) and
+# runs a paging pass instead of the write test — it never writes into that
+# vault. The original index-path is restored by the EXIT trap either way.
+#
+# Needs: hyprctl, grim, wtype, jq (magick/convert optional, for the blank
+# check). It writes into the Index, so it refuses to run unless the Index path
+# contains "Test Vault" or ENVY_SMOKE_ALLOW=1.
 # Not covered (no Wayland click tool): the pinned-note and pop-out windows —
 # check those by hand: right-click a note → Pop Out; Ctrl+Alt+T pins to tray.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-OUT="${1:-${XDG_RUNTIME_DIR:-/tmp}/envy-smoke}"
-mkdir -p "$OUT"
+MODE="dev"
+BIG=0
+BIGVAULT="${ENVY_BIG_VAULT:-}"
+OUT=""
+while (( $# )); do
+  case "$1" in
+    --release)   MODE="release"; shift ;;
+    --big-vault) BIG=1
+                 if [[ -n "${2:-}" && "${2:0:2}" != "--" ]]; then BIGVAULT="$2"; shift; fi
+                 shift ;;
+    -h|--help)   sed -n '2,28p' "$0"; exit 0 ;;
+    --*)         echo "unknown option: $1"; exit 2 ;;
+    *)           OUT="$1"; shift ;;
+  esac
+done
+
+OUT="${OUT:-${XDG_RUNTIME_DIR:-/tmp}/envy-smoke}"
+SUB="$MODE"; (( BIG )) && SUB="$MODE-big"
+SHOT="$OUT/$SUB"
+mkdir -p "$SHOT"
+LOG="$SHOT/dev.log"
 for t in hyprctl grim wtype jq; do
   command -v "$t" >/dev/null || { echo "need $t"; exit 2; }
 done
 
-VAULT="$(cat ~/.config/app.envynote.linux/index-path 2>/dev/null || true)"
-[[ -d "$VAULT" ]] || { echo "no Index configured (~/.config/app.envynote.linux/index-path)"; exit 2; }
-if [[ "$VAULT" != *"Test Vault"* && "${ENVY_SMOKE_ALLOW:-}" != 1 ]]; then
-  echo "Index is '$VAULT', not a test vault. Point Envy at one (scripts/gen-test-vault.mjs)"
-  echo "or set ENVY_SMOKE_ALLOW=1 to run against it anyway."
-  exit 2
+CFG="$HOME/.config/app.envynote.linux/index-path"
+VAULT="$(cat "$CFG" 2>/dev/null || true)"
+INDEX_SAVED=""
+
+if (( BIG )); then
+  [[ -n "$BIGVAULT" ]] || BIGVAULT="$HOME/.cache/envy-bench/vault20k"
+  [[ -d "$BIGVAULT" ]] || { echo "no big vault at '$BIGVAULT' (pass a path or set ENVY_BIG_VAULT)"; exit 2; }
+  [[ -f "$CFG" ]] || { echo "no Index configured ($CFG)"; exit 2; }
+  # Saved before anything else so the EXIT trap can always put it back.
+  INDEX_SAVED="$SHOT/index-path.bak"
+  cp "$CFG" "$INDEX_SAVED"
+  printf '%s' "$BIGVAULT" >"$CFG"
+  VAULT="$BIGVAULT"
+  echo "== big-vault mode: Index temporarily pointed at $VAULT ($(ls "$VAULT" | wc -l) entries)"
+else
+  [[ -d "$VAULT" ]] || { echo "no Index configured ($CFG)"; exit 2; }
+  if [[ "$VAULT" != *"Test Vault"* && "${ENVY_SMOKE_ALLOW:-}" != 1 ]]; then
+    echo "Index is '$VAULT', not a test vault. Point Envy at one (scripts/gen-test-vault.mjs)"
+    echo "or set ENVY_SMOKE_ALLOW=1 to run against it anyway."
+    exit 2
+  fi
+fi
+
+if [[ "$MODE" == "release" ]]; then
+  BIN="./target/release/envy-linux"
+  [[ -x "$BIN" ]] || { echo "no release binary at $BIN — build it: npm run tauri build -- --no-bundle"; exit 2; }
+  stale="$(find src src-tauri/src -type f -newer "$BIN" -print -quit 2>/dev/null || true)"
+  [[ -z "$stale" ]] || {
+    echo "$BIN is older than $stale — rebuild: npm run tauri build -- --no-bundle"; exit 2; }
 fi
 
 TITLE="Smoke Test Note"
 NOTE="$VAULT/$TITLE.md"
-TEMPLATE="$(ls "$VAULT"/Templates/*.md 2>/dev/null | head -1 || true)"
-IMAGE=""; for f in "$VAULT"/Attachments/*.png; do [[ -e "$f" ]] && IMAGE="$(basename "$f")" && break; done
+TEMPLATE=""
+IMAGE=""
+if (( ! BIG )); then
+  TEMPLATE="$(ls "$VAULT"/Templates/*.md 2>/dev/null | head -1 || true)"
+  for f in "$VAULT"/Attachments/*.png; do [[ -e "$f" ]] && IMAGE="$(basename "$f")" && break; done
+fi
 MARK="smoke-$(date +%s)"
 fails=0
 pass() { echo "  ok   $*"; }
@@ -45,27 +103,37 @@ cleanup() {
   # npm, the tauri CLI, vite, cargo and the app — one signal takes them all.
   [[ -n "$DEVPID" ]] && kill -TERM -- "-$DEVPID" 2>/dev/null || true
   pkill -x envy-linux 2>/dev/null || true
-  [[ -n "$TEMPLATE" && -f "$OUT/template.bak" ]] && cp "$OUT/template.bak" "$TEMPLATE"
-  rm -f "$NOTE" "$VAULT/.trash/$TITLE.md"
+  if (( ! BIG )); then
+    [[ -n "$TEMPLATE" && -f "$SHOT/template.bak" ]] && cp "$SHOT/template.bak" "$TEMPLATE"
+    rm -f "$NOTE" "$VAULT/.trash/$TITLE.md"
+  fi
+  # Always put the owner's Index back, however this run ended.
+  [[ -n "$INDEX_SAVED" && -f "$INDEX_SAVED" ]] && cp "$INDEX_SAVED" "$CFG"
+  true
 }
 trap cleanup EXIT
 
 pgrep -x envy-linux >/dev/null && { echo "Envy is already running; close it first"; exit 2; }
-if ss -ltn | grep -q ':1420 '; then
+if [[ "$MODE" == "dev" ]] && ss -ltn | grep -q ':1420 '; then
   echo "port 1420 is busy — a stale vite from an earlier run? try: pkill -f node_modules/.bin/vite"; exit 2
 fi
-rm -f "$NOTE" "$VAULT/.trash/$TITLE.md"
+(( BIG )) || rm -f "$NOTE" "$VAULT/.trash/$TITLE.md"
 
-echo "== launching dev build (log: $OUT/dev.log)"
-setsid npm run tauri dev >"$OUT/dev.log" 2>&1 &
+if [[ "$MODE" == "dev" ]]; then
+  echo "== launching dev build (log: $LOG)"
+  setsid npm run tauri dev >"$LOG" 2>&1 &
+else
+  echo "== launching release binary (log: $LOG)"
+  setsid ./target/release/envy-linux >"$LOG" 2>&1 &
+fi
 DEVPID=$!
 for _ in $(seq 1 90); do
   hyprctl clients -j | jq -e '.[] | select(.class=="envy-linux")' >/dev/null 2>&1 && break
-  grep -q 'terminated with a non-zero status\|error\[E' "$OUT/dev.log" 2>/dev/null && break
+  grep -q 'terminated with a non-zero status\|error\[E' "$LOG" 2>/dev/null && break
   sleep 2
 done
 GEO="$(hyprctl clients -j | jq -r '.[] | select(.class=="envy-linux") | "\(.at[0]),\(.at[1]) \(.size[0])x\(.size[1])"' | head -1)"
-[[ -n "$GEO" ]] || { echo "window never appeared — see $OUT/dev.log"; exit 1; }
+[[ -n "$GEO" ]] || { echo "window never appeared — see $LOG"; exit 1; }
 pass "window up at $GEO"
 
 # Omarchy's Hyprland takes Lua dispatches and reports failure by message, not
@@ -79,52 +147,109 @@ focus() {
   done
   echo "could not focus the Envy window"; return 1
 }
-shot()  { grim -g "$GEO" "$OUT/$1.png"; }
+shot()  { grim -g "$GEO" "$SHOT/$1.png"; }
 search() { wtype -M ctrl l -m ctrl; sleep 0.2; wtype -M alt -k BackSpace -m alt; sleep 0.2; wtype "$1"; sleep 0.8; wtype -k Return; sleep 1.2; }
 append_line() { wtype -M ctrl -k End -m ctrl; wtype -k Return; wtype "$1"; sleep 3; }
 
+# Keystroke helpers for the big-vault pass: the app opens a note on every arrow
+# press, so anything faster than ~15 keys/s queues up and the screenshot lags
+# the input by seconds.
+KEY_DELAY=0.07
+tap()  { wtype -k "$1"; sleep "$KEY_DELAY"; }
+type_slow() {
+  local s="$1" i
+  for (( i = 0; i < ${#s}; i++ )); do wtype "${s:i:1}"; sleep "$KEY_DELAY"; done
+}
+
 focus; shot 1-launch
 
-echo "== note written on disk is picked up by the watcher and renders"
-{
-  printf '# %s\n\n| Link | Kind |\n| --- | --- |\n' "$TITLE"
-  printf '| [good](https://example.com) | must be a live link |\n'
-  printf '| [bad](https:evil.com) | must stay plain text |\n'
-  printf '| **bold** and `code` | formatting |\n\nProse link: https://envynote.app\n'
-  [[ -n "$IMAGE" ]] && printf '\n![[%s]]\n' "$IMAGE"
-} >"$NOTE"
-sleep 3; focus; search "$TITLE"; shot 2-table-and-image
-pass "note opened — rendering is checked by eye in 2-table-and-image.png"
+if (( BIG )); then
+  echo "== paging pass: 400 arrow-downs through $VAULT"
+  wtype -M ctrl l -m ctrl; sleep 0.3
+  wtype -M alt -k BackSpace -m alt; sleep 0.5
+  for _ in $(seq 1 400); do tap Down; done
+  # The highlight keeps moving after the last key, so wait for the window to
+  # stop changing rather than guessing a sleep.
+  settled=0
+  grim -g "$GEO" "$SHOT/settle-a.png"
+  for _ in $(seq 1 30); do
+    sleep 1
+    grim -g "$GEO" "$SHOT/settle-b.png"
+    if cmp -s "$SHOT/settle-a.png" "$SHOT/settle-b.png"; then settled=1; break; fi
+    mv "$SHOT/settle-b.png" "$SHOT/settle-a.png"
+  done
+  cp "$SHOT/settle-a.png" "$SHOT/2-paged.png"
+  rm -f "$SHOT/settle-a.png" "$SHOT/settle-b.png"
+  (( settled )) && pass "window settled after 400 arrow-downs" \
+                || fail "window still repainting 30s after the last key"
 
-echo "== typing in the editor saves to disk"
-append_line "$MARK-note"
-grep -q "$MARK-note" "$NOTE" && pass "edit saved" || fail "edit did not reach $NOTE"
+  # A blank/white window is the failure this pass is really looking for, and
+  # "not blank" is measurable: a real note list has plenty of pixel variance.
+  MAGICK=""
+  command -v magick >/dev/null && MAGICK="magick"
+  [[ -z "$MAGICK" ]] && command -v convert >/dev/null && MAGICK="convert"
+  if [[ -n "$MAGICK" ]]; then
+    sd="$("$MAGICK" "$SHOT/2-paged.png" -colorspace Gray -format '%[fx:standard_deviation]' info: 2>/dev/null || echo 0)"
+    if awk -v v="$sd" 'BEGIN{exit !(v > 0.02)}'; then
+      pass "screenshot is not blank (stddev $sd)"
+    else
+      fail "screenshot looks blank (stddev $sd) — see $SHOT/2-paged.png"
+    fi
+  else
+    echo "  skip blank check (no magick/convert) — look at $SHOT/2-paged.png yourself"
+  fi
 
-if [[ -n "$TEMPLATE" ]]; then
-  echo "== template opens and saves through the validated template path"
-  cp "$TEMPLATE" "$OUT/template.bak"
-  tname="$(basename "$TEMPLATE" .md)"
-  focus; search "template:$tname"; append_line "$MARK-template"; shot 3-template
-  grep -q "$MARK-template" "$TEMPLATE" && pass "template saved" || fail "template edit did not reach $TEMPLATE"
-  cp "$OUT/template.bak" "$TEMPLATE"
+  echo "== search still works after paging"
+  wtype -M ctrl l -m ctrl; sleep 0.5
+  type_slow "note"; sleep 1.5; shot 3-search
+  wtype -M alt -k BackSpace -m alt; sleep 1.0; shot 4-cleared
+  pass "Ctrl+L / type / Alt+Backspace survived (see 3-search.png, 4-cleared.png)"
 else
-  echo "  skip no templates in $VAULT/Templates"
+  echo "== note written on disk is picked up by the watcher and renders"
+  {
+    printf '# %s\n\n| Link | Kind |\n| --- | --- |\n' "$TITLE"
+    printf '| [good](https://example.com) | must be a live link |\n'
+    printf '| [bad](https:evil.com) | must stay plain text |\n'
+    printf '| **bold** and `code` | formatting |\n\nProse link: https://envynote.app\n'
+    [[ -n "$IMAGE" ]] && printf '\n![[%s]]\n' "$IMAGE"
+  } >"$NOTE"
+  sleep 3; focus; search "$TITLE"; shot 2-table-and-image
+  pass "note opened — rendering is checked by eye in 2-table-and-image.png"
+
+  echo "== typing in the editor saves to disk"
+  append_line "$MARK-note"
+  grep -q "$MARK-note" "$NOTE" && pass "edit saved" || fail "edit did not reach $NOTE"
+
+  if [[ -n "$TEMPLATE" ]]; then
+    echo "== template opens and saves through the validated template path"
+    cp "$TEMPLATE" "$SHOT/template.bak"
+    tname="$(basename "$TEMPLATE" .md)"
+    focus; search "template:$tname"; append_line "$MARK-template"; shot 3-template
+    grep -q "$MARK-template" "$TEMPLATE" && pass "template saved" || fail "template edit did not reach $TEMPLATE"
+    cp "$SHOT/template.bak" "$TEMPLATE"
+  else
+    echo "  skip no templates in $VAULT/Templates"
+  fi
+
+  echo "== delete moves the note into the vault's .trash"
+  focus; search "$TITLE"; wtype -M ctrl -k BackSpace -m ctrl; sleep 2.5; shot 4-after-delete
+  [[ ! -e "$NOTE" && -e "$VAULT/.trash/$TITLE.md" ]] && pass "moved to .trash" || fail "note not in .trash"
 fi
 
-echo "== delete moves the note into the vault's .trash"
-focus; search "$TITLE"; wtype -M ctrl -k BackSpace -m ctrl; sleep 2.5; shot 4-after-delete
-[[ ! -e "$NOTE" && -e "$VAULT/.trash/$TITLE.md" ]] && pass "moved to .trash" || fail "note not in .trash"
-
-echo "== dev log"
-if grep -iE 'panic|Refused to|Content Security Policy|error' "$OUT/dev.log" | grep -v appindicator | grep -q .; then
-  fail "log has errors:"; grep -iE 'panic|Refused|Content Security|error' "$OUT/dev.log" | grep -v appindicator | head -5
+echo "== app log"
+if grep -iE 'panic|Refused to|Content Security Policy|error' "$LOG" | grep -v appindicator | grep -q .; then
+  fail "log has errors:"; grep -iE 'panic|Refused|Content Security|error' "$LOG" | grep -v appindicator | head -5
 else
   pass "no errors"
 fi
 
 echo
 if (( fails == 0 )); then
-  echo "PASS — look at $OUT/2-table-and-image.png: 'good' underlined, 'bad' plain, image visible."
+  if (( BIG )); then
+    echo "PASS ($SUB) — screenshots in $SHOT"
+  else
+    echo "PASS ($SUB) — look at $SHOT/2-table-and-image.png: 'good' underlined, 'bad' plain, image visible."
+  fi
 else
-  echo "FAIL ($fails) — screenshots and dev.log in $OUT"; exit 1
+  echo "FAIL ($fails) — screenshots and dev.log in $SHOT"; exit 1
 fi

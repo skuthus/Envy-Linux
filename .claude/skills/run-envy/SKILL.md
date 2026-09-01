@@ -12,10 +12,17 @@ description: Launch and drive Envy (Tauri/WebKitGTK, Hyprland) to see a change w
 ./scripts/gui-smoke.sh         # launches the app, drives it, checks the vault, screenshots
 ```
 
+For the **full pre-ship gate** — the above plus perf, a real release build, and
+the smoke run again through the production CSP and a 19k-note vault — use
+`./scripts/ship-check.sh` instead (see the `ship-check` skill). This skill is
+for looking at a change while you work on it; ship-check is for deciding it is
+done.
+
 `gui-smoke.sh` refuses to run unless the Index is a folder whose path contains
 "Test Vault" (make one with `node scripts/gen-test-vault.mjs`, then Settings →
 Change Location). It prints PASS/FAIL and leaves screenshots + `dev.log` in
-`$XDG_RUNTIME_DIR/envy-smoke/`. Read `2-table-and-image.png`: the word "good"
+`$XDG_RUNTIME_DIR/envy-smoke/dev/` (one subdirectory per mode). Read
+`2-table-and-image.png`: the word "good"
 must be underlined, "bad" must be plain text, the image must show.
 
 ## Release binary
@@ -25,6 +32,9 @@ to load the Vite dev URL, and with no dev server up the navigation guard
 refuses it, so the window comes up blank. Build the real thing with
 `npm run tauri build -- --no-bundle` (about 40 s) and run
 `./target/release/envy-linux`. `./build.sh` is the same plus .deb/AppImage.
+`./scripts/gui-smoke.sh --release` drives that binary (and refuses if it is
+older than `src/` or `src-tauri/src/`); `--big-vault [path]` points the Index at
+a large vault for a paging pass and always restores it afterwards.
 The release build has its own localStorage origin, so settings such as list
 previews differ from the dev build until you set them there too.
 

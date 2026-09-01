@@ -30,6 +30,11 @@ envy-core = { path = "../crates/envy-core" }
 dirs = "5"
 chrono = "0.4"
 
+[dev-dependencies]
+# Only for the test that reads this file's own source and refuses a new command
+# that takes a raw `path: String` without review. Already in the lockfile.
+regex = "1"
+
 [target.'cfg(windows)'.dependencies]
 # The updater has a release channel only on Windows; see RELEASING.md.
 tauri-plugin-updater = "2"

@@ -18,7 +18,7 @@ packages `webkit2gtk-4.1 gtk3 libayatana-appindicator librsvg openssl`.
 ```bash
 npm install
 ./dev.sh                    # hot-reloading dev build
-./build.sh                  # release binary + .deb + AppImage under target/release/
+./build.sh                  # headless pre-ship gate, then binary + .deb + AppImage
 ./linux/install-desktop.sh  # ~/.local/share/applications/envy.desktop → the release binary
 ```
 

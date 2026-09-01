@@ -2319,26 +2319,32 @@ fn forget_kindle_history(state: State<AppState>) -> Result<(), String> {
 /// and each pop-out are covered by the same rule.
 fn navigation_guard<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
     tauri::plugin::Builder::new("envy-navigation-guard")
-        .on_navigation(|_webview, url| {
-            let host = url.host_str().unwrap_or("");
-            match url.scheme() {
-                // The bundled frontend: `tauri://localhost` on Linux, the
-                // `tauri.localhost` custom-protocol host elsewhere.
-                "tauri" => host == "localhost",
-                "http" | "https" => {
-                    host == "tauri.localhost"
-                        // `npm run tauri dev` serves from Vite — devUrl in
-                        // tauri.conf.json.
-                        || (cfg!(debug_assertions)
-                            && host == "localhost"
-                            && url.port() == Some(1420))
-                }
-                // WebKitGTK loads a blank page before the real one.
-                "about" => url.path() == "blank",
-                _ => false,
-            }
-        })
+        .on_navigation(|_webview, url| navigation_allowed(url))
         .build()
+}
+
+/// The whole of the rule above, as a plain function of the URL.
+///
+/// Lifted out of the closure so it can be tested without a webview: the cost
+/// of getting this wrong is every `#[tauri::command]` in this file reachable
+/// from a remote page, and a rule that can only be exercised by launching the
+/// app is a rule nobody exercises. `tauri::Url` is the `url` crate's type.
+fn navigation_allowed(url: &tauri::Url) -> bool {
+    let host = url.host_str().unwrap_or("");
+    match url.scheme() {
+        // The bundled frontend: `tauri://localhost` on Linux, the
+        // `tauri.localhost` custom-protocol host elsewhere.
+        "tauri" => host == "localhost",
+        "http" | "https" => {
+            host == "tauri.localhost"
+                // `npm run tauri dev` serves from Vite — devUrl in
+                // tauri.conf.json.
+                || (cfg!(debug_assertions) && host == "localhost" && url.port() == Some(1420))
+        }
+        // WebKitGTK loads a blank page before the real one.
+        "about" => url.path() == "blank",
+        _ => false,
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -2622,3 +2628,131 @@ no proprietary format. Open them in anything.
 Put a `-` in front of any of them to exclude instead. Separate terms with a
 comma to search for either rather than both.
 "#;
+
+
+#[cfg(test)]
+mod tests {
+    use super::navigation_allowed;
+
+    fn allows(raw: &str) -> bool {
+        navigation_allowed(&tauri::Url::parse(raw).expect("a parsable URL"))
+    }
+
+    /// The app's own pages, and the blank page WebKitGTK loads before them.
+    #[test]
+    fn the_apps_own_pages_are_allowed() {
+        assert!(allows("tauri://localhost/"));
+        assert!(allows("tauri://localhost/index.html"));
+        assert!(allows("http://tauri.localhost/index.html"));
+        assert!(allows("https://tauri.localhost/popout.html"));
+        assert!(allows("about:blank"));
+    }
+
+    /// A navigation that lands on a remote page keeps the IPC bridge, so the
+    /// page could call every command in this file. Nothing off-app may pass.
+    #[test]
+    fn everything_else_is_denied() {
+        assert!(!allows("https://example.com/"));
+        // `https:evil.com` is a valid special-scheme URL: it parses with
+        // evil.com as the *host*, not the path. A rule written against the
+        // string rather than the parsed host would wave it through.
+        assert!(!allows("https:evil.com"));
+        assert!(!allows("file:///etc/passwd"));
+        assert!(!allows("javascript:alert(1)"));
+        assert!(!allows("data:text/html,<script>alert(1)</script>"));
+        assert!(!allows("tauri://evil.localhost/"));
+        assert!(!allows("http://tauri.localhost.evil.com/"));
+        assert!(!allows("about:srcdoc"));
+    }
+
+    /// The Vite dev server is reachable in a dev build and nowhere else — a
+    /// shipped binary must not follow a plain `http://localhost` anywhere.
+    /// Written as an equality so it is the correct assertion in both profiles.
+    #[test]
+    fn the_dev_server_is_debug_only() {
+        assert_eq!(allows("http://localhost:1420/"), cfg!(debug_assertions));
+        // Never any other port, even in a dev build.
+        assert!(!allows("http://localhost:8080/"));
+        assert!(!allows("http://localhost/"));
+    }
+
+    /// Every command that takes a raw `path: String` from the frontend is on
+    /// this list, because each one needs its own containment check before it
+    /// touches the filesystem. A new command with a `path` argument fails this
+    /// test until somebody has looked at it and added it here deliberately.
+    const PATH_TAKING_COMMANDS: [&str; 6] = [
+        "read_template",
+        "save_template",
+        "copy_attachment",
+        "import_kindle_clippings",
+        "set_index_directory",
+        // Found by this test rather than remembered: its path is checked by
+        // having to match one `store.templates()` actually enumerated, so it
+        // can only ever name a file the store already knows about.
+        "create_note_from_template",
+    ];
+
+    /// The command names inside `tauri::generate_handler![...]`, one per entry,
+    /// with any `module::` qualifier and trailing comma stripped.
+    fn registered_commands(source: &str) -> Vec<String> {
+        let start = source
+            .find("generate_handler![")
+            .expect("the invoke handler list");
+        let body = &source[start + "generate_handler![".len()..];
+        let end = body.find(']').expect("the end of the handler list");
+        body[..end]
+            .split(',')
+            .map(|raw| raw.trim())
+            .filter(|raw| !raw.is_empty() && !raw.starts_with("//"))
+            .map(|raw| raw.rsplit("::").next().unwrap_or(raw).trim().to_string())
+            .collect()
+    }
+
+    /// The `#[tauri::command]` functions in this file that declare a
+    /// `path: String` parameter, by name.
+    fn commands_taking_a_path(source: &str) -> Vec<String> {
+        // Kept deliberately dumb: one regex over the whole file, matching a
+        // command attribute (with or without `(async)`), then the `fn name`,
+        // then that function's parameter list up to the first `)`. Robust to
+        // the argument list being wrapped across lines, which several are.
+        let re = regex::Regex::new(
+            r"#\[tauri::command(?:\([^)]*\))?\]\s*(?:pub\s+)?(?:async\s+)?fn\s+(\w+)\s*\(([^)]*)\)",
+        )
+        .expect("a valid pattern");
+        re.captures_iter(source)
+            .filter(|c| {
+                // The parameter named exactly `path` — `old_path`/`new_path`
+                // on rename_folder are sanitized folder names, not the raw
+                // filesystem paths this list is about.
+                c.get(2)
+                    .map(|args| {
+                        args.as_str()
+                            .split(',')
+                            .any(|a| a.split_whitespace().collect::<Vec<_>>().join(" ")
+                                == "path: String")
+                    })
+                    .unwrap_or(false)
+            })
+            .map(|c| c[1].to_string())
+            .collect()
+    }
+
+    #[test]
+    fn only_reviewed_commands_accept_a_raw_path() {
+        let source = include_str!("lib.rs");
+        let registered = registered_commands(source);
+        assert!(registered.len() > 40, "the handler list did not parse: {registered:?}");
+
+        for name in commands_taking_a_path(source) {
+            if !registered.contains(&name) {
+                continue; // not reachable from the frontend at all
+            }
+            assert!(
+                PATH_TAKING_COMMANDS.contains(&name.as_str()),
+                "command `{name}` takes a raw `path: String` from the frontend but is not \
+                 on the reviewed allowlist in this test. Give it a containment check \
+                 against the Index, then add it to PATH_TAKING_COMMANDS."
+            );
+        }
+    }
+}
