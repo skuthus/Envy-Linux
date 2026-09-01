@@ -59,10 +59,9 @@ export interface OmarchyAppearance {
 export const enviousDark: EnvyTheme = {
   fontFamily: SYSTEM_UI_FONT,
   monoFamily: MONO_FONT,
-  // 15px rather than the Mac's 13: Segoe UI has a smaller x-height than SF Pro
-  // Text, so matching the number would read noticeably smaller than Envy does
-  // on a Mac.
-  fontSize: '15px',
+  // Sized to match the terminal's editor text on Linux rather than the Mac's
+  // Segoe-tuned 15px.
+  fontSize: '12px',
   text: 'rgba(255, 255, 255, 0.847)',
   background: 'rgb(29, 30, 31)',
   marker: 'rgba(255, 255, 255, 0.247)',
@@ -89,7 +88,7 @@ export const enviousDark: EnvyTheme = {
 export const enviousLight: EnvyTheme = {
   fontFamily: SYSTEM_UI_FONT,
   monoFamily: MONO_FONT,
-  fontSize: '15px',
+  fontSize: '12px',
   text: 'rgba(0, 0, 0, 0.85)',
   background: 'rgb(250, 250, 248)',
   marker: 'rgba(0, 0, 0, 0.30)',
@@ -204,7 +203,7 @@ export function omarchyToEnvy(colors: Record<string, string>, fontFamily: string
     {
       fontFamily,
       monoFamily: fontFamily,
-      fontSize: '15px',
+      fontSize: '12px',
       text: foreground,
       background,
       marker: muted,

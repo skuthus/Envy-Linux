@@ -19,10 +19,9 @@
   --envy-focus-thickness: 1px;
   --envy-font-family: ui-monospace, monospace;
   --envy-mono-family: ui-monospace, monospace;
-  /* MultiplanetaryMono only ships Regular and Bold. 500 still resolves to
-     Regular; the hairline stroke is the actual "a bit heavier" step. */
-  --envy-font-weight: 500;
-  --envy-font-embolden: 0.3px;
+  /* Regular weight, matching the terminal — no synthetic emboldening. */
+  --envy-font-weight: 400;
+  --envy-font-embolden: 0;
 }
 
 /* --- Scrollbars ------------------------------------------------------------
@@ -125,7 +124,7 @@ body.popout-window {
   position: absolute;
   inset: 0;
   padding: 4px 0;
-  font-size: calc(15px * var(--envy-ui-scale));
+  font-size: var(--envy-font-size);
   line-height: normal;
   color: var(--envy-marker);
   pointer-events: none;
@@ -146,7 +145,7 @@ body.popout-window {
 #search {
   flex: 1;
   font: inherit;
-  font-size: 15px;
+  font-size: var(--envy-font-size);
   padding: 4px 0;
   border-radius: 0;
   border: none;
@@ -197,23 +196,22 @@ body.popout-window {
    starts at 0.38 of the height so the note has the room. Horizontal is the
    alternate (Ctrl+Shift+L), a sidebar list beside the note. */
 
-/* Chrome scales with the Interface Text Size setting. The editor is excluded —
-   it has its own zoom.
-
-   These are the only place a row's font size is set. They used to be declared
-   here *and* again, unscaled, in the row rules further down; equal specificity
-   meant the later fixed values won and the setting did nothing to the list at
-   all. The sizes are the Mac's: NoteRow multiplies 13 for the title and 11 for
-   the preview and date by interfaceFontScale. */
+/* One text size for the whole interface — search, list, title bar, footer —
+   tied to the same `--envy-font-size` the editor uses, so the app reads at a
+   single consistent size like a TUI rather than each section picking its own.
+   Only markdown headings (`.envy-h*`, in em) step away from it; bold is a
+   weight, not a size. Previously each of these set its own px value (title 13,
+   preview/date 11, search 15) scaled by the Interface Text Size setting, which
+   left them all different from each other and from the editor. */
 #search-bar,
 #list-pane,
 #note-title-bar,
 #footer,
-#interlinks { font-size: calc(1rem * var(--envy-ui-scale)); }
-.row-title { font-size: calc(13px * var(--envy-ui-scale)); }
+#interlinks,
+.row-title,
 .row-date,
-.row-meta { font-size: calc(11px * var(--envy-ui-scale)); }
-#search { font-size: calc(15px * var(--envy-ui-scale)); }
+.row-meta,
+#search { font-size: var(--envy-font-size); }
 
 /* --- Focus highlight -------------------------------------------------------
    A border around whichever pane has keyboard focus. With "fade out" on it
@@ -338,10 +336,8 @@ body.fade-focus #editor-pane:focus-within {
   align-items: center;
   gap: 3px;
   font: inherit;
-  /* Scaled like the rows beneath it — the Mac's sortHeaderButton is
-     `11 * interfaceFontScale`, and a fixed header above scaled rows reads as a
-     mistake. */
-  font-size: calc(11px * var(--envy-ui-scale));
+  /* The same size as the rows beneath it — one interface size throughout. */
+  font-size: var(--envy-font-size);
   font-weight: 600;
   padding: 0;
   border: none;
@@ -687,7 +683,6 @@ body.bold-file-list .row-date { font-weight: 700; }
   flex-wrap: wrap;
   gap: 6px 12px;
   padding: 6px 28px;
-  font-size: 13px;
   font-weight: 600;
   background: var(--envy-title-bar-background);
   border-bottom: 1px solid color-mix(in srgb, var(--envy-marker) 30%, transparent);
@@ -861,7 +856,6 @@ body.popout-window {
   gap: 0.75em;
   flex: none;
   padding: 3px 12px;
-  font-size: 11px;
   font-variant-numeric: tabular-nums;
   color: var(--envy-blockquote);
   background: color-mix(in srgb, var(--envy-marker) 10%, var(--envy-title-bar-background));
@@ -906,7 +900,6 @@ body.popout-window {
 
 #interlinks-toggle {
   font: inherit;
-  font-size: 11px;
   padding: 2px 6px;
   margin-left: -6px;
   border: none;
@@ -1603,7 +1596,6 @@ body.popout-window {
   min-width: 0;
 }
 .title-tag {
-  font-size: 11px;
   cursor: default;
 }
 
