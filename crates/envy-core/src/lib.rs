@@ -17,6 +17,7 @@
 pub mod due;
 pub mod filename;
 pub mod interlinks;
+pub mod kindle;
 pub mod note;
 pub mod search;
 pub mod store;
