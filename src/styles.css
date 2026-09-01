@@ -542,14 +542,14 @@ body.bold-file-list .row-date { font-weight: 700; }
 .row-folder-dot {
   cursor: pointer;
 }
-/* Flex centring lands a marker on the line-box centre, but a capital-led title
-   reads as centred on its cap height — which sits ~1px lower because this
-   font's ascent (14) far exceeds its descent (3). Nudge the round dots down to
-   that optical centre; in em so it tracks the interface scale. Emoji markers
-   (pins) are left alone — they carry their own baseline. */
+/* Flex centring lands a marker on the line-box centre. An earlier build nudged
+   the round dots ~1px down toward a capital-led title's cap-height centre, a
+   correction tuned to the Envious font's ascent/descent. With the Omarchy
+   monospace fonts the line-box centre already sits on the cap centre, so the
+   nudge left the dots visibly low; measured on screen, no offset is right. */
 .row-folder-dot,
 .inbox-dot {
-  transform: translateY(0.077em);
+  transform: none;
 }
 .row-folder-dot.marker-leading { margin-right: 6px; }
 .row-folder-dot.marker-trailing { margin-right: 0; margin-left: 6px; }
