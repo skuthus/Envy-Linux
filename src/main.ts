@@ -1592,6 +1592,16 @@ function buildFolderIndicator(subfolder: string): HTMLElement | null {
 const TITLE_SCROLL_PX_PER_S = 40
 const TITLE_SCROLL_DELAY_MS = 200
 
+/// How many pixels of a title are hidden, or 0 when it fits. `scrollWidth` is
+/// rounded up and `clientWidth` rounded down, so a title whose real width is
+/// fractional reads as overflowing by a pixel even though every character is
+/// visible — and the trailing fade then ate its last letters on every other
+/// row. Measure against the unrounded box instead.
+function titleOverflow(el: HTMLElement): number {
+  const overflow = el.scrollWidth - el.getBoundingClientRect().width
+  return overflow > 1 ? overflow : 0
+}
+
 /// Marks a list title that doesn't fit (`overflows`, which draws the trailing
 /// fade) and scrolls it on hover to reveal the rest, resetting on leave.
 ///
@@ -1601,13 +1611,13 @@ const TITLE_SCROLL_DELAY_MS = 200
 /// hover (a Mac 1.8.8 fix).
 function hoverScrollTitle(titleText: HTMLElement) {
   requestAnimationFrame(() => {
-    if (titleText.isConnected && titleText.scrollWidth > titleText.clientWidth) {
+    if (titleText.isConnected && titleOverflow(titleText) > 0) {
       titleText.classList.add('overflows')
     }
   })
   let frame: number | undefined
   titleText.addEventListener('mouseenter', () => {
-    const overflow = titleText.scrollWidth - titleText.clientWidth
+    const overflow = titleOverflow(titleText)
     if (overflow <= 0) return
     // A hair past the exact overflow, so the last character clears the clipped
     // edge rather than stopping flush against it.
