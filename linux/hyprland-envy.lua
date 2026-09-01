@@ -10,7 +10,9 @@
 
 local envy_summon = os.getenv("HOME") .. "/Work/Envy-Linux/linux/envy-summon.sh"
 
-o.window("envy-linux", {
+-- Match on class AND title: pop-out notes and the pinned popover share the
+-- `envy-linux` class, and those should stay ordinary windows.
+o.window({ class = "envy-linux", title = "^Envy$" }, {
   float = true,
   size = { "(monitor_w*0.62)", "(monitor_h*0.72)" },
   center = true,

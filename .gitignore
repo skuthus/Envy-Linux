@@ -40,3 +40,6 @@ envy-updater-key.pub
 *.njsproj
 *.sln
 *.sw?
+
+# Agent worktrees (Claude Code), never project content.
+.claude/worktrees/
