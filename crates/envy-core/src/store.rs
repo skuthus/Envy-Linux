@@ -651,7 +651,10 @@ impl NoteStore {
                 trashed.push((note.clone(), destination));
             }
         }
-        let deleted_ids: Vec<&str> = notes_to_delete.iter().map(|n| n.id()).collect();
+        // Only the notes whose move actually succeeded leave the list — a note
+        // whose trash move failed is still sitting on disk, and dropping it
+        // from the UI anyway would make it vanish until the next full reload.
+        let deleted_ids: Vec<&str> = trashed.iter().map(|(n, _)| n.id()).collect();
         self.notes.retain(|n| !deleted_ids.contains(&n.id()));
         self.last_deleted = trashed;
         self.refresh_trashed();
@@ -2059,6 +2062,26 @@ mod tests {
         assert_eq!(titles(&store), vec!["C"]);
         store.restore_last_deleted();
         assert_eq!(titles(&store), vec!["A", "B", "C"]);
+    }
+
+    /// Only notes whose trash move succeeded leave the list. A note whose file
+    /// is already gone (or whose rename fails) stays listed rather than
+    /// silently vanishing until the next full reload — the Mac's `delete(_:)`
+    /// retains by the trashed set for the same reason.
+    #[test]
+    fn delete_keeps_a_note_whose_move_failed() {
+        let (dir, mut store) = store_with(&[("A.md", "x"), ("B.md", "y")]);
+        let doomed: Vec<Note> = store.notes().to_vec();
+        // A's file disappears under us before the delete runs.
+        fs::remove_file(dir.path().join("A.md")).unwrap();
+
+        store.delete(&doomed);
+        assert_eq!(titles(&store), vec!["A"]);
+        assert!(dir.path().join(".trash/B.md").exists());
+        assert!(!dir.path().join(".trash/A.md").exists());
+        // And undo only knows about what was actually trashed.
+        assert_eq!(store.restore_last_deleted().len(), 1);
+        assert_eq!(titles(&store), vec!["A", "B"]);
     }
 
     /// A note whose original location has been reused is skipped rather than
