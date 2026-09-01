@@ -19,8 +19,8 @@
 /// backtick means "this is literal", and proportional code is harder to read
 /// for exactly the reasons monospace exists.
 export const SYSTEM_UI_FONT =
-  "'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, sans-serif"
-export const MONO_FONT = "'Cascadia Code', 'Consolas', ui-monospace, monospace"
+  "system-ui, sans-serif"
+export const MONO_FONT = "ui-monospace, monospace"
 
 export interface EnvyTheme {
   /// Font is part of the theme on the Mac (`Theme.fontName` / `fontSize`) and
