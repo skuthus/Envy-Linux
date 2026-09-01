@@ -1978,10 +1978,20 @@ body.popout-window {
    last line and stops, and that overhang is what marks the end of the
    embedded note now that there's no box around it. */
 .envy-embed {
-  margin: 2px 0 6px;
-  padding-left: 14px;
-  padding-bottom: 10px;
-  border-left: 2px solid var(--envy-marker);
+  /* Padding, not margin — see the note above .envy-md-table-wrap. The 2px
+     top and 6px bottom used to be margin; the rule is drawn by ::before so
+     it still spans exactly the content plus the 10px overhang. */
+  position: relative;
+  padding: 2px 0 16px 14px;
+}
+.envy-embed::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 2px;
+  bottom: 6px;
+  width: 2px;
+  background: var(--envy-marker);
 }
 .envy-embed .cm-editor { background: transparent; }
 .envy-embed .cm-scroller { padding: 0; }
@@ -2000,7 +2010,8 @@ body.popout-window {
 /* An inline image attachment. The picture shows at its natural size but never
    wider than the text column; clicking it opens the file in the default app. */
 .envy-image-embed {
-  margin: 2px 0 6px;
+  /* Padding, not margin — see the note above .envy-md-table-wrap. */
+  padding: 2px 0 6px;
 }
 .envy-image-embed img {
   display: block;
@@ -2168,11 +2179,15 @@ body.popout-window {
    GFM pipe tables, rendered as HTML when the cursor is outside them.
    Grid, padding, header weight, and cell chrome match the Omarchy manual
    (`omarchy.org/manual/ai/`): 1px borders, no fill, no zebra, shrink-to-fit. */
+/* Block widgets must not carry vertical margins: CodeMirror measures a block's
+   height from its border box, so a margin is space the height map does not
+   know about, and every click below the widget lands one line too low. Padding
+   is inside the measured box, so the spacing survives and clicks map right. */
 .envy-md-table-wrap {
   display: block;
   width: fit-content;
   max-width: 100%;
-  margin: 1em 0;
+  padding: 1em 0;
 }
 /* The scroller is inside the wrap rather than being it. `overflow-x: auto`
    forces `overflow-y` to auto as well, which would clip the toolbar; keeping

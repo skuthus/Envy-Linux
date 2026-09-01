@@ -61,10 +61,13 @@ previews differ from the dev build until you set them there too.
   the watcher reloads it within ~2s.
 - Stop: `pkill -x envy-linux`, then kill the `npm run tauri dev` job (it is the parent of the CLI, vite and cargo).
 
-## Not automatable here
+## Clicking
 
-There is no Wayland click tool installed (no ydotool/wlrctl), so anything
-behind a mouse click or the tray menu needs the owner: **pop-out windows**
-(right-click a note → Pop Out) and the **pinned-note window** (Ctrl+Alt+T
-pins; the tray menu shows it). Both share the main window's navigation guard
-and capabilities, so ask for a manual check when those change.
+`./scripts/click.sh X Y` clicks at logical screen coordinates (right-click:
+`click.sh X Y 0xC1`). It needs the ydotool user service running
+(`systemctl --user is-active ydotool`; the owner set it up on Sep 1 2026). To
+aim: screenshot the window with grim, note the pixel in the PNG, divide by the
+monitor scale (2 on this machine), add the window's `at` offset. Verify a
+click landed by typing a marker with wtype and reading the note file. Widgets
+that need a mouse — pop-out (right-click a note → Pop Out), the pinned window,
+the sort header, table toolbar, URL-pill menu — are all reachable this way.
