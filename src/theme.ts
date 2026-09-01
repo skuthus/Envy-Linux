@@ -36,6 +36,11 @@ export interface EnvyTheme {
   highlight: string
   /// Ink for text sitting on `highlight`.
   highlightText: string
+  /// A vivid accent for a flag/count that should stand out from the ordinary
+  /// link/due colours — the inbox badge. From the theme's magenta, which is
+  /// where several Omarchy themes keep their brightest warm colour (a gold, in
+  /// the monochrome-blue themes that make everything else blue).
+  flag: string
   /// The note list's selection highlight.
   selection: string
   /// The editor's own text-selection background. A separate token from
@@ -74,6 +79,7 @@ export const enviousDark: EnvyTheme = {
   tagBackground: 'rgba(48, 209, 88, 0.153)',
   highlight: 'rgb(255, 188, 0)',
   highlightText: 'rgb(32, 29, 24)',
+  flag: 'rgb(255, 188, 0)',
   selection: 'rgb(90, 128, 255)',
   selectedText: 'rgb(255, 75, 57)',
   focusHighlight: 'rgba(152, 168, 217, 0.25)',
@@ -101,6 +107,7 @@ export const enviousLight: EnvyTheme = {
   tagBackground: 'rgba(23, 132, 58, 0.13)',
   highlight: 'rgba(255, 188, 0, 0.55)',
   highlightText: 'rgb(32, 29, 24)',
+  flag: 'rgb(176, 124, 0)',
   selection: 'rgba(27, 79, 216, 0.18)',
   selectedText: 'rgba(212, 42, 28, 0.22)',
   focusHighlight: 'rgba(96, 122, 176, 0.30)',
@@ -216,6 +223,10 @@ export function omarchyToEnvy(colors: Record<string, string>, fontFamily: string
       tagBackground: hexToRgba(green.startsWith('#') ? green : '#9ece6a', 0.16),
       highlight: yellow,
       highlightText: darker,
+      // The theme's most vivid warm accent. Several Omarchy themes keep it under
+      // `magenta` (a gold in the monochrome-blue themes, a real magenta/pink in
+      // colourful ones) — a genuine standout next to the blue link/due colours.
+      flag: pick(colors, ['bright_magenta', 'magenta'], yellow),
       selection: light ? hexToRgba(accent.startsWith('#') ? accent : '#7aa2f7', 0.18) : accent,
       selectedText: light
         ? hexToRgba(red.startsWith('#') ? red : '#f7768e', 0.22)

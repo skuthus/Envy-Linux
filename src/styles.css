@@ -165,35 +165,44 @@ body.popout-window {
 }
 #search::placeholder { color: var(--envy-marker); }
 
-/* The fleeting-note count, left of the field. A circle matching the field's
-   own height rather than a fixed size, so it stays a circle rather than
-   drifting into an oval if the field's padding changes. */
+/* The fleeting-note count, left of the field. A bracketed count — `[165]` in
+   amber with dim brackets — rather than a filled badge, so it reads like the
+   rest of the flat, monospace chrome instead of a GUI pill. The amber still
+   means "waiting". */
 #inbox-badge {
   flex: none;
-  width: 30px;
-  height: 30px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: inline-flex;
+  align-items: baseline;
+  padding: 0 2px;
   font: inherit;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
+  border: none;
   border-radius: 0;
-  border: 1px solid color-mix(in srgb, var(--envy-marker) 55%, transparent);
-  background: color-mix(in srgb, var(--envy-due-soon) 18%, transparent);
-  color: var(--envy-due-soon);
+  background: none;
+  color: var(--envy-flag);
   cursor: default;
 }
-#inbox-badge:hover { background: color-mix(in srgb, var(--envy-due-soon) 30%, transparent); }
+#inbox-badge::before {
+  content: '[';
+}
+#inbox-badge::after {
+  content: ']';
+}
+#inbox-badge::before,
+#inbox-badge::after {
+  color: var(--envy-marker);
+}
+#inbox-badge:hover::before,
+#inbox-badge:hover::after {
+  color: var(--envy-text);
+}
 #inbox-badge.hidden { display: none; }
-/* On the way out it is a chevron, not a count — the same control doing the
-   opposite job, so it drops the amber that means "waiting". */
+/* In the inbox view it is a back chevron, not a count — the same control doing
+   the opposite job, so it drops the amber that means "waiting". */
 #inbox-badge.leaving {
-  background: color-mix(in srgb, var(--envy-marker) 15%, transparent);
   color: var(--envy-blockquote);
-  font-size: 16px;
-  line-height: 1;
 }
 
 /* Vertical is the primary layout and the default — list on top, note beneath,
