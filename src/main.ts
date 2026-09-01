@@ -1607,22 +1607,25 @@ function renderRowWindow(force = false) {
   // strip's, and with the height-correction re-render below).
   scheduleOverflowMeasure()
 
-  // Correct the assumed height from a real row. The second pass measures the
-  // same height it just set, so this settles after one correction rather than
-  // recursing — `force` is dropped so the guard above stops it if it somehow
-  // doesn't.
-  //
-  // Measured fractionally rather than with `offsetHeight`, which rounds to whole
-  // pixels. A row that is really 19.4px tall would be recorded as 19, and every
-  // row would then be placed 0.4px above where the one before it ends — a hairline
-  // gap between rows that widens the further down the list you scroll.
-  const measured = rows[0]?.getBoundingClientRect().height
-  if (measured && Math.abs(measured - rowHeight) > 0.01) {
-    rowHeight = measured
-    listSizer.style.height = `${(results.length - stickyCount) * rowHeight}px`
-    renderedFrom = -1
-    renderedTo = -1
-    renderRowWindow()
+  // Correct the assumed row height from a real row — but ONLY on a forced
+  // (content) render, never on a scroll render. The height depends on the font
+  // and density, not on how far the list is scrolled, so re-measuring while
+  // scrolling was pointless. Worse, `rows[0]` is a different note at every
+  // scroll offset, and re-measuring it re-entrantly could land two notes of
+  // slightly different heights in alternation — `rowHeight` would oscillate and
+  // this function recursed forever, freezing the app. Measuring only on force,
+  // and re-rendering the corrected window with force off, makes it settle in one
+  // step and never loop. Measured fractionally (not `offsetHeight`, which rounds)
+  // so rows don't drift a fraction of a pixel apart down a long list.
+  if (force) {
+    const measured = rows[0]?.getBoundingClientRect().height
+    if (measured && Math.abs(measured - rowHeight) > 0.5) {
+      rowHeight = measured
+      listSizer.style.height = `${(results.length - stickyCount) * rowHeight}px`
+      renderedFrom = -1
+      renderedTo = -1
+      renderRowWindow(false)
+    }
   }
 }
 
