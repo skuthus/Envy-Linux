@@ -39,6 +39,7 @@ import {
 import { editorCompletion, completionSources, ghostRemainderForTest } from './completion'
 import { listEditing, listContinuation, isListLine, renumberEdits } from './lists'
 import { tableEditing } from './tables'
+import { installSmoothScroll, cancelSmoothScroll } from './smooth-scroll'
 import { applyStoredAppearance, enviousDark, initAppearance } from './theme'
 import { createMiniNoteEditor, type MiniNoteEditor } from './mininote'
 import { renderReference, type ReferenceTab } from './reference'
@@ -776,13 +777,13 @@ function jumpToRange(range: { from: number; to: number }) {
 }
 
 // --- Layout -----------------------------------------------------------------
-// Vertical (list above, note below) is the default and the layout the app is
-// really built around; horizontal is the alternate. Mirrors the Mac's
-// `layoutMode` defaulting to `.vertical` with a 0.6 top fraction.
+// Vertical (list above, note below) is how Envy-Omarchy opens: a stacked
+// Notational Velocity pane, not a sidebar. Horizontal is still available via
+// the layout shortcut for the session; the next launch is vertical again.
 
 type LayoutMode = 'vertical' | 'horizontal'
 
-const DEFAULT_TOP_FRACTION = 0.6
+const DEFAULT_TOP_FRACTION = 0.38
 const DEFAULT_LIST_WIDTH = 280
 const MIN_LIST_WIDTH = 220
 
@@ -792,8 +793,12 @@ function storedNumber(key: string, fallback: number): number {
   return Number.isFinite(n) ? n : fallback
 }
 
-let layoutMode: LayoutMode =
-  (localStorage.getItem('layoutMode') as LayoutMode | null) ?? 'vertical'
+let layoutMode: LayoutMode = 'vertical'
+// Drop the old 0.6 default once so the stacked list isn't huge on first open.
+if (localStorage.getItem('omarchyStackedLayout') !== '1') {
+  localStorage.removeItem('verticalSplitFraction')
+  localStorage.setItem('omarchyStackedLayout', '1')
+}
 
 function applyLayout() {
   panesEl.className = layoutMode
@@ -1413,7 +1418,7 @@ listSizer.id = 'list-sizer'
 /// track all three settings, it's measured from a real rendered row and
 /// corrected whenever it turns out to have changed.
 let rowHeight = 24
-const ROW_OVERSCAN = 6
+const ROW_OVERSCAN = 12
 
 /// The window currently in the DOM, so scrolling can skip the rebuild whenever
 /// the same rows are still the right ones.
@@ -1546,9 +1551,10 @@ function scrollHighlightIntoView() {
   if (highlighted < stickyCount) return
   const top = (highlighted - stickyCount) * rowHeight
   const viewport = listViewport()
-  if (top < listEl.scrollTop) listEl.scrollTop = top
-  else if (top + rowHeight > listEl.scrollTop + viewport) {
-    listEl.scrollTop = top + rowHeight - viewport
+  if (top < listEl.scrollTop || top + rowHeight > listEl.scrollTop + viewport) {
+    cancelSmoothScroll(listEl)
+    if (top < listEl.scrollTop) listEl.scrollTop = top
+    else listEl.scrollTop = top + rowHeight - viewport
   }
 }
 
@@ -4566,6 +4572,7 @@ try {
 }
 
 async function boot() {
+  installSmoothScroll()
   await initAppearance(() => {
     applyZoom()
     void document.fonts.ready.then(() => syncDateColumnWidth())

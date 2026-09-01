@@ -28,6 +28,7 @@ import {
   type CompletionSources,
 } from './completion'
 import { enviousDark, initAppearance } from './theme'
+import { installSmoothScroll } from './smooth-scroll'
 
 // This window is where the silent-failure pattern first bit — see `hide()`
 // below. Its own entry point, so it needs its own handler; the main window's
@@ -35,6 +36,7 @@ import { enviousDark, initAppearance } from './theme'
 window.addEventListener('unhandledrejection', (e) => {
   console.error('unhandled rejection — something failed silently:', e.reason)
 })
+installSmoothScroll()
 
 interface NoteDto {
   id: string

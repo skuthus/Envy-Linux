@@ -28,12 +28,14 @@ import {
   type CompletionSources,
 } from './completion'
 import { initAppearance } from './theme'
+import { installSmoothScroll } from './smooth-scroll'
 
 // Its own entry point, so it needs its own last-resort handler — the main
 // window's doesn't reach here.
 window.addEventListener('unhandledrejection', (e) => {
   console.error('pop-out failed silently:', e.reason)
 })
+installSmoothScroll()
 
 interface NoteDto {
   id: string

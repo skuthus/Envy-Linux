@@ -14,7 +14,8 @@ local envy_summon = os.getenv("HOME") .. "/Work/envy-omarchy/Envy-Linux/linux/en
 -- `envy-linux` class, and those should stay ordinary windows.
 o.window({ class = "envy-linux", title = "^Envy$" }, {
   float = true,
-  size = { "(monitor_w*0.62)", "(monitor_h*0.72)" },
+  -- Narrow stacked column — list above the note, not a square tile.
+  size = { "(monitor_w*0.23)", "(monitor_h*0.78)" },
   center = true,
   workspace = "special:envy silent",
 })

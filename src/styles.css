@@ -182,10 +182,9 @@ body.popout-window {
 }
 
 /* Vertical is the primary layout and the default — list on top, note beneath,
-   the Notational Velocity arrangement Envy is built around. `layoutMode`
-   defaults to `.vertical` on the Mac and the split starts at 0.6 of the
-   height. Horizontal is the alternate (Ctrl+Shift+L), a sidebar list beside
-   the note. */
+   the Notational Velocity arrangement Envy-Omarchy opens with. The split
+   starts at 0.38 of the height so the note has the room. Horizontal is the
+   alternate (Ctrl+Shift+L), a sidebar list beside the note. */
 
 /* Chrome scales with the Interface Text Size setting. The editor is excluded —
    it has its own zoom.
@@ -241,7 +240,7 @@ body.fade-focus #editor-pane:focus-within {
    currently overflows. Without it the rows gain 10px the moment a search
    narrows the results enough to remove the scrollbar, and the columns shift
    out from under their headings as you type. */
-#list { flex: 1; min-height: 0; overflow-y: auto; scrollbar-gutter: stable; }
+#list { flex: 1; min-height: 0; overflow-y: auto; scrollbar-gutter: stable; will-change: scroll-position; }
 
 /* --- Sticky pinned strip ---------------------------------------------------
    "Keep pinned notes visible while scrolling": the leading pinned rows lifted
@@ -260,7 +259,7 @@ body.fade-focus #editor-pane:focus-within {
 /* The list pane is the sized one in both orientations; the editor takes the
    rest. Sizing the same element either way keeps one persisted fraction
    meaningful per orientation rather than translating between them. */
-#panes.vertical > #list-pane { height: 60%; flex: none; }
+#panes.vertical > #list-pane { height: 38%; flex: none; }
 #panes.horizontal > #list-pane { width: 280px; flex: none; min-width: 220px; }
 
 /* --- List columns ----------------------------------------------------------
@@ -1657,6 +1656,8 @@ body.popout-window {
   padding: 12px 16px 40vh;
   /* Long fenced lines scroll inside their panel, not the whole note. */
   overflow-x: hidden;
+  overflow-y: auto;
+  will-change: scroll-position;
 }
 /* Real Bold is already heavier; the Regular hairline would fatten it twice. */
 .envy-bold, .envy-h1, .envy-h2 {

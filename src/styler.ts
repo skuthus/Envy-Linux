@@ -1467,21 +1467,6 @@ class FenceWidget extends WidgetType {
       view.dispatch({ selection: { anchor: this.block.bodyFrom }, scrollIntoView: true })
       view.focus()
     }
-    wrap.addEventListener(
-      'wheel',
-      (e) => {
-        const dx = e.shiftKey && e.deltaX === 0 ? e.deltaY : e.deltaX
-        if (dx === 0) return
-        const max = wrap.scrollWidth - wrap.clientWidth
-        if (max <= 0) return
-        const next = Math.min(max, Math.max(0, wrap.scrollLeft + dx))
-        if (next === wrap.scrollLeft) return
-        wrap.scrollLeft = next
-        e.preventDefault()
-        e.stopPropagation()
-      },
-      { passive: false },
-    )
     return wrap
   }
   destroy(dom: HTMLElement) {
