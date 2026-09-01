@@ -1516,6 +1516,98 @@ body.popout-window {
 }
 #prompt-ok:hover { background: color-mix(in srgb, var(--envy-link) 28%, transparent); }
 
+/* The emoji picker: the reference tab's shortcode grid inside a prompt-shaped
+   card, for choosing a URL pill's domain emoji. Built in JS, so it carries no
+   ids — the classes are the whole contract. */
+.emoji-picker {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--envy-background) 45%, transparent);
+  z-index: 30;
+}
+.emoji-picker-panel {
+  width: min(520px, 92vw);
+  padding: 14px 16px 12px;
+  border-radius: 0;
+  background: var(--envy-title-bar-background);
+  border: 1px solid var(--envy-link);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.emoji-picker-title {
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--envy-text);
+}
+.emoji-picker-search { margin: 0; }
+/* The grid scrolls inside the card; the page never grows a sideways scrollbar
+   because the cells wrap instead of running off the edge. */
+.emoji-picker-scroll {
+  max-height: 60vh;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.emoji-picker-scroll .emoji-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+.emoji-picker-scroll .emoji-cell { cursor: pointer; }
+.emoji-picker-scroll .emoji-cell.selected {
+  background: color-mix(in srgb, var(--envy-link) 24%, transparent);
+}
+.emoji-picker-scroll .emoji-grid:focus { outline: none; }
+.emoji-picker-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.emoji-picker-any {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--envy-blockquote);
+}
+.emoji-picker-paste {
+  font: inherit;
+  font-size: 15px;
+  width: 4em;
+  text-align: center;
+  padding: 5px 6px;
+  border-radius: var(--envy-radius);
+  border: 1px solid color-mix(in srgb, var(--envy-marker) 55%, transparent);
+  background: var(--envy-background);
+  color: var(--envy-text);
+}
+.emoji-picker-paste:focus {
+  outline: none;
+  border-color: var(--envy-link);
+}
+.emoji-picker-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.emoji-picker-buttons button {
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 14px;
+  border-radius: 0;
+  border: 1px solid color-mix(in srgb, var(--envy-marker) 55%, transparent);
+  background: transparent;
+  color: var(--envy-text);
+  cursor: default;
+}
+.emoji-picker-buttons button:hover { background: color-mix(in srgb, var(--envy-marker) 20%, transparent); }
+.emoji-picker-use {
+  border-color: color-mix(in srgb, var(--envy-link) 70%, transparent);
+  background: color-mix(in srgb, var(--envy-link) 16%, transparent);
+}
+.emoji-picker-use:hover { background: color-mix(in srgb, var(--envy-link) 28%, transparent); }
+
 /* Insert Image picker: a grid of thumbnails over the usual dim backdrop. */
 #image-picker {
   position: fixed;

@@ -11,6 +11,7 @@ import { openContextMenu, type MenuItemSpec } from './context-menu'
 import { textPrompt, confirmModal, alertModal, setPromptFocusReturn, isDialogOpen } from './prompt-modal'
 import { openImageMenu, renameAttachmentFlow, insertImageReference } from './image-menu'
 import { openImagePicker } from './image-picker'
+import { pickEmoji } from './emoji-picker'
 import {
   embedHost,
   envyStyler,
@@ -1120,16 +1121,11 @@ editorEl.addEventListener('contextmenu', (e) => {
   items.push({
     label: 'Other…',
     run: async () => {
-      // macOS can open the Character Viewer and read the choice back. Windows
-      // has no equivalent an app can invoke, so this asks for the character
-      // instead — Win+. opens the system emoji panel inside the field, which
-      // is the same gesture, just started by the person rather than the app.
-      const picked = await textPrompt(`Emoji for ${domain} — press Win+. to pick one`, current ?? '')
+      // The picker is in-app, so choosing an emoji is the same gesture on every
+      // platform rather than whatever panel the desktop happens to provide.
+      const picked = await pickEmoji({ title: `Emoji for ${domain}`, current })
       if (picked === null) return
-      // One character. The picker can leave a variation selector behind, and
-      // an emoji is one glyph however many code units it takes.
-      const first = [...picked.trim()][0] ?? null
-      setDomainEmoji(domain, first)
+      setDomainEmoji(domain, picked)
     },
   })
   if (current) {

@@ -22,6 +22,13 @@ export function setPromptFocusReturn(fn: () => void) {
   focusReturn = fn
 }
 
+/// The same focus return, for the other in-app modals that take focus off the
+/// window's main surface — they should land focus back where the prompt does
+/// rather than each guessing at it.
+export function returnFocusFromDialog() {
+  focusReturn()
+}
+
 /// Whether a dialog is currently up — for callers that suppress their own
 /// keyboard handling while the modal owns the screen.
 export function isDialogOpen(): boolean {

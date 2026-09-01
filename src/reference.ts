@@ -5,7 +5,7 @@
 //! content, one way in, and nothing permanently occupying the window.
 
 import markupGroups from './markup-help.json'
-import { EMOJI_SHORTCODES } from './emoji'
+import { buildEmojiGrid } from './emoji-grid'
 // The application icon itself, not a copy or a redrawing of it. About is where
 // someone looks to confirm what they are running, so showing anything other
 // than the real mark is the one place it actually matters.
@@ -140,26 +140,11 @@ function renderEmoji(): HTMLElement {
   search.placeholder = 'Filter shortcodes'
   root.append(search)
 
-  const grid = el('div', 'emoji-grid')
-  const entries = Object.entries(EMOJI_SHORTCODES)
-  const draw = (filter: string) => {
-    const needle = filter.trim().toLowerCase()
-    const matches = needle ? entries.filter(([code]) => code.includes(needle)) : entries
-    grid.replaceChildren(
-      ...(matches.length === 0
-        ? [el('div', 'reference-desc', `No shortcodes match “${filter}”.`)]
-        : matches.map(([code, emoji]) => {
-            const cell = el('div', 'emoji-cell')
-            cell.append(el('span', 'emoji-glyph', emoji), el('code', '', `:${code}:`))
-            // Clicking copies, since the point of browsing is to then use one.
-            cell.title = 'Copy'
-            cell.onclick = () => void navigator.clipboard?.writeText(`:${code}:`)
-            return cell
-          })),
-    )
-  }
+  // Clicking copies, since the point of browsing is to then use one.
+  const { grid, draw } = buildEmojiGrid('Copy', (_emoji, code) => {
+    void navigator.clipboard?.writeText(`:${code}:`)
+  })
   search.oninput = () => draw(search.value)
-  draw('')
   root.append(grid)
   return root
 }
