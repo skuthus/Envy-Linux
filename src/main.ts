@@ -1076,7 +1076,7 @@ function renderTitleBarTags(tags: string[]) {
     const el = document.createElement('span')
     el.className = 'envy-tag title-tag'
     el.textContent = `#${t}`
-    el.title = `Search tag:${t} — right-click to colour it`
+    el.title = `Search tag:"${t}" — right-click to colour it`
     const tint = colors[t]
     if (tint) {
       // A tinted tag paints its own translucent capsule from its colour, so it
@@ -1086,7 +1086,9 @@ function renderTitleBarTags(tags: string[]) {
       el.style.background = `color-mix(in srgb, ${tint} 18%, transparent)`
     }
     el.onclick = () => {
-      searchInput.value = `tag:${t}`
+      // Quoted, and quoting means exact — clicking #tag must not also surface
+      // #tags, so what you click is exactly what you get (Mac 1.8.8).
+      searchInput.value = `tag:"${t}"`
       void runSearch()
     }
     el.oncontextmenu = (e) => {
@@ -2029,6 +2031,14 @@ function renderTrashList() {
     }),
   )
   showTrashPreview(trashResults[highlighted] ?? null)
+  scrollHighlightedRowIntoView()
+}
+
+/// The browse lists (trash, templates, catalogs) build every row in flow rather
+/// than virtualising, so keeping an arrow-key highlight on screen is the plain
+/// DOM call — the note list's own scroll logic works in row offsets instead.
+function scrollHighlightedRowIntoView() {
+  listEl.querySelector('.row.highlighted')?.scrollIntoView({ block: 'nearest' })
 }
 
 function trashMenuItems(note: NoteDto): MenuItemSpec[] {
@@ -2103,6 +2113,7 @@ function renderTemplateList() {
       return row
     }),
   )
+  scrollHighlightedRowIntoView()
 }
 
 async function openTemplate(t: TemplateDto) {
@@ -2575,6 +2586,10 @@ function migrateFolderColors(oldPath: string, newPath: string) {
 }
 
 async function renameTagFlow(oldName: string) {
+  // A rename rewrites every note carrying the tag, the open one included, so
+  // any unsaved typing there is committed first rather than lost or undone.
+  cancelPendingSave()
+  await save()
   const next = (await textPrompt(`Rename #${oldName} to`, oldName))?.trim()
   if (!next || next === oldName) return
   const clean = next.replace(/^#/, '').toLowerCase()
@@ -2597,6 +2612,10 @@ async function renameTagFlow(oldName: string) {
 }
 
 async function renameFolderFlow(oldPath: string) {
+  // Every note inside moves, so a pending edit to one of them is committed
+  // first — the same reason the tag rename flushes.
+  cancelPendingSave()
+  await save()
   const next = (
     await textPrompt(
       `Rename "${oldPath}" to (add a "/" to file it under another folder)`,
@@ -2685,6 +2704,7 @@ function renderCatalog(kind: CatalogKind) {
       return row
     }),
   )
+  scrollHighlightedRowIntoView()
 }
 
 /// Moves `ids` into `subfolder` (null = the Index root), the selection following
