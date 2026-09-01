@@ -1957,21 +1957,18 @@ async fn pop_out_note(id: String, inner_size: Option<(f64, f64)>, app: tauri::Ap
                     &label,
                     tauri::WebviewUrl::App("popout.html".into()),
                 )
-                // Blank native title: the note's name lives in the window's own
-                // editable title strip, not doubled in the OS title bar.
+                // Blank native title so the Hyprland scratchpad rule
+                // (`title = "^Envy$"`) does not swallow pop-outs. No OS
+                // chrome: Omarchy windows are dragged with Super, closed
+                // with Super+W or Escape.
                 .title("")
                 .inner_size(width, height)
                 .position(140.0 + step, 120.0 + step)
                 .min_inner_size(240.0, 160.0)
                 .resizable(true)
-                // No minimize or maximize: the window is skip_taskbar, so a
-                // minimized one would vanish with no taskbar button to restore
-                // it. Only close remains, closest to the Mac's button-less
-                // pop-out panel — dragging and edge-resize still work.
+                .decorations(false)
                 .minimizable(false)
                 .maximizable(false)
-                // Floats above the main window like the Mac's pop-out panel,
-                // and stays out of the taskbar so a handful don't clutter it.
                 .always_on_top(true)
                 .skip_taskbar(true)
                 .transparent(true)

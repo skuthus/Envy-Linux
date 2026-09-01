@@ -97,6 +97,15 @@ body.popout-window {
   padding: 10px 14px;
   background: var(--envy-title-bar-background);
   border-bottom: 1px solid color-mix(in srgb, var(--envy-marker) 40%, transparent);
+  /* No OS title bar on this variant; the search chrome is the drag handle.
+     Super+drag still works everywhere via Hyprland. */
+  -webkit-app-region: drag;
+}
+#search-bar input,
+#search-bar button,
+#inbox-badge,
+#search-wrap {
+  -webkit-app-region: no-drag;
 }
 #search-wrap { position: relative; flex: 1; display: flex; }
 /* Behind the field, aligned to the same text metrics, showing the whole
@@ -806,7 +815,7 @@ body.popover {
 
 #pinned-editor { flex: 1; min-height: 0; overflow: hidden; }
 
-/* A popped-out note fills its own (natively decorated) window. */
+/* A popped-out note fills its own undecorated window. */
 body.popout-window {
   height: 100vh;
   display: flex;
@@ -850,6 +859,11 @@ body.popout-window {
   color: var(--envy-blockquote);
   background: var(--envy-title-bar-background);
   border-top: 1px solid color-mix(in srgb, var(--envy-marker) 30%, transparent);
+  -webkit-app-region: drag;
+}
+#footer button,
+#interlinks-toggle {
+  -webkit-app-region: no-drag;
 }
 #stats {
   margin-left: auto;
