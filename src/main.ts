@@ -1155,6 +1155,10 @@ const settings = {
   theme: localStorage.getItem('appearanceMode') ?? 'system',
   moveFocusToEditorOnEnter: boolSetting('moveFocusToEditorOnEnter', true),
   dateDisplayStyle: localStorage.getItem('dateDisplayStyle') ?? 'smart',
+  // Whether the Inbox exists at all. Off, there is no capture queue: no badge,
+  // no fleeting marks, no `inbox:` mode, and the two toggles below are moot.
+  // On by default, matching the Mac (1.10.0).
+  inboxEnabled: boolSetting('inboxEnabled', true),
   newNotesStartInInbox: boolSetting('newNotesStartInInbox', false),
   showInboxInMainList: boolSetting('showInboxInMainList', true),
   showTagsInTitleBar: boolSetting('showTagsInTitleBar', false),
@@ -1798,6 +1802,12 @@ const inboxBadgeEl = document.getElementById('inbox-badge') as HTMLButtonElement
 const fleetingActionsEl = document.getElementById('fleeting-actions')!
 
 async function refreshInboxBadge() {
+  // No inbox, no count — the store reports zero while it's off anyway, but
+  // there's no reason to ask.
+  if (!settings.inboxEnabled) {
+    inboxBadgeEl.classList.add('hidden')
+    return
+  }
   const count = await invoke<number>('inbox_count')
   // Strictly "something is waiting". With the inbox empty there is nowhere to
   // go back *from*, and clearing the query is the ordinary way out of any
@@ -2132,7 +2142,7 @@ async function openNote(id: string) {
   renderTitleBarFolder(note.subfolder ?? null)
   // Reviewing a fleeting note is a decision — file it or bin it — so the two
   // actions appear only while looking at one.
-  fleetingActionsEl.classList.toggle('hidden', !note.isInbox)
+  fleetingActionsEl.classList.toggle('hidden', !(note.isInbox && settings.inboxEnabled))
   templateActionsEl.classList.add('hidden')
   emptyEl.classList.add('hidden')
   view.dispatch({
@@ -2757,7 +2767,11 @@ function prefixFragment(query: string, prefix: string): string | null {
 }
 
 const templateFragment = () => prefixFragment(searchInput.value, 'template:')
-const inboxFragment = () => prefixFragment(searchInput.value, 'inbox:')
+/// With the Inbox switched off `inbox:` is not a mode — neither a browse nor
+/// a capture — so this reads as "no fragment" and the box behaves like any
+/// other query.
+const inboxFragment = () =>
+  settings.inboxEnabled ? prefixFragment(searchInput.value, 'inbox:') : null
 const trashFragment = () => prefixFragment(searchInput.value, 'trash:')
 
 /// Whether any word in the query is a search operator.
@@ -2898,7 +2912,8 @@ async function openOrCreate() {
   // by following a link, or from a template, are unaffected — both are already
   // placed, so routing them through a capture queue asks a question you have
   // already answered.
-  const command = settings.newNotesStartInInbox ? 'create_inbox_note' : 'create_note'
+  const command =
+    settings.newNotesStartInInbox && settings.inboxEnabled ? 'create_inbox_note' : 'create_note'
   const created = await invoke<NoteDto>(command, { title: query })
   searchInput.value = ''
   await runSearch()
@@ -3298,7 +3313,7 @@ async function extractSelectionToNote() {
   try {
     created = await invoke<NoteDto>('extract_to_note', {
       selection: selected,
-      inInbox: settings.newNotesStartInInbox,
+      inInbox: settings.newNotesStartInInbox && settings.inboxEnabled,
     })
   } catch (err) {
     console.error('could not extract the selection', err)
@@ -3624,8 +3639,10 @@ function openSettings() {
   checkbox('setting-subfolders').checked = settings.includeSubfolders
   void renderFolderColorSettings()
   checkbox('setting-focus-editor').checked = settings.moveFocusToEditorOnEnter
+  checkbox('setting-inbox-enabled').checked = settings.inboxEnabled
   checkbox('setting-inbox-new').checked = settings.newNotesStartInInbox
   checkbox('setting-inbox-in-list').checked = settings.showInboxInMainList
+  applyInboxDependentToggles()
   checkbox('setting-vault-counts').checked = settings.showFooterVaultCounts
   checkbox('setting-show-tags').checked = settings.showTagsInTitleBar
   checkbox('setting-show-folder-titlebar').checked = settings.showFolderInTitleBar
@@ -3736,6 +3753,39 @@ bindToggle('setting-due', 'showDueSort', () => {
   renderList()
 })
 bindToggle('setting-focus-editor', 'moveFocusToEditorOnEnter')
+/// The two inbox toggles below only mean anything while there is an inbox, so
+/// they grey out with it — the same `.disabled(!inboxEnabled)` the Mac applies.
+function applyInboxDependentToggles() {
+  checkbox('setting-inbox-new').disabled = !settings.inboxEnabled
+  checkbox('setting-inbox-in-list').disabled = !settings.inboxEnabled
+}
+
+/// Tells the store whether Inbox/ is a capture queue or just a folder. The
+/// store owns what "fleeting" means — the badge count, the row mark, and the
+/// `inbox:` operator all come back from it — so the switch has to reach it,
+/// at boot and on every change, before the list is re-run.
+async function pushInboxEnabled() {
+  try {
+    await invoke('set_inbox_enabled', { on: settings.inboxEnabled })
+  } catch (err) {
+    console.error('could not apply the inbox setting', err)
+  }
+}
+
+bindToggle('setting-inbox-enabled', 'inboxEnabled', () => {
+  applyInboxDependentToggles()
+  void (async () => {
+    await pushInboxEnabled()
+    await runSearch()
+    // The open note's review buttons follow the switch too, rather than
+    // waiting for the note to be reopened.
+    const open = results.find((n) => n.id === openNoteId)
+    fleetingActionsEl.classList.toggle(
+      'hidden',
+      !(open?.isInbox && settings.inboxEnabled),
+    )
+  })()
+})
 bindToggle('setting-inbox-new', 'newNotesStartInInbox')
 bindToggle('setting-inbox-in-list', 'showInboxInMainList', () => void runSearch())
 bindToggle('setting-vault-counts', 'showFooterVaultCounts', () => void refreshVaultCounts())
@@ -4168,6 +4218,7 @@ async function boot() {
     await invoke('set_include_subfolders', { include: true })
   }
   await invoke('set_template_date_format', { pattern: settings.templateDateFormat })
+  await pushInboxEnabled()
   // Registers the global chords with the OS. Nothing is registered in Rust at
   // startup, so this is the only path — defaults and remaps go the same way.
   await syncGlobalShortcuts()
