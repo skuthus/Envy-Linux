@@ -20,6 +20,12 @@ import { makeEmbedHost } from './embed-host'
 import { openImageMenu, renameAttachmentFlow } from './image-menu'
 import { setPromptFocusReturn } from './prompt-modal'
 import { listEditing } from './lists'
+import {
+  editorCompletion,
+  completionSources,
+  loadCompletionSources,
+  type CompletionSources,
+} from './completion'
 import { applyTheme, enviousDark, enviousLight } from './theme'
 
 // This window is where the silent-failure pattern first bit — see `hide()`
@@ -43,6 +49,13 @@ let savedContent = ''
 let saveTimer: number | undefined
 // Shared with the main window through the common origin's localStorage.
 const requireModifier = localStorage.getItem('requireModifierForLinkClick') !== 'false'
+
+/// Ghost-completion pools, fetched with the note and again whenever the index
+/// changes, so a `#tag` or `[[link]]` completes here as it does in the app.
+let completion: CompletionSources = { titles: [], tags: [] }
+async function refreshCompletionSources() {
+  completion = await loadCompletionSources()
+}
 
 /// The `[[…]]` target at a position — alias and heading stripped, as the main
 /// window resolves it.
@@ -85,6 +98,8 @@ const view = new EditorView({
       listEditing,
       keymap.of([...defaultKeymap, ...historyKeymap]),
       EditorView.lineWrapping,
+      editorCompletion,
+      completionSources.of(() => completion),
       // Resolves `![[note]]` transclusions and `![[image.png]]` attachments, so
       // a pinned note renders images (and embeds) like the main window —
       // including the image's right-click size/rename/reveal menu.
@@ -145,6 +160,7 @@ async function save() {
 }
 
 async function load() {
+  void refreshCompletionSources()
   const id = await invoke<string | null>('pinned_note_id')
   if (!id) {
     titleEl.textContent = 'No note pinned'
@@ -193,8 +209,12 @@ function renamePinnedImage(oldName: string) {
   })
 }
 
-// A dialog (rename / custom width) hands focus back to the editor in this popover.
+// A dialog (rename) hands focus back to the editor in this popover.
 setPromptFocusReturn(() => view.focus())
+
+// Titles and tags come and go as notes are edited elsewhere; every window's
+// save announces itself this way, so the pools stay current without polling.
+void listen('index-changed', () => void refreshCompletionSources())
 
 /// Hiding is deliberately allowed to fail without taking the caller with it.
 ///

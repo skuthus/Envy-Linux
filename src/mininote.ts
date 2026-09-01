@@ -13,7 +13,29 @@ import { EditorView, keymap } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import { allowEmbeds, envyStyler, searchQueryField } from './styler'
 import { autoPairing, completionTransforms, emphasisKeymap } from './input'
+import {
+  editorCompletion,
+  completionSources,
+  loadCompletionSources,
+  type CompletionSources,
+} from './completion'
 import { bindingFor } from './shortcuts'
+
+/// Ghost-completion pools shared by every mini editor in this window, read
+/// through a closure so a refresh reaches editors already on screen. Refreshed
+/// when an editor is created — the moment a peek opens or an embed mounts —
+/// but coalesced, since a note with several embeds mounts them all at once and
+/// one fetch serves the lot.
+let sources: CompletionSources = { titles: [], tags: [] }
+let sourcesFetchedAt = 0
+function refreshSources() {
+  const now = Date.now()
+  if (now - sourcesFetchedAt < 1000) return
+  sourcesFetchedAt = now
+  void loadCompletionSources().then((s) => {
+    sources = s
+  })
+}
 
 export interface MiniNote {
   id: string
@@ -50,6 +72,7 @@ export function createMiniNoteEditor(
   let isEditable = false
   let lastSynced = note.content
   let timer: number | undefined
+  refreshSources()
 
   const commit = async () => {
     const content = view.state.doc.toString()
@@ -70,6 +93,10 @@ export function createMiniNoteEditor(
         envyStyler,
         completionTransforms,
         autoPairing,
+        // Ghost text for `[[links]]` and `#tags`, as in the main editor — the
+        // Mac's peeks and pop-outs complete too (1.8.5).
+        editorCompletion,
+        completionSources.of(() => sources),
         // Embeds and previews follow the same remapped bindings as the main
         // editor — a shortcut that works in one and not the other would be
         // worse than not having it here at all.

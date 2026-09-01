@@ -11,7 +11,7 @@ import { EditorView, keymap, drawSelection } from '@codemirror/view'
 import { EditorState } from '@codemirror/state'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import { invoke } from '@tauri-apps/api/core'
-import { emit } from '@tauri-apps/api/event'
+import { emit, listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { envyStyler, embedHost, isImageTarget } from './styler'
 import { makeEmbedHost } from './embed-host'
@@ -20,6 +20,12 @@ import { openImagePicker } from './image-picker'
 import { openContextMenu } from './context-menu'
 import { setPromptFocusReturn } from './prompt-modal'
 import { listEditing } from './lists'
+import {
+  editorCompletion,
+  completionSources,
+  loadCompletionSources,
+  type CompletionSources,
+} from './completion'
 import { applyTheme, enviousDark, enviousLight } from './theme'
 
 // Its own entry point, so it needs its own last-resort handler — the main
@@ -43,6 +49,13 @@ let saveTimer: number | undefined
 // Shared with the main window through the common origin's localStorage; default
 // on, so a plain click still places the caret to edit a link.
 const requireModifier = localStorage.getItem('requireModifierForLinkClick') !== 'false'
+
+/// Ghost-completion pools, fetched with the note and again whenever the index
+/// changes, so a `#tag` or `[[link]]` completes here as it does in the app.
+let completion: CompletionSources = { titles: [], tags: [] }
+async function refreshCompletionSources() {
+  completion = await loadCompletionSources()
+}
 
 /// The `[[…]]` target at a position, alias and heading stripped — the same
 /// resolution the main window's follow uses.
@@ -69,6 +82,8 @@ const view = new EditorView({
       listEditing,
       keymap.of([...defaultKeymap, ...historyKeymap]),
       EditorView.lineWrapping,
+      editorCompletion,
+      completionSources.of(() => completion),
       // Resolves `![[note]]` transclusions and `![[image.png]]` attachments, so
       // a popped note renders images (and embeds) exactly as the main window —
       // including the image's right-click size/rename/reveal menu.
@@ -143,6 +158,7 @@ async function save() {
 }
 
 async function load() {
+  void refreshCompletionSources()
   try {
     const id = await invoke<string | null>('popout_note_id')
     if (!id) return
@@ -221,8 +237,12 @@ function renamePoppedImage(oldName: string) {
   })
 }
 
-// A dialog (rename / custom width) hands focus back to the editor in this float.
+// A dialog (rename) hands focus back to the editor in this float.
 setPromptFocusReturn(() => view.focus())
+
+// Titles and tags come and go as notes are edited elsewhere; every window's
+// save announces itself this way, so the pools stay current without polling.
+void listen('index-changed', () => void refreshCompletionSources())
 
 // The editor's own right-click menu — just "Insert Image…" for now, the same as
 // the main window. An image widget runs its own menu, so leave those clicks be.

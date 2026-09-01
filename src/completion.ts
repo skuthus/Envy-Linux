@@ -25,6 +25,7 @@ import {
   keymap,
 } from '@codemirror/view'
 import { type EditorState, Facet, Prec } from '@codemirror/state'
+import { invoke } from '@tauri-apps/api/core'
 
 /// The suggestion pools, read fresh each time so they track edits and moves
 /// without the extension having to be reconfigured. `titles` is note titles
@@ -41,6 +42,25 @@ export const completionSources = Facet.define<
 >({
   combine: (values) => values[0] ?? (() => ({ titles: [], tags: [] })),
 })
+
+/// The two pools straight from Rust — the same projections the main window's
+/// search box refreshes on every search. For the editors that don't have those
+/// lists on hand (the peek and embeds, the pop-out and pinned windows), so a
+/// `#tag` or `[[link]]` completes there exactly as it does in the main editor.
+/// Both calls are cheap; a failure leaves the pools empty rather than throwing
+/// into a window that has nothing to show for it.
+export async function loadCompletionSources(): Promise<CompletionSources> {
+  try {
+    const [tags, titles] = await Promise.all([
+      invoke<string[]>('all_tags'),
+      invoke<string[]>('all_titles'),
+    ])
+    return { titles, tags }
+  } catch (err) {
+    console.error('could not load completion sources', err)
+    return { titles: [], tags: [] }
+  }
+}
 
 /// A tag-body character: what may appear *after* the `#`. Matches the Mac's
 /// `isTagBodyChar` (alphanumeric, `_`, `-`).
