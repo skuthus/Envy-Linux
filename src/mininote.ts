@@ -12,6 +12,7 @@ import { Compartment, EditorState } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import { allowEmbeds, envyStyler, searchQueryField } from './styler'
+import { tableEditing } from './tables'
 import { autoPairing, completionTransforms, emphasisKeymap } from './input'
 import {
   editorCompletion,
@@ -91,6 +92,7 @@ export function createMiniNoteEditor(
         // or two embedding each other, would expand forever.
         allowEmbeds.of(opts.allowEmbeds ?? false),
         envyStyler,
+        tableEditing,
         completionTransforms,
         autoPairing,
         // Ghost text for `[[links]]` and `#tags`, as in the main editor — the

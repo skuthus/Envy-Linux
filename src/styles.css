@@ -2007,3 +2007,47 @@ body.popout-window {
   color: var(--envy-footnote);
 }
 .envy-hr { color: var(--envy-marker); }
+
+/* --- Tables --------------------------------------------------------------
+   GFM pipe tables, rendered as HTML when the cursor is outside them.
+   Grid, padding, header weight, and cell chrome match the Omarchy manual
+   (`omarchy.org/manual/ai/`): 1px borders, no fill, no zebra, shrink-to-fit. */
+.envy-md-table-wrap {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 1em 0;
+}
+.envy-md-table {
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+.envy-md-table th,
+.envy-md-table td {
+  border: 1px solid color-mix(in srgb, var(--envy-marker) 80%, transparent);
+  padding: 0.5em 0.8em;
+  text-align: left;
+  vertical-align: top;
+}
+.envy-md-table th {
+  color: var(--envy-text);
+  font-weight: 700;
+}
+.envy-md-table code {
+  background: color-mix(in srgb, var(--envy-marker) 50%, transparent);
+  border-radius: 0.3em;
+  padding: 0.125em 0.4em;
+  white-space: nowrap;
+}
+.envy-md-table a {
+  color: var(--envy-link);
+  font-weight: 700;
+  text-decoration: underline;
+  text-decoration-thickness: 0.0875em;
+  text-underline-offset: 0.125em;
+}
+.envy-md-table mark {
+  background: var(--envy-highlight);
+  color: var(--envy-highlight-text);
+}

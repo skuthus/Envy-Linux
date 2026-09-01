@@ -1,7 +1,9 @@
 import { Decoration, DecorationSet, EditorView, ViewPlugin, ViewUpdate, WidgetType } from '@codemirror/view'
 import { EditorState, Facet, Range, StateEffect, StateField } from '@codemirror/state'
+import { invoke } from '@tauri-apps/api/core'
 import { createMiniNoteEditor, type MiniNoteEditor } from './mininote'
 import { resolveDueToken, urgencyFor } from './due'
+import { findTableBlocks, type TableBlock } from './tables'
 
 // --- Embeds -----------------------------------------------------------------
 
@@ -141,6 +143,20 @@ export const setPlainText = StateEffect.define<boolean>()
 /// plugin anything had changed, and the pill would keep its old mark until the
 /// next keystroke.
 export const restyle = StateEffect.define<null>()
+
+/// Whether this editor currently has focus. Block table widgets live in a
+/// StateField (CodeMirror forbids them on plugins), so they cannot read
+/// `view.hasFocus` the way the inline styler does — this field is the stand-in,
+/// kept in step by `focusChangeEffect`.
+const setEditorFocused = StateEffect.define<boolean>()
+
+const editorFocusedField = StateField.define<boolean>({
+  create: () => false,
+  update(value, tr) {
+    for (const e of tr.effects) if (e.is(setEditorFocused)) return e.value
+    return value
+  },
+})
 
 export const plainTextField = StateField.define<boolean>({
   create: () => false,
@@ -854,6 +870,10 @@ function buildDecorations(view: EditorView): DecorationSet {
       spans.push([start, end])
     }
   }
+  // A replaced table is a block widget covering those lines. Marks inside the
+  // same range fight the replacement (CodeMirror drops one or both), so punch
+  // the tables out of the scan before any inline pass runs.
+  punchOut(spans, replacedTableRanges(view.state))
 
   for (const [base, spanEnd] of spans) {
     const text = doc.sliceString(base, spanEnd)
@@ -1195,6 +1215,196 @@ function buildDecorations(view: EditorView): DecorationSet {
   )
 }
 
+/// Subtract `holes` from `spans` in place. Each hole is a `[from, to)` range
+/// that should not be scanned — used to keep inline marks off replaced tables.
+function punchOut(spans: Array<[number, number]>, holes: Array<[number, number]>) {
+  if (holes.length === 0) return
+  for (const [hFrom, hTo] of holes) {
+    for (let i = 0; i < spans.length; i++) {
+      const [s, e] = spans[i]
+      if (hTo <= s || hFrom >= e) continue
+      if (hFrom <= s && hTo >= e) {
+        spans.splice(i, 1)
+        i--
+        continue
+      }
+      if (hFrom <= s) {
+        spans[i][0] = hTo
+        continue
+      }
+      if (hTo >= e) {
+        spans[i][1] = hFrom
+        continue
+      }
+      spans.splice(i, 1, [s, hFrom], [hTo, e])
+      i++
+    }
+  }
+}
+
+function replacedTableRanges(state: EditorState): Array<[number, number]> {
+  if (state.field(plainTextField, false)) return []
+  const out: Array<[number, number]> = []
+  for (const block of findTableBlocks(state.doc)) {
+    if (shouldReplaceTable(state, block)) out.push([block.from, block.to])
+  }
+  return out
+}
+
+function shouldReplaceTable(state: EditorState, block: TableBlock): boolean {
+  if (state.field(plainTextField, false)) return false
+  // Unfocused: always the HTML table, matching the rest of the styler's
+  // "reveal markup only while the caret is in it" rule. A StateField cannot
+  // read `view.hasFocus`, so `editorFocusedField` is the stand-in.
+  if (!state.field(editorFocusedField, false)) return true
+  return !selectionOverlapsTable(state, block.from, block.to)
+}
+
+/// `[from, to)` overlap. An empty caret at `to` (the line after the table)
+/// is outside it, so the widget stays up.
+function selectionOverlapsTable(state: EditorState, from: number, to: number): boolean {
+  for (const r of state.selection.ranges) {
+    if (r.empty) {
+      if (r.head >= from && r.head < to) return true
+    } else if (r.from < to && r.to > from) {
+      return true
+    }
+  }
+  return false
+}
+
+/// Rendered GFM tables. Block widgets (so they have to live in a StateField:
+/// "Block decorations may not be specified via plugins"). The pipe source
+/// stays on disk; when the cursor is outside the table it is replaced with
+/// the same HTML the Omarchy manual produces for that markdown — `<table>` /
+/// `<thead>` / `<tbody>`, code chips, linked cells. Click the table (not a
+/// link) to put the caret in the source and edit.
+class TableWidget extends WidgetType {
+  constructor(readonly block: TableBlock) {
+    super()
+  }
+  eq(other: TableWidget) {
+    return other.block.src === this.block.src && other.block.from === this.block.from
+  }
+  get estimatedHeight() {
+    return 8 + (1 + this.block.rows.length) * 32
+  }
+  toDOM(view: EditorView) {
+    const wrap = document.createElement('div')
+    wrap.className = 'envy-md-table-wrap'
+    const table = document.createElement('table')
+    table.className = 'envy-md-table'
+    const colCount = Math.max(
+      this.block.header.length,
+      ...this.block.rows.map((r) => r.length),
+      this.block.aligns.length,
+    )
+    const thead = document.createElement('thead')
+    thead.append(this.rowEl('th', this.block.header, colCount))
+    table.append(thead)
+    const tbody = document.createElement('tbody')
+    for (const row of this.block.rows) tbody.append(this.rowEl('td', row, colCount))
+    table.append(tbody)
+    wrap.append(table)
+    wrap.onmousedown = (e) => {
+      if ((e.target as HTMLElement).closest('a')) return
+      e.preventDefault()
+      view.dispatch({ selection: { anchor: this.block.from }, scrollIntoView: true })
+      view.focus()
+    }
+    return wrap
+  }
+  ignoreEvent(event: Event) {
+    const t = event.target as HTMLElement
+    if (t.closest?.('a')) return true
+    return event.type === 'mousedown' || event.type === 'click'
+  }
+  private rowEl(kind: 'th' | 'td', cells: string[], colCount: number): HTMLElement {
+    const tr = document.createElement('tr')
+    for (let i = 0; i < colCount; i++) {
+      const cell = document.createElement(kind)
+      const align = this.block.aligns[i] ?? 'left'
+      if (align !== 'left') cell.style.textAlign = align
+      cell.append(...tableCellNodes(cells[i] ?? ''))
+      tr.append(cell)
+    }
+    return tr
+  }
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
+/// Enough inline markdown for the cells in the Omarchy manual: code, links,
+/// emphasis, highlights, wiki-links. Builds real DOM nodes (not innerHTML) so
+/// a cell cannot inject markup, and so a click on `<a>` opens via Tauri the
+/// same way a `[text](url)` in the prose does.
+function tableCellNodes(md: string): Array<Node> {
+  const html = renderTableCell(md)
+  const wrap = document.createElement('span')
+  wrap.innerHTML = html
+  for (const a of wrap.querySelectorAll('a[href]')) {
+    const href = a.getAttribute('href')
+    if (!href || !/^https?:\/\//i.test(href)) continue
+    a.addEventListener('click', (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+      void invoke('open_external_url', { url: href }).catch((err) =>
+        console.error('could not open the link', err),
+      )
+    })
+  }
+  return [...wrap.childNodes]
+}
+
+function renderTableCell(md: string): string {
+  let s = escapeHtml(md)
+  s = s.replace(/`([^`]+)`/g, '<code class="envy-code">$1</code>')
+  s = s.replace(
+    /\[([^\]]+)\]\((https?:[^)\s]+)\)/g,
+    '<a class="envy-link" href="$2">$1</a>',
+  )
+  s = s.replace(/\*\*\*([^*]+)\*\*\*/g, '<strong><em>$1</em></strong>')
+  s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+  s = s.replace(/\*([^*]+)\*/g, '<em>$1</em>')
+  s = s.replace(/~~([^~]+)~~/g, '<del>$1</del>')
+  s = s.replace(/==([^=]+)==/g, '<mark>$1</mark>')
+  s = s.replace(/\[\[([^\]|#]+)(?:\|([^\]]+))?\]\]/g, (_m, title: string, alias?: string) => {
+    const shown = alias || title
+    return `<span class="envy-wikilink">${shown}</span>`
+  })
+  return s
+}
+
+const tableDecorations = StateField.define<DecorationSet>({
+  create: (state) => buildTableDecorations(state),
+  update(value, tr) {
+    const modeChanged = tr.effects.some(
+      (e) => e.is(setPlainText) || e.is(restyle) || e.is(setEditorFocused),
+    )
+    if (!tr.docChanged && !tr.selection && !modeChanged) return value.map(tr.changes)
+    return buildTableDecorations(tr.state)
+  },
+  provide: (f) => EditorView.decorations.from(f),
+})
+
+function buildTableDecorations(state: EditorState): DecorationSet {
+  if (state.field(plainTextField, false)) return Decoration.none
+  const ranges: Range<Decoration>[] = []
+  for (const block of findTableBlocks(state.doc)) {
+    if (!shouldReplaceTable(state, block)) continue
+    ranges.push(
+      Decoration.replace({ widget: new TableWidget(block), block: true }).range(block.from, block.to),
+    )
+  }
+  return Decoration.set(ranges, true)
+}
+
 /// Embed widgets, as a StateField rather than part of the view plugin.
 ///
 /// Not a stylistic choice: CodeMirror rejects block decorations supplied by a
@@ -1275,6 +1485,12 @@ const stylerPlugin = ViewPlugin.fromClass(
 )
 
 /// The whole styling layer: inline marks from a view plugin (viewport-scoped,
-/// because that's where the cost is) and embed blocks from a state field
+/// because that's where the cost is) and embed/table blocks from state fields
 /// (because CodeMirror requires it).
-export const envyStyler = [embedDecorations, stylerPlugin]
+export const envyStyler = [
+  editorFocusedField,
+  EditorView.focusChangeEffect.of((_state, focusing) => setEditorFocused.of(focusing)),
+  embedDecorations,
+  tableDecorations,
+  stylerPlugin,
+]

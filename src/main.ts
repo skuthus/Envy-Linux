@@ -38,6 +38,7 @@ import {
 } from './input'
 import { editorCompletion, completionSources, ghostRemainderForTest } from './completion'
 import { listEditing, listContinuation, isListLine, renumberEdits } from './lists'
+import { tableEditing } from './tables'
 import { applyStoredAppearance, enviousDark, initAppearance } from './theme'
 import { createMiniNoteEditor, type MiniNoteEditor } from './mininote'
 import { renderReference, type ReferenceTab } from './reference'
@@ -160,6 +161,7 @@ const view = new EditorView({
       // Enter/Tab/Shift-Tab continue and nest lists (and ordered lists
       // renumber) — Prec.high inside, so this beats the default newline/indent.
       listEditing,
+      tableEditing,
       keymap.of([...defaultKeymap, ...historyKeymap]),
       EditorView.lineWrapping,
       // Ghost-text completion for [[links]] and #tags, drawing from the same
@@ -213,7 +215,7 @@ const view = new EditorView({
           // marker follow. Without this, clicking the empty space beside an
           // image snaps to the marker line and "opens" the file, which for a
           // missing one throws an OS "cannot find" error.
-          if ((event.target as HTMLElement | null)?.closest('.envy-image-embed, .envy-embed')) {
+          if ((event.target as HTMLElement | null)?.closest('.envy-image-embed, .envy-embed, .envy-md-table-wrap')) {
             return false
           }
           const pos = v.posAtCoords({ x: event.clientX, y: event.clientY })

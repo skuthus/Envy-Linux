@@ -47,6 +47,10 @@
    {
     "syntax": "---",
     "description": "Horizontal rule"
+   },
+   {
+    "syntax": "| A | B |\n| --- | --- |\n| 1 | 2 |",
+    "description": "Table — header, a dash delimiter, then rows. Shown as a real table (like the Omarchy manual) until you click into it to edit. Enter adds a row, Tab moves between cells."
    }
   ]
  },

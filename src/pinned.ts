@@ -20,6 +20,7 @@ import { makeEmbedHost } from './embed-host'
 import { openImageMenu, renameAttachmentFlow } from './image-menu'
 import { setPromptFocusReturn } from './prompt-modal'
 import { listEditing } from './lists'
+import { tableEditing } from './tables'
 import {
   editorCompletion,
   completionSources,
@@ -96,6 +97,7 @@ const view = new EditorView({
       // List continuation / indent / renumber, as in the main and pop-out
       // editors.
       listEditing,
+      tableEditing,
       keymap.of([...defaultKeymap, ...historyKeymap]),
       EditorView.lineWrapping,
       editorCompletion,
@@ -113,7 +115,7 @@ const view = new EditorView({
         mousedown: (event, v) => {
           if (event.button !== 0) return false
           // Clicks inside a rendered embed belong to the widget, not a follow.
-          if ((event.target as HTMLElement | null)?.closest('.envy-image-embed, .envy-embed')) {
+          if ((event.target as HTMLElement | null)?.closest('.envy-image-embed, .envy-embed, .envy-md-table-wrap')) {
             return false
           }
           const pos = v.posAtCoords({ x: event.clientX, y: event.clientY })

@@ -20,6 +20,7 @@ import { openImagePicker } from './image-picker'
 import { openContextMenu } from './context-menu'
 import { setPromptFocusReturn } from './prompt-modal'
 import { listEditing } from './lists'
+import { tableEditing } from './tables'
 import {
   editorCompletion,
   completionSources,
@@ -80,6 +81,7 @@ const view = new EditorView({
       history(),
       drawSelection(),
       listEditing,
+      tableEditing,
       keymap.of([...defaultKeymap, ...historyKeymap]),
       EditorView.lineWrapping,
       editorCompletion,
@@ -98,7 +100,7 @@ const view = new EditorView({
           if (event.button !== 0) return false
           // Clicks inside a rendered embed belong to the widget (the image's own
           // open handler), never to a marker follow.
-          if ((event.target as HTMLElement | null)?.closest('.envy-image-embed, .envy-embed')) {
+          if ((event.target as HTMLElement | null)?.closest('.envy-image-embed, .envy-embed, .envy-md-table-wrap')) {
             return false
           }
           const pos = v.posAtCoords({ x: event.clientX, y: event.clientY })
