@@ -1695,7 +1695,6 @@ async function centreWindow() {
 // aimed, and the two gestures collide. Alt has no competing meaning here.
 
 const linkPreviewEl = document.getElementById('link-preview')!
-const linkPreviewTitleEl = document.getElementById('link-preview-title')!
 const linkPreviewBodyEl = document.getElementById('link-preview-body')!
 
 /// The preview's own editor, torn down each time it closes.
@@ -1704,20 +1703,59 @@ const linkPreviewBodyEl = document.getElementById('link-preview-body')!
 /// pending save, and carrying either into a preview of a *different* note is
 /// how one note's edit lands in another's file.
 let previewEditor: MiniNoteEditor | null = null
+/// The note on show, for the pin — null while previewing a link to nowhere.
+let previewNoteId: string | null = null
+const linkPreviewTitleTextEl = document.getElementById('link-preview-title-text')!
+const linkPreviewPinEl = document.getElementById('link-preview-pin') as HTMLButtonElement
 
 function hideLinkPreview() {
   linkPreviewEl.classList.add('hidden')
   const editor = previewEditor
   previewEditor = null
+  previewNoteId = null
   if (editor) {
     void editor.flush().finally(() => editor.destroy())
+  }
+}
+
+/// The last size a pop-out was dragged to, written by the pop-out window into
+/// the shared origin's localStorage. Passed along so the next one opens the
+/// same size; Rust falls back to its own default when it's absent or corrupt.
+function storedPopoutSize(): [number, number] | undefined {
+  try {
+    const parsed = JSON.parse(localStorage.getItem('popoutSize') ?? 'null')
+    if (parsed && Number.isFinite(parsed.width) && Number.isFinite(parsed.height)) {
+      return [parsed.width, parsed.height]
+    }
+  } catch {
+    // A malformed value is the same as none.
+  }
+  return undefined
+}
+
+// Pin detaches the peek into its own floating window that stays open and frees
+// the peek slot, so several can sit open at once — the Mac's pinned peek, which
+// is the same panel its Pop Out opens. The peek's pending edit is flushed first
+// so the float reads the note as it stands.
+linkPreviewPinEl.onclick = async () => {
+  const id = previewNoteId
+  if (!id) return
+  await previewEditor?.flush()
+  hideLinkPreview()
+  try {
+    await invoke('pop_out_note', { id, innerSize: storedPopoutSize() })
+  } catch (e) {
+    console.error('could not pin the peek as a floating window', e)
   }
 }
 
 async function showLinkPreview(target: string, x: number, y: number) {
   hideLinkPreview()
   const note = await invoke<NoteDto | null>('resolve_title', { title: target })
-  linkPreviewTitleEl.textContent = note ? note.title : target
+  linkPreviewTitleTextEl.textContent = note ? note.title : target
+  previewNoteId = note?.id ?? null
+  // No pin for a note that doesn't exist yet: there is nothing to float.
+  linkPreviewPinEl.hidden = !note
   linkPreviewBodyEl.replaceChildren()
 
   if (note && note.content !== null) {

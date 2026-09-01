@@ -1842,14 +1842,46 @@ body.popout-window {
 #link-preview.hidden { display: none; }
 #link-preview-title {
   flex: none;
-  padding: 7px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px 5px 12px;
   font-size: 12px;
   font-weight: 700;
   border-bottom: 1px solid color-mix(in srgb, var(--envy-marker) 30%, transparent);
+}
+#link-preview-title-text {
+  flex: 1;
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* The pin that detaches the peek into a floating window. Quiet until hovered,
+   the same square glyph button the pinned popover's keep-open pin uses — a
+   hollow pin on the Mac, filled once pinned; here the float replaces the peek,
+   so the button only ever shows the unpinned state. */
+#link-preview-pin {
+  flex: none;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 5px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--envy-blockquote);
+  filter: grayscale(1);
+  opacity: 0.55;
+  cursor: default;
+}
+#link-preview-pin:hover {
+  filter: none;
+  opacity: 1;
+  border-color: color-mix(in srgb, var(--envy-marker) 55%, transparent);
+  background: color-mix(in srgb, var(--envy-marker) 20%, transparent);
+}
+#link-preview-pin[hidden] { display: none; }
 #link-preview-body {
   flex: 1;
   min-height: 0;
