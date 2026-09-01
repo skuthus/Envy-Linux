@@ -14,4 +14,4 @@ cp "$repo/src-tauri/icons/128x128@2x.png" "$icons/256x256/apps/envy.png"
 cp "$repo/src-tauri/icons/icon.png" "$icons/512x512/apps/envy.png"
 command -v update-desktop-database >/dev/null && update-desktop-database "$apps" || true
 command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache -q "$icons" 2>/dev/null || true
-echo "Installed $apps/envy.desktop -> $repo/target/release/envy-linux"
+echo "Installed $apps/envy.desktop (Envy Omarchy) -> $repo/target/release/envy-linux"

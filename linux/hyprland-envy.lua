@@ -8,7 +8,7 @@
 -- Install: append to ~/.config/hypr/bindings.lua (or `require` this file),
 -- then `hyprctl reload`. Edit the path below if the checkout moves.
 
-local envy_summon = os.getenv("HOME") .. "/Work/Envy-Linux/linux/envy-summon.sh"
+local envy_summon = os.getenv("HOME") .. "/Work/envy-omarchy/Envy-Linux/linux/envy-summon.sh"
 
 -- Match on class AND title: pop-out notes and the pinned popover share the
 -- `envy-linux` class, and those should stay ordinary windows.
