@@ -544,7 +544,8 @@ body.bold-file-list .row-date { font-weight: 700; }
   font-size: calc(10px * var(--envy-ui-scale));
   line-height: 1.5;
   padding: 0 5px;
-  border-radius: 999px;
+  border-radius: 0;
+  border: 1px solid color-mix(in srgb, var(--envy-marker) 40%, transparent);
   cursor: pointer;
   color: var(--envy-blockquote);
   background: color-mix(in srgb, var(--envy-marker) 14%, transparent);
@@ -565,7 +566,7 @@ body.bold-file-list .row-date { font-weight: 700; }
   font-weight: 600;
   line-height: 1.4;
   padding: 1px 8px;
-  border-radius: 999px;
+  border-radius: 0;
   cursor: pointer;
   color: var(--envy-blockquote);
   border: 1px solid color-mix(in srgb, var(--envy-marker) 40%, transparent);
@@ -698,7 +699,7 @@ body.bold-file-list .row-date { font-weight: 700; }
   font: inherit;
   padding: 3px 6px;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: 0;
   background: transparent;
   color: var(--envy-text);
   text-overflow: ellipsis;
@@ -790,7 +791,7 @@ body.popover {
   font: inherit;
   font-size: 11px;
   padding: 2px 8px;
-  border-radius: 5px;
+  border-radius: 0;
   border: 1px solid color-mix(in srgb, var(--envy-marker) 55%, transparent);
   background: transparent;
   color: var(--envy-blockquote);
@@ -836,7 +837,7 @@ body.popout-window {
   margin: 8px 10px 2px;
   padding: 3px 6px;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: 0;
   background: transparent;
   color: var(--envy-text);
   text-overflow: ellipsis;
@@ -855,13 +856,14 @@ body.popout-window {
 #footer {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 0.75em;
   flex: none;
-  padding: 4px 16px;
+  padding: 3px 12px;
   font-size: 11px;
+  font-variant-numeric: tabular-nums;
   color: var(--envy-blockquote);
-  background: var(--envy-title-bar-background);
-  border-top: 1px solid color-mix(in srgb, var(--envy-marker) 30%, transparent);
+  background: color-mix(in srgb, var(--envy-marker) 10%, var(--envy-title-bar-background));
+  border-top: 1px solid color-mix(in srgb, var(--envy-marker) 45%, transparent);
   -webkit-app-region: drag;
 }
 #footer button,
@@ -876,11 +878,12 @@ body.popout-window {
 #footer-clock.hidden, #loading-indicator.hidden { display: none; }
 #vault-stats { font-variant-numeric: tabular-nums; }
 #vault-stats.hidden { display: none; }
-/* A thin rule between the open note's counts and the vault totals, only when
-   both are showing — mirrors the Mac's 1px separator. */
-#vault-stats.with-divider {
-  border-left: 1px solid color-mix(in srgb, var(--envy-marker) 45%, transparent);
-  padding-left: 12px;
+/* A box-drawing rule between the open note's counts and the vault totals,
+   only when both are showing. */
+#vault-stats.with-divider::before {
+  content: '│';
+  margin-right: 0.75em;
+  color: var(--envy-marker);
 }
 #loading-indicator { opacity: 0.8; }
 
@@ -890,7 +893,7 @@ body.popout-window {
   font: inherit;
   font-size: 11px;
   padding: 3px 9px;
-  border-radius: 6px;
+  border-radius: 0;
   border: 1px solid color-mix(in srgb, var(--envy-marker) 55%, transparent);
   background: transparent;
   color: var(--envy-text);
@@ -905,7 +908,7 @@ body.popout-window {
   padding: 2px 6px;
   margin-left: -6px;
   border: none;
-  border-radius: 5px;
+  border-radius: 0;
   background: none;
   color: var(--envy-blockquote);
   cursor: default;
@@ -954,7 +957,7 @@ body.popout-window {
   padding: 2px 4px;
   margin-left: -4px;
   border: none;
-  border-radius: 4px;
+  border-radius: 0;
   background: none;
   color: var(--envy-link);
   cursor: default;
@@ -1005,7 +1008,7 @@ body.popout-window {
   font: inherit;
   font-size: 12px;
   padding: 4px 10px;
-  border-radius: 6px;
+  border-radius: 0;
   border: 1px solid color-mix(in srgb, var(--envy-marker) 55%, transparent);
   background: transparent;
   color: var(--envy-text);
@@ -1141,10 +1144,10 @@ body.popout-window {
   height: min(620px, 88vh);
   display: flex;
   flex-direction: column;
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--envy-title-bar-background);
-  border: 1px solid color-mix(in srgb, var(--envy-marker) 45%, transparent);
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+  border: 1px solid var(--envy-link);
+  box-shadow: none;
   overflow: hidden;
 }
 #reference-panel header {
@@ -1160,7 +1163,7 @@ body.popout-window {
   font-size: 12px;
   padding: 4px 10px;
   border: none;
-  border-radius: 6px;
+  border-radius: 0;
   background: none;
   color: var(--envy-blockquote);
   cursor: default;
@@ -1195,7 +1198,7 @@ body.popout-window {
   font-family: var(--envy-mono-family);
   font-size: 12px;
   padding: 1px 5px;
-  border-radius: 4px;
+  border-radius: 0;
   background: var(--envy-code-background);
   color: var(--envy-text);
   white-space: pre-wrap;
@@ -1208,7 +1211,7 @@ body.popout-window {
   font-size: 13px;
   margin: 8px 0 12px;
   padding: 5px 8px;
-  border-radius: 6px;
+  border-radius: 0;
   border: 1px solid color-mix(in srgb, var(--envy-marker) 55%, transparent);
   background: var(--envy-background);
   color: var(--envy-text);
@@ -1223,7 +1226,7 @@ body.popout-window {
   align-items: center;
   gap: 7px;
   padding: 3px 6px;
-  border-radius: 5px;
+  border-radius: 0;
   font-size: 12px;
   cursor: default;
 }
@@ -1331,7 +1334,7 @@ body.popout-window {
   font: inherit;
   font-size: 12px;
   padding: 4px 10px;
-  border-radius: 6px;
+  border-radius: 0;
   border: 1px solid color-mix(in srgb, var(--envy-marker) 55%, transparent);
   background: transparent;
   color: var(--envy-text);
@@ -1360,7 +1363,7 @@ body.popout-window {
   font-size: 11px;
   min-width: 12ch;
   padding: 3px 8px;
-  border-radius: 5px;
+  border-radius: 0;
   border: 1px solid color-mix(in srgb, var(--envy-marker) 55%, transparent);
   background: var(--envy-code-background);
   color: var(--envy-text);
@@ -1383,7 +1386,7 @@ body.popout-window {
   font-size: 12px;
   width: 14ch;
   padding: 3px 6px;
-  border-radius: 6px;
+  border-radius: 0;
   border: 1px solid color-mix(in srgb, var(--envy-marker) 55%, transparent);
   background: var(--envy-background);
   color: var(--envy-text);
@@ -1407,7 +1410,7 @@ body.popout-window {
   font-size: 12px;
   width: 4ch;
   padding: 3px 6px;
-  border-radius: 6px;
+  border-radius: 0;
   border: 1px solid color-mix(in srgb, var(--envy-marker) 55%, transparent);
   background: var(--envy-background);
   color: var(--envy-text);
@@ -1417,7 +1420,7 @@ body.popout-window {
   font-family: var(--envy-mono-family);
   font-size: 0.92em;
   padding: 0 3px;
-  border-radius: 3px;
+  border-radius: 0;
   background: var(--envy-code-background);
 }
 
@@ -1474,7 +1477,7 @@ body.popout-window {
   font: inherit;
   font-size: 12px;
   padding: 5px 14px;
-  border-radius: 7px;
+  border-radius: 0;
   border: 1px solid color-mix(in srgb, var(--envy-marker) 55%, transparent);
   background: transparent;
   color: var(--envy-text);
@@ -1501,10 +1504,10 @@ body.popout-window {
 #image-picker-panel {
   width: min(480px, 90vw);
   height: min(440px, 82vh);
-  border-radius: 12px;
+  border-radius: 0;
   background: var(--envy-title-bar-background);
-  border: 1px solid color-mix(in srgb, var(--envy-marker) 45%, transparent);
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+  border: 1px solid var(--envy-link);
+  box-shadow: none;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -1518,7 +1521,7 @@ body.popout-window {
   font: inherit;
   font-size: 13px;
   padding: 6px 9px;
-  border-radius: 7px;
+  border-radius: 0;
   border: 1px solid color-mix(in srgb, var(--envy-marker) 55%, transparent);
   background: var(--envy-background);
   color: var(--envy-text);
@@ -1610,7 +1613,7 @@ body.popout-window {
   font: inherit;
   font-size: 11px;
   padding: 3px 9px;
-  border-radius: 6px;
+  border-radius: 0;
   border: 1px solid color-mix(in srgb, var(--envy-marker) 55%, transparent);
   background: transparent;
   color: var(--envy-text);
@@ -1632,7 +1635,7 @@ body.popout-window {
   border-left: none;
   padding: 3px 6px;
 }
-#fleeting-submit-group.no-folders #fleeting-submit { border-radius: 6px; }
+#fleeting-submit-group.no-folders #fleeting-submit { border-radius: 0; }
 #fleeting-submit-group.no-folders #fleeting-submit-menu { display: none; }
 #fleeting-actions button.destructive {
   color: var(--envy-due-overdue);
@@ -1743,14 +1746,14 @@ body.popout-window {
   color: var(--envy-tag);
   background: var(--envy-tag-background);
   font-weight: 700;
-  border-radius: 4px;
+  border-radius: 0;
   padding: 1px 4px;
 }
 
 /* --- Due dates -----------------------------------------------------------
    Three tokens, not one color plus urgency logic — urgency picks the slot,
    it never overrides what's in it. */
-.envy-due { font-weight: 600; border-radius: 4px; padding: 1px 4px; }
+.envy-due { font-weight: 600; border-radius: 0; padding: 1px 4px; }
 .envy-due-later   { color: var(--envy-due); }
 .envy-due-soon    { color: var(--envy-due-soon); }
 .envy-due-overdue { color: var(--envy-due-overdue); }
@@ -1775,7 +1778,8 @@ body.popout-window {
   align-items: baseline;
   gap: 4px;
   padding: 0 6px;
-  border-radius: 999px;
+  border-radius: 0;
+  border: 1px solid color-mix(in srgb, var(--envy-link) 40%, transparent);
   background: color-mix(in srgb, var(--envy-link) 15%, transparent);
   color: var(--envy-link);
   cursor: pointer;
@@ -1928,10 +1932,10 @@ body.popout-window {
   max-height: 320px;
   display: flex;
   flex-direction: column;
-  border-radius: 8px;
+  border-radius: 0;
   background: var(--envy-title-bar-background);
-  border: 1px solid color-mix(in srgb, var(--envy-marker) 55%, transparent);
-  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.45);
+  border: 1px solid var(--envy-link);
+  box-shadow: none;
   overflow: hidden;
 }
 #link-preview.hidden { display: none; }
@@ -1962,7 +1966,7 @@ body.popout-window {
   font-size: 11px;
   line-height: 1;
   padding: 2px 6px;
-  border-radius: 5px;
+  border-radius: 0;
   border: 1px solid transparent;
   background: transparent;
   color: var(--envy-blockquote);

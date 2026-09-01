@@ -405,7 +405,7 @@ function renderStats() {
   const text = view.state.doc.toString()
   const words = countWords(text)
   const chars = countCharacters(text)
-  statsEl.textContent = `${words.toLocaleString()} word${words === 1 ? '' : 's'}, ${chars.toLocaleString()} character${chars === 1 ? '' : 's'}`
+  statsEl.textContent = `${words.toLocaleString()} word${words === 1 ? '' : 's'} │ ${chars.toLocaleString()} character${chars === 1 ? '' : 's'}`
   renderVaultLabel()
 }
 
@@ -427,7 +427,7 @@ function renderVaultLabel() {
   const { notes, folders } = vaultCounts
   let label = `${notes.toLocaleString()} note${notes === 1 ? '' : 's'}`
   if (settings.includeSubfolders) {
-    label += ` · ${folders.toLocaleString()} folder${folders === 1 ? '' : 's'}`
+    label += ` │ ${folders.toLocaleString()} folder${folders === 1 ? '' : 's'}`
   }
   vaultStatsEl.textContent = label
   vaultStatsEl.classList.remove('hidden')

@@ -11,8 +11,8 @@
     "description": "Bold text — select text and press Cmd+B to wrap or unwrap it"
    },
    {
-    "syntax": "*italic*",
-    "description": "Italic text — select text and press Cmd+I to wrap or unwrap it"
+    "syntax": "*italic* or _italic_",
+    "description": "Italic text — asterisks or underscores. Select text and press Cmd+I to wrap or unwrap it"
    },
    {
     "syntax": "***bold italic***",

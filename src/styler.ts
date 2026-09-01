@@ -230,6 +230,11 @@ const P = {
   boldItalic: /\*\*\*([^*\n]+)\*\*\*/g,
   bold: /\*\*([^*\n]+)\*\*/g,
   italic: /(?<!\*)\*([^*\n]+)\*(?!\*)/g,
+  /// GFM underscore emphasis. `(?!_)` keeps `__bold__` off the italic pass;
+  /// word-boundaries keep `snake_case` alone. The Omarchy manual writes
+  /// `_Install > Browser_` and `_beautiful_`.
+  boldUnderscore: /(?<!\w)__([^_\n]+?)__(?!\w)/g,
+  italicUnderscore: /(?<!\w)_(?!_)([^_\n]+?)_(?!_|\w)/g,
   strikethrough: /~~([^~\n]+)~~/g,
   highlight: /==([^=\n]+)==/g,
   code: /`([^`\n]+)`/g,
@@ -1008,12 +1013,16 @@ function buildDecorations(view: EditorView): DecorationSet {
     // --- Inline constructs ------------------------------------------------
     // Order matters and mirrors the Swift: *** before ** before *, and embed
     // before wikiLink so "![[X]]" isn't read as a bare "[[X]]" with a stray "!".
+    // Underscore forms sit next to their asterisk twins so `__bold__` claims
+    // before `_italic_`, the same way `**` claims before `*`.
     const inline: Array<[RegExp, Decoration, number]> = [
       [P.embed, styles.wikiLink, 3],
       [P.wikiLink, styles.wikiLink, 2],
       [P.boldItalic, styles.boldItalic, 3],
       [P.bold, styles.bold, 2],
+      [P.boldUnderscore, styles.bold, 2],
       [P.italic, styles.italic, 1],
+      [P.italicUnderscore, styles.italic, 1],
       [P.strikethrough, styles.strikethrough, 2],
     ]
     const claimed: Array<[number, number]> = []
@@ -1375,7 +1384,9 @@ function renderTableCell(md: string): string {
   )
   s = s.replace(/\*\*\*([^*]+)\*\*\*/g, '<strong><em>$1</em></strong>')
   s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+  s = s.replace(/__([^_]+)__/g, '<strong>$1</strong>')
   s = s.replace(/\*([^*]+)\*/g, '<em>$1</em>')
+  s = s.replace(/(?<!\w)_(?!_)([^_]+)_(?!_|\w)/g, '<em>$1</em>')
   s = s.replace(/~~([^~]+)~~/g, '<del>$1</del>')
   s = s.replace(/==([^=]+)==/g, '<mark>$1</mark>')
   s = s.replace(/\[\[([^\]|#]+)(?:\|([^\]]+))?\]\]/g, (_m, title: string, alias?: string) => {
