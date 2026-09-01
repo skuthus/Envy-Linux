@@ -51,6 +51,17 @@
   background: color-mix(in srgb, var(--envy-text) 45%, transparent);
   background-clip: content-box;
 }
+/* The editor is the exception to the hover-only rule: a note taller than the
+   pane shows its scrollbar thumb the whole time, not just while the pointer is
+   over it, so "this note scrolls" is visible the moment it opens rather than
+   only once you happen to hover. It still brightens on direct hover. */
+.cm-editor .cm-scroller::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--envy-marker) 85%, transparent);
+  background-clip: content-box;
+}
+.cm-editor .cm-scroller::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--envy-text) 45%, transparent);
+}
 
 html, body {
   margin: 0;
@@ -1653,7 +1664,15 @@ body.popout-window {
   font-weight: var(--envy-font-weight);
   line-height: var(--envy-line-height, 24px);
   -webkit-text-stroke: var(--envy-font-embolden) currentColor;
-  padding: 12px 16px 40vh;
+  /* A small, static bottom padding — not the tall scroll-past-end space it
+     used to carry. That space (40vh) inflated the scroll height, so a note
+     whose text fit on screen still showed a scrollbar. Keeping the padding
+     static and modest means overflow is decided once, from the real content:
+     a note that overflows shows a scrollbar reliably from its first layout,
+     and one that fits shows none. (A dynamic version that dropped the space
+     only when a note fit ran into WebKitGTK not repainting the scrollbar for a
+     long note until the window was refocused.) */
+  padding: 12px 16px 24px;
   /* Long fenced lines scroll inside their panel, not the whole note. */
   overflow-x: hidden;
   overflow-y: auto;
