@@ -342,8 +342,8 @@ body.fade-focus #editor-pane:focus-within {
   align-items: center;
   gap: 3px;
   font: inherit;
-  /* The same size as the rows beneath it — one interface size throughout. */
-  font-size: var(--envy-font-size);
+  /* A touch smaller than the rows beneath it — the sort header is chrome. */
+  font-size: 11px;
   font-weight: 600;
   padding: 0;
   border: none;
@@ -868,6 +868,8 @@ body.popout-window {
   gap: 0.75em;
   flex: none;
   padding: 1px var(--envy-inset);
+  /* A touch smaller than the note/list text — the status bar is chrome. */
+  font-size: 11px;
   font-variant-numeric: tabular-nums;
   color: var(--envy-blockquote);
   background: color-mix(in srgb, var(--envy-marker) 10%, var(--envy-title-bar-background));
