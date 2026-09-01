@@ -2,9 +2,12 @@
 //! jumping a notch at a time.
 //!
 //! WebKitGTK on Linux delivers discrete line ticks even from a high-rate
-//! mouse; without this a 120 Hz panel still looks like ~15 Hz. Pixel-mode
-//! trackpad deltas are interpolated with the same path so they stay in
-//! lockstep with vsync rather than painting on the event's own cadence.
+//! mouse; without this a 120 Hz panel still looks like ~15 Hz. Those line
+//! ticks are what the interpolation is for.
+//!
+//! Pixel-mode deltas (trackpads, high-res wheels) already arrive smooth and
+//! high-rate, so we leave them to the platform: easing them only adds ~TAU of
+//! latency, which reads as the scroll lagging behind your fingers.
 //!
 //! `prefers-reduced-motion: reduce` leaves the native wheel alone.
 
@@ -115,6 +118,13 @@ function onWheel(e: WheelEvent) {
   const signY = e.shiftKey && e.deltaX === 0 ? 0 : e.deltaY
   const el = scrollerFrom(e.target, signX, signY)
   if (!el) return
+
+  // Pixel-mode deltas (trackpad, high-res wheel) already arrive smooth and
+  // high-rate; the platform scrolls them directly, momentum and all. Easing
+  // them only adds ~TAU of latency, so hand them back. Per-app sensitivity, if
+  // ever wanted, belongs in Hyprland's `scroll_touchpad` window rule, not here.
+  // Interpolation is reserved for discrete line/page ticks.
+  if (e.deltaMode === WheelEvent.DOM_DELTA_PIXEL) return
 
   const { x, y } = pxDelta(e, el)
   if (x === 0 && y === 0) return
