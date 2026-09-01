@@ -1993,7 +1993,10 @@ function showTrashPreview(note: NoteDto | null) {
   emptyEl.classList.add('hidden')
 }
 
-function renderTrashList() {
+/// `scrollToHighlight` is off for the right-click path: the row under the
+/// pointer is already on screen, and a scroll event would close the context
+/// menu that opens right after this returns.
+function renderTrashList(scrollToHighlight = true) {
   // Trashed rows always carry a date, whatever the notes list was showing.
   listPaneEl.classList.add('has-date')
   hidePinnedStrip()
@@ -2023,7 +2026,7 @@ function renderTrashList() {
       row.oncontextmenu = (e) => {
         e.preventDefault()
         highlighted = i
-        renderTrashList()
+        renderTrashList(false)
         showTrashPreview(note)
         openContextMenu(e.clientX, e.clientY, trashMenuItems(note))
       }
@@ -2031,7 +2034,7 @@ function renderTrashList() {
     }),
   )
   showTrashPreview(trashResults[highlighted] ?? null)
-  scrollHighlightedRowIntoView()
+  if (scrollToHighlight) scrollHighlightedRowIntoView()
 }
 
 /// The browse lists (trash, templates, catalogs) build every row in flow rather
@@ -2173,8 +2176,15 @@ async function openHighlightedTemplate() {
 /// not the insertion point. Nothing happens for a blank query, or one made
 /// only of operators that name nothing literal, since there's nothing lit up
 /// to go to. Mirrors the Mac's jumpToFirstSearchMatch (1.11.0).
-function jumpToFirstSearchMatch() {
+let lastJumpedQuery: string | null = null
+function jumpToFirstSearchMatch(force = false) {
   const query = searchInput.value
+  // Only when the query itself changed (or a different note opened). runSearch
+  // also re-runs for the watcher and after edits, and yanking the editor to
+  // the match again while someone is typing would be the lurch this exists to
+  // avoid.
+  if (!force && query === lastJumpedQuery) return
+  lastJumpedQuery = query
   if (!query.trim() || view.state.doc.length === 0) return
   const pos = firstSearchMatch(view.state.doc.toString(), query)
   if (pos === null) return
@@ -2287,7 +2297,7 @@ async function openNote(id: string) {
   view.requestMeasure()
   // Opening a result of a search lands on what matched, not on the top of the
   // note — the same jump typing in the box makes for the note already open.
-  jumpToFirstSearchMatch()
+  jumpToFirstSearchMatch(true)
   renderStats()
   await refreshInterlinks()
 }
@@ -2638,7 +2648,7 @@ async function renameFolderFlow(oldPath: string) {
 
 /// Renders the catalog into the list. Rows are keyboard-navigable like the note
 /// list; the primary row is highlighted, click pivots, right-click acts.
-function renderCatalog(kind: CatalogKind) {
+function renderCatalog(kind: CatalogKind, scrollToHighlight = true) {
   listPaneEl.classList.remove('has-date')
   hidePinnedStrip()
   const colors = kind === 'tag' ? tagColors() : folderColors()
@@ -2698,13 +2708,14 @@ function renderCatalog(kind: CatalogKind) {
       row.oncontextmenu = (e) => {
         e.preventDefault()
         highlighted = i
-        renderCatalog(kind)
+        // No highlight scroll here — see renderTrashList.
+        renderCatalog(kind, false)
         openContextMenu(e.clientX, e.clientY, menu())
       }
       return row
     }),
   )
-  scrollHighlightedRowIntoView()
+  if (scrollToHighlight) scrollHighlightedRowIntoView()
 }
 
 /// Moves `ids` into `subfolder` (null = the Index root), the selection following
