@@ -6,8 +6,8 @@
 //
 //   node scripts/gen-test-vault.mjs [dir] [count]
 //
-// Defaults to ~/Envy\ Test\ Vault and 5500 notes. Refuses to write
-// into a directory that already holds .md files, so it can never trample a
+// Defaults to ~/Envy\ Test\ Vault and 5500 notes. Refuses to write into a
+// directory that already holds anything at all, so it can never trample a
 // real Index.
 
 import fs from 'node:fs'
@@ -210,9 +210,15 @@ function body() {
 }
 
 // --- write --------------------------------------------------------------------
+// Any existing entry is enough to refuse. Checking only for .md at the top level
+// missed a real Index whose notes all live in subfolders, and a vault is not the
+// kind of thing to be wrong about twice.
 if (fs.existsSync(dir)) {
-  const hasMd = (d) => { try { return fs.readdirSync(d).some((f) => f.endsWith('.md')) } catch { return false } }
-  if (hasMd(dir)) { console.error(`Refusing: ${dir} already holds .md files.`); process.exit(1) }
+  let entries
+  try { entries = fs.readdirSync(dir) } catch (e) {
+    console.error(`Refusing: cannot read ${dir} (${e.message}).`); process.exit(1)
+  }
+  if (entries.length) { console.error(`Refusing: ${dir} is not empty.`); process.exit(1) }
 }
 fs.mkdirSync(dir, { recursive: true })
 for (const f of folders) if (f.path) fs.mkdirSync(path.join(dir, f.path), { recursive: true })

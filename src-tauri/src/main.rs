@@ -41,13 +41,22 @@ fn linux_font_rendering() {
     use std::path::PathBuf;
 
     if std::env::var_os("FONTCONFIG_FILE").is_none() {
-        let dir = std::env::var_os("XDG_RUNTIME_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(std::env::temp_dir);
-        let path = dir.join("envy-fontconfig.conf");
-        if std::fs::write(&path, include_str!("../../linux/fonts.conf")).is_ok() {
-            // SAFETY: main thread, before other threads exist.
-            unsafe { std::env::set_var("FONTCONFIG_FILE", &path) };
+        // The runtime dir is per-user and 0700. `temp_dir()` is neither: on a
+        // shared machine anyone could pre-create the file we are about to point
+        // FONTCONFIG_FILE at, and fontconfig would load their rules into this
+        // process. Fall back to our own cache dir instead, and if even that
+        // can't be made, leave the override off rather than write somewhere
+        // world-writable — the app just gets the system's font settings.
+        let dir = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).or_else(|| {
+            let cache = dirs::cache_dir()?.join("app.envynote.linux");
+            std::fs::create_dir_all(&cache).ok()?;
+            Some(cache)
+        });
+        if let Some(path) = dir.map(|d| d.join("envy-fontconfig.conf")) {
+            if std::fs::write(&path, include_str!("../../linux/fonts.conf")).is_ok() {
+                // SAFETY: main thread, before other threads exist.
+                unsafe { std::env::set_var("FONTCONFIG_FILE", &path) };
+            }
         }
     }
 

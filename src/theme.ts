@@ -119,10 +119,26 @@ export const enviousLight: EnvyTheme = {
   titleBarBackground: 'rgb(240, 239, 234)',
 }
 
-export function applyTheme(theme: EnvyTheme) {
+/// The CSS property each theme key ends up feeding, so a value can be checked
+/// before it is set. Everything not listed here is a colour.
+const CSS_PROPERTY: Partial<Record<keyof EnvyTheme, string>> = {
+  fontFamily: 'font-family',
+  monoFamily: 'font-family',
+  fontSize: 'font-size',
+}
+
+/// Omarchy's `colors.toml` is a file we don't own, so a value can be anything.
+/// `setProperty` silently drops a value it can't parse, which would leave the
+/// variable holding whatever the *previous* theme set — a half-applied palette
+/// that's worse than no theme at all. Check first and fall back to the Envious
+/// default for that same key instead.
+export function applyTheme(theme: EnvyTheme, dark = true) {
   const root = document.documentElement.style
+  const defaults = dark ? enviousDark : enviousLight
   for (const [key, value] of Object.entries(theme)) {
-    root.setProperty(`--envy-${key.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase())}`, value)
+    const prop = CSS_PROPERTY[key as keyof EnvyTheme] ?? 'color'
+    const safe = CSS.supports(prop, value) ? value : defaults[key as keyof EnvyTheme]
+    root.setProperty(`--envy-${key.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase())}`, safe)
   }
 }
 
@@ -283,7 +299,7 @@ export function applyStoredAppearance() {
     theme = withSurfaceAlpha({ ...(dark ? enviousDark : enviousLight), fontFamily: font, monoFamily: font }, !dark)
   }
 
-  applyTheme(theme)
+  applyTheme(theme, dark)
   document.documentElement.style.colorScheme = dark ? 'dark' : 'light'
   document.documentElement.classList.toggle('theme-light', !dark)
   document.documentElement.classList.toggle('theme-dark', dark)

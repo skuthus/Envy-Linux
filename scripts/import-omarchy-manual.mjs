@@ -3,17 +3,36 @@
 // filename = title, wiki-links between chapters, images as ![[attachments]],
 // tags, highlights. Never opens a note with `# ${title}`.
 //
-//   node scripts/import-omarchy-manual.mjs [src-manual-dir] [dest-index]
+//   node scripts/import-omarchy-manual.mjs [src-manual-dir] [dest-index] [--force]
 //
 // Defaults: /tmp/omarchy-manual-src/manual  →  ~/Envy Omarchy Manual
+//
+// The destination is written fresh. If it already exists and holds anything,
+// the script refuses unless --force is passed, since the destination is an
+// ordinary path someone can mistype into a real Index.
 
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 
-const srcDir = process.argv[2] ?? '/tmp/omarchy-manual-src/manual'
-const destDir = process.argv[3] ?? path.join(os.homedir(), 'Envy Omarchy Manual')
+const args = process.argv.slice(2)
+const force = args.includes('--force') || args.includes('--wipe')
+const positional = args.filter((a) => !a.startsWith('--'))
+const srcDir = positional[0] ?? '/tmp/omarchy-manual-src/manual'
+const destDir = positional[1] ?? path.join(os.homedir(), 'Envy Omarchy Manual')
 const systemThemes = '/usr/share/omarchy/themes'
+
+/// The only two trees an image reference is allowed to name. Everything the
+/// manual points at either ships in the checkout or is an installed theme.
+const imageRoots = [path.resolve(srcDir), path.resolve(systemThemes)]
+
+/// A markdown image href is text we don't control, so `../` in the middle of
+/// one would walk the copy out of those trees and into anything readable.
+/// Resolve the whole path first, then insist it stayed inside.
+function within(root, target) {
+  const rel = path.relative(root, target)
+  return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel)
+}
 
 const ILLEGAL = new Set(['<', '>', ':', '"', '/', '\\', '|', '?', '*'])
 
@@ -104,17 +123,32 @@ function copyImage(absSrc, destName) {
 function importImage(href, alt) {
   const clean = href.split('?')[0]
   if (clean.startsWith('images/')) {
+    const abs = path.resolve(srcDir, clean)
+    if (!within(imageRoots[0], abs)) {
+      console.warn(`Skipping ${href}: resolves outside ${srcDir}.`)
+      return null
+    }
     const name = path.basename(clean)
-    return copyImage(path.join(srcDir, clean), name) ? { name, alt } : null
+    return copyImage(abs, name) ? { name, alt } : null
   }
   if (clean.startsWith('../themes/')) {
     const parts = clean.split('/')
+    // `../themes/<theme>/<file>` and nothing deeper or shallower.
+    if (parts.length !== 4) {
+      console.warn(`Skipping ${href}: not a ../themes/<theme>/<file> reference.`)
+      return null
+    }
     const theme = parts[2]
     const file = parts[3]
     const destName = `theme-${theme}-${file}`
-    const fromManual = path.join(srcDir, clean)
-    const fromSystem = path.join(systemThemes, theme, file)
-    const src = fs.existsSync(fromManual) ? fromManual : fromSystem
+    const candidates = [path.resolve(srcDir, clean), path.resolve(systemThemes, theme, file)]
+    const src = candidates.find(
+      (c) => imageRoots.some((root) => within(root, c)) && fs.existsSync(c),
+    )
+    if (!src) {
+      console.warn(`Skipping ${href}: outside the manual and theme folders, or missing.`)
+      return null
+    }
     return copyImage(src, destName) ? { name: destName, alt: alt || theme } : null
   }
   return null
@@ -214,8 +248,14 @@ function hubBody() {
 }
 
 if (fs.existsSync(destDir)) {
-  for (const ent of fs.readdirSync(destDir)) {
-    if (ent === '.git') continue
+  const entries = fs.readdirSync(destDir).filter((ent) => ent !== '.git')
+  // Emptying the destination is the one destructive thing this script does, and
+  // the destination is just an argument — so it has to be asked for out loud.
+  if (entries.length && !force) {
+    console.error(`Refusing: ${destDir} is not empty. Pass --force to replace its contents.`)
+    process.exit(1)
+  }
+  for (const ent of entries) {
     fs.rmSync(path.join(destDir, ent), { recursive: true, force: true })
   }
 }

@@ -110,6 +110,25 @@ impl NoteStore {
         &self.directory
     }
 
+    /// Whether writing to `target` stays inside the Index. Checked before every
+    /// rename/write/delete this store performs on a note- or folder-derived
+    /// path — see `writes_inside`.
+    fn contains(&self, target: &Path) -> bool {
+        writes_inside(target, &self.directory)
+    }
+
+    /// The io-returning twin of `contains`, for the callers that report a
+    /// refusal as an error rather than a `None`.
+    fn guard_write(&self, target: &Path) -> std::io::Result<()> {
+        if self.contains(target) {
+            return Ok(());
+        }
+        Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "that path is outside the Index",
+        ))
+    }
+
     pub fn notes(&self) -> &[Note] {
         &self.notes
     }
@@ -183,11 +202,9 @@ impl NoteStore {
             };
             for entry in entries.filter_map(|e| e.ok()) {
                 let path = entry.path();
-                let is_dir = match entry.file_type() {
-                    Ok(t) if t.is_symlink() => path.is_dir(),
-                    Ok(t) => t.is_dir(),
-                    Err(_) => path.is_dir(),
-                };
+                // Symlinks skipped, as in the note scan: a folder you can file
+                // a note into has to genuinely be inside the Index.
+                let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
                 if !is_dir || is_hidden(&path) {
                     continue;
                 }
@@ -242,6 +259,12 @@ impl NoteStore {
             return Some(note);
         }
 
+        // Both ends of the move have to resolve inside the Index: `target_dir`
+        // is built from frontend text and `note.url()` can be stale, so neither
+        // is taken on trust before a file is moved.
+        if !self.contains(&target_dir) {
+            return None;
+        }
         fs::create_dir_all(&target_dir).ok()?;
         let destination = target_dir.join(unique_filename(note.title(), &target_dir));
         // `unique_filename` de-dups a collision to "Foo (2)" — but for a *move*
@@ -261,6 +284,9 @@ impl NoteStore {
             if stem != sanitize_title(note.title()) {
                 return None;
             }
+        }
+        if !self.contains(note.url()) || !self.contains(&destination) {
+            return None;
         }
         fs::rename(note.url(), &destination).ok()?;
 
@@ -380,6 +406,11 @@ impl NoteStore {
             return None;
         }
 
+        // The lexical check above can't see a symlinked component; this one
+        // resolves both ends for real before a whole folder is moved.
+        if !self.contains(&old_url) || !self.contains(&new_url) {
+            return None;
+        }
         if let Some(parent) = new_url.parent() {
             fs::create_dir_all(parent).ok()?;
         }
@@ -434,6 +465,10 @@ impl NoteStore {
             }
             let url = self.notes[i].url().to_path_buf();
             let modified = self.notes[i].modified;
+            // Never write through a note whose path resolves outside the Index.
+            if !self.contains(&url) {
+                continue;
+            }
             if fs::write(&url, updated.as_bytes()).is_err() {
                 continue;
             }
@@ -520,6 +555,9 @@ impl NoteStore {
 
     fn create_in(&mut self, title: &str, dir: PathBuf) -> std::io::Result<Note> {
         let path = dir.join(unique_filename(title, &dir));
+        // `dir` is sanitized, but a symlinked component can still land the file
+        // outside the vault — resolve it before creating anything.
+        self.guard_write(&path)?;
         fs::write(&path, "")?;
         let note = Note::new(path, "", SystemTime::now());
         self.notes.insert(0, note.clone());
@@ -555,6 +593,7 @@ impl NoteStore {
     }
 
     pub fn save(&mut self, note: &Note) -> std::io::Result<()> {
+        self.guard_write(note.url())?;
         fs::write(note.url(), note.content())?;
         if let Some(existing) = self.notes.iter_mut().find(|n| n.id() == note.id()) {
             existing.set_content(note.content());
@@ -581,6 +620,8 @@ impl NoteStore {
             dir.join(unique_filename(trimmed, &dir))
         };
 
+        self.guard_write(note.url())?;
+        self.guard_write(&new_path)?;
         fs::rename(note.url(), &new_path)?;
         let renamed = Note::new(new_path, note.content(), SystemTime::now());
         if let Some(slot) = self.notes.iter_mut().find(|n| n.id() == note.id()) {
@@ -636,7 +677,7 @@ impl NoteStore {
             }
             let path = self.notes[idx].url().to_path_buf();
             let original_modified = self.notes[idx].modified;
-            if fs::write(&path, &updated).is_err() {
+            if !self.contains(&path) || fs::write(&path, &updated).is_err() {
                 continue;
             }
             // Restore the modification time the rewrite just clobbered.
@@ -656,10 +697,17 @@ impl NoteStore {
                 continue;
             };
             let trash_dir = parent.join(TRASH_FOLDER_NAME);
+            // A note whose path resolves outside the Index is not ours to move.
+            if !self.contains(note.url()) || !self.contains(&trash_dir) {
+                continue;
+            }
             if fs::create_dir_all(&trash_dir).is_err() {
                 continue;
             }
             let destination = trash_dir.join(unique_filename(note.title(), &trash_dir));
+            if !self.contains(&destination) {
+                continue;
+            }
             if fs::rename(note.url(), &destination).is_ok() {
                 trashed.push((note.clone(), destination));
             }
@@ -686,6 +734,9 @@ impl NoteStore {
             if note.url().exists() {
                 continue;
             }
+            if !self.contains(&trashed_path) || !self.contains(note.url()) {
+                continue;
+            }
             if fs::rename(&trashed_path, note.url()).is_ok() {
                 restored.push(note);
             }
@@ -702,6 +753,9 @@ impl NoteStore {
         let trash_dir = note.url().parent()?;
         let original_dir = trash_dir.parent()?;
         let destination = original_dir.join(unique_filename(note.title(), original_dir));
+        if !self.contains(note.url()) || !self.contains(&destination) {
+            return None;
+        }
         fs::rename(note.url(), &destination).ok()?;
         let restored = Note::new(destination, note.content(), note.modified);
         self.notes.push(restored.clone());
@@ -713,7 +767,9 @@ impl NoteStore {
     /// so nothing the app does is ever truly unrecoverable — the Mac's
     /// deleteFromTrash moves the file to the macOS Trash the same way.
     pub fn delete_from_trash(&mut self, note: &Note) {
-        let _ = trash::delete(note.url());
+        if self.contains(note.url()) {
+            let _ = trash::delete(note.url());
+        }
         self.refresh_trashed();
     }
 
@@ -721,7 +777,10 @@ impl NoteStore {
     /// second, slower stage of deletion, driven on a schedule by the app layer.
     /// Recycled, not erased, matching the Mac's emptyTrash (trashItem).
     pub fn empty_trash(&mut self) {
-        let dirs = all_trash_directories(&self.directory);
+        let dirs: Vec<PathBuf> = all_trash_directories(&self.directory)
+            .into_iter()
+            .filter(|d| self.contains(d))
+            .collect();
         let _ = trash::delete_all(&dirs);
         self.refresh_trashed();
     }
@@ -731,6 +790,11 @@ impl NoteStore {
     /// The vault's single `Attachments/` folder. Not created here — the writers
     /// make it on demand, so merely resolving a path never leaves an empty
     /// folder behind.
+    /// The largest file that may be copied into `Attachments/`. Well past any
+    /// real screenshot or photo, small enough that a mis-drop of a disk image
+    /// fails fast rather than duplicating gigabytes into the vault.
+    pub const MAX_ATTACHMENT_BYTES: u64 = 64 * 1024 * 1024;
+
     pub fn attachments_dir(&self) -> PathBuf {
         self.directory.join(ATTACHMENTS_FOLDER_NAME)
     }
@@ -755,8 +819,16 @@ impl NoteStore {
     /// `Pasted image (2).png`, …), matching the Mac's `saveAttachment`.
     pub fn save_attachment(&self, bytes: &[u8], base: &str, ext: &str) -> std::io::Result<String> {
         let dir = self.attachments_dir();
+        // The extension decides what the vault ends up holding, so it is held
+        // to the same list the renderer will show — otherwise the paste handler
+        // (or anything reaching the command behind it) could drop a `.desktop`
+        // or a `.sh` into a folder people open from the app.
+        let name = format!("{base}.{ext}");
+        if !crate::note::is_image_attachment(&name) {
+            return Err(not_an_image());
+        }
         fs::create_dir_all(&dir)?;
-        let name = available_attachment_name(&format!("{base}.{ext}"), &dir);
+        let name = available_attachment_name(&name, &dir);
         fs::write(dir.join(&name), bytes)?;
         Ok(name)
     }
@@ -810,7 +882,11 @@ impl NoteStore {
             return Some(old_name.to_string());
         }
         let final_name = available_attachment_name(new_name, &dir);
-        fs::rename(&old_path, dir.join(&final_name)).ok()?;
+        let destination = dir.join(&final_name);
+        if !self.contains(&old_path) || !self.contains(&destination) {
+            return None;
+        }
+        fs::rename(&old_path, destination).ok()?;
         self.update_attachment_references(old_name, &final_name);
         Some(final_name)
     }
@@ -852,7 +928,7 @@ impl NoteStore {
             }
             let path = self.notes[idx].url().to_path_buf();
             let original_modified = self.notes[idx].modified;
-            if fs::write(&path, &updated).is_err() {
+            if !self.contains(&path) || fs::write(&path, &updated).is_err() {
                 continue;
             }
             let _ = set_modified(&path, original_modified);
@@ -866,11 +942,28 @@ impl NoteStore {
     /// path, matching the Mac's `copyAttachment` (a copy, not a move).
     pub fn copy_attachment(&self, source: &Path) -> std::io::Result<String> {
         let dir = self.attachments_dir();
-        fs::create_dir_all(&dir)?;
         let original = source
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| "attachment".to_string());
+        // A drop hands us whatever path the desktop gives it, so the source is
+        // checked before anything is copied in: an image by name, a plain file
+        // rather than a directory or a device (reading `/dev/zero` never ends),
+        // and small enough that a stray drop can't fill the disk.
+        if !crate::note::is_image_attachment(&original) {
+            return Err(not_an_image());
+        }
+        let meta = fs::metadata(source)?;
+        if !meta.is_file() {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "that isn't a file"));
+        }
+        if meta.len() > Self::MAX_ATTACHMENT_BYTES {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "that image is larger than 64 MB",
+            ));
+        }
+        fs::create_dir_all(&dir)?;
         let name = available_attachment_name(&original, &dir);
         fs::copy(source, dir.join(&name))?;
         Ok(name)
@@ -885,6 +978,9 @@ impl NoteStore {
         };
         let mut out: Vec<NoteTemplate> = entries
             .filter_map(|e| e.ok())
+            // A template is read and written back by path, so a symlinked one
+            // would make either reach any file on disk.
+            .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
             .map(|e| e.path())
             .filter(|p| is_markdown(p))
             .map(|path| NoteTemplate {
@@ -925,6 +1021,7 @@ impl NoteStore {
         let raw = fs::read_to_string(&template.path).unwrap_or_default();
         let content = apply_template_tokens(&raw, &base, date_text, time_text);
 
+        self.guard_write(&path)?;
         fs::write(&path, &content)?;
         let note = Note::new(path, content, SystemTime::now());
         self.notes.insert(0, note.clone());
@@ -939,6 +1036,9 @@ impl NoteStore {
         let dir = self.directory.join(TEMPLATES_FOLDER_NAME);
         fs::create_dir_all(&dir).ok()?;
         let path = dir.join(unique_filename(note.title(), &dir));
+        if !self.contains(note.url()) || !self.contains(&path) {
+            return None;
+        }
         fs::rename(note.url(), &path).ok()?;
         self.notes.retain(|n| n.id() != note.id());
         Some(NoteTemplate {
@@ -1128,6 +1228,47 @@ fn replace_all(re: &Regex, text: &str, replacement: &str) -> String {
     out
 }
 
+/// A directory that really is one — `symlink_metadata` rather than `is_dir`,
+/// so a symlink pointing at a directory doesn't count. Every walk in this file
+/// skips symlinks; the write guards below assume what they found is inside.
+fn is_real_dir(path: &Path) -> bool {
+    fs::symlink_metadata(path).map(|m| m.is_dir()).unwrap_or(false)
+}
+
+/// Whether a write to `target` actually lands inside `root`.
+///
+/// Resolved for real rather than lexically: a note path can reach us from a
+/// stale in-memory note or a frontend id, and a symlinked component anywhere
+/// along it would otherwise let a rename, a write or a delete step outside the
+/// Index. A target that doesn't exist yet — the destination of a rename, a
+/// folder about to be created — is resolved through its nearest existing
+/// ancestor, so creating `Projects/Sub/Note.md` from nothing still passes.
+fn writes_inside(target: &Path, root: &Path) -> bool {
+    let Ok(root) = dunce::canonicalize(root) else {
+        return false;
+    };
+    let mut tail: Vec<std::ffi::OsString> = Vec::new();
+    let mut probe = target;
+    loop {
+        if let Ok(base) = dunce::canonicalize(probe) {
+            let mut resolved = base;
+            for part in tail.iter().rev() {
+                resolved.push(part);
+            }
+            return resolved.starts_with(&root);
+        }
+        let (Some(name), Some(parent)) = (probe.file_name(), probe.parent()) else {
+            return false;
+        };
+        tail.push(name.to_os_string());
+        probe = parent;
+    }
+}
+
+fn not_an_image() -> std::io::Error {
+    std::io::Error::new(std::io::ErrorKind::InvalidInput, "attachments have to be images")
+}
+
 fn is_markdown(p: &Path) -> bool {
     p.extension()
         .is_some_and(|e| e.eq_ignore_ascii_case("md"))
@@ -1185,21 +1326,22 @@ fn note_paths(directory: &Path, include_subfolders: bool) -> Vec<(PathBuf, Syste
         };
         for entry in entries.filter_map(|e| e.ok()) {
             let path = entry.path();
-            // A symlink's own file_type says "symlink", not what it points at,
-            // so fall back to the path-based test for those alone — the Mac
-            // resolves symlinks here too, and they're rare enough that the
-            // extra syscall doesn't matter.
-            let is_dir = match entry.file_type() {
-                Ok(t) if t.is_symlink() => path.is_dir(),
-                Ok(t) => t.is_dir(),
-                Err(_) => path.is_dir(),
+            // A symlink is skipped rather than followed. It can point anywhere
+            // — a folder outside the vault, a note outside it, or a loop back
+            // in — and every write below is contained to the Index on the
+            // assumption that a note's path genuinely lives under it.
+            let Ok(file_type) = entry.file_type() else {
+                continue;
             };
-            if is_dir {
+            if file_type.is_symlink() {
+                continue;
+            }
+            if file_type.is_dir() {
                 if !recurse || is_hidden(&path) || service.contains(&path) {
                     continue;
                 }
                 walk(&path, service, true, out);
-            } else if is_markdown(&path) && !is_hidden(&path) {
+            } else if file_type.is_file() && is_markdown(&path) && !is_hidden(&path) {
                 let modified = entry
                     .metadata()
                     .and_then(|m| m.modified())
@@ -1213,7 +1355,7 @@ fn note_paths(directory: &Path, include_subfolders: bool) -> Vec<(PathBuf, Syste
 
     if !include_subfolders {
         let inbox = directory.join(INBOX_FOLDER_NAME);
-        if inbox.is_dir() {
+        if is_real_dir(&inbox) {
             walk(&inbox, &service, false, &mut out);
         }
     }
@@ -1297,7 +1439,9 @@ fn all_trash_directories(directory: &Path) -> Vec<PathBuf> {
         };
         for entry in entries.filter_map(|e| e.ok()) {
             let path = entry.path();
-            if !path.is_dir() {
+            // `file_type` doesn't follow the link, so a `.trash` symlinked out
+            // of the vault is never walked — nor emptied into the Recycle Bin.
+            if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
                 continue;
             }
             if path.file_name().is_some_and(|n| n == TRASH_FOLDER_NAME) {
@@ -1322,6 +1466,7 @@ pub fn scan_trashed_notes(directory: &Path) -> Vec<Note> {
         };
         for path in entries
             .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
             .map(|e| e.path())
             .filter(|p| is_markdown(p))
         {
@@ -1626,6 +1771,52 @@ mod tests {
         assert!(!is_contained(&base.join("../../secret.png"), base));
         // Nor is a sibling folder.
         assert!(!is_contained(Path::new("/tmp/TheIndex/Other/x"), base));
+    }
+
+    /// A symlink can point anywhere, so the scan never follows one. Otherwise
+    /// dropping an `Inbox` link into a vault would pull somebody else's notes
+    /// into the list — and every write in this file assumes a note's path
+    /// really is under the Index.
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_inbox_is_not_scanned() {
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(outside.path().join("Secret.md"), "not yours").unwrap();
+        let (dir, _store) = store_with(&[("Real.md", "x")]);
+        std::os::unix::fs::symlink(outside.path(), dir.path().join("Inbox")).unwrap();
+
+        let store = NoteStore::open(dir.path(), false).unwrap();
+        assert_eq!(titles(&store), vec!["Real"]);
+    }
+
+    /// `.trash` is emptied into the Recycle Bin wholesale, so a symlinked one
+    /// would take the folder it points at with it.
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_trash_is_ignored() {
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(outside.path().join("Deleted.md"), "not yours").unwrap();
+        let (dir, _store) = store_with(&[("Real.md", "x")]);
+        std::os::unix::fs::symlink(outside.path(), dir.path().join(".trash")).unwrap();
+
+        let store = NoteStore::open(dir.path(), false).unwrap();
+        assert!(store.trashed_notes().is_empty());
+        assert!(all_trash_directories(dir.path()).is_empty());
+    }
+
+    /// Same rule for a single file: a symlinked note would be saved, renamed
+    /// and trashed through the link, writing wherever it pointed.
+    #[cfg(unix)]
+    #[test]
+    fn a_symlinked_note_in_the_root_is_skipped() {
+        let outside = tempfile::tempdir().unwrap();
+        let target = outside.path().join("Secret.md");
+        fs::write(&target, "not yours").unwrap();
+        let (dir, _store) = store_with(&[("Real.md", "x")]);
+        std::os::unix::fs::symlink(&target, dir.path().join("Linked.md")).unwrap();
+
+        let store = NoteStore::open(dir.path(), false).unwrap();
+        assert_eq!(titles(&store), vec!["Real"]);
     }
 
     #[test]

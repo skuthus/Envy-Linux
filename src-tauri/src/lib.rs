@@ -476,12 +476,39 @@ fn copy_attachment(path: String, state: State<AppState>) -> Result<String, Strin
         .map_err(|e| e.to_string())
 }
 
+/// An attachment the UI may read, open or reveal, resolved to a real path.
+///
+/// `name` comes out of note text, so `attachment_path` already contains it to
+/// a single leaf inside `Attachments/`. What is left is the folder itself: a
+/// symlink planted in it would otherwise let a crafted `![[…]]` hand any file
+/// on the disk to the system opener. So the name has to read as an image, the
+/// path has to be a regular file, and where it really resolves to has to still
+/// be inside the attachments folder.
+fn resolved_attachment(name: &str, state: &State<AppState>) -> Result<PathBuf, String> {
+    if !envy_core::note::is_image_attachment(name) {
+        return Err("that isn't an image attachment".to_string());
+    }
+    let (dir, path) = {
+        let store = state.store.lock().unwrap();
+        (store.attachments_dir(), store.attachment_path(name))
+    };
+    if !std::fs::metadata(&path).map(|m| m.is_file()).unwrap_or(false) {
+        return Err("no such image".to_string());
+    }
+    let dir = std::fs::canonicalize(&dir).map_err(|e| e.to_string())?;
+    let path = std::fs::canonicalize(&path).map_err(|e| e.to_string())?;
+    if !path.starts_with(&dir) {
+        return Err("that image is outside the vault".to_string());
+    }
+    Ok(path)
+}
+
 /// The raw bytes of an attachment, for rendering it inline. Returned as an IPC
 /// response (an ArrayBuffer on the JS side), not a JSON number array, so a
 /// multi-megabyte image doesn't pay serialization overhead on every restyle.
 #[tauri::command]
 fn read_attachment(name: String, state: State<AppState>) -> Result<tauri::ipc::Response, String> {
-    let path = state.store.lock().unwrap().attachment_path(&name);
+    let path = resolved_attachment(&name, &state)?;
     std::fs::read(&path)
         .map(tauri::ipc::Response::new)
         .map_err(|e| e.to_string())
@@ -496,7 +523,7 @@ fn open_attachment(
     state: State<AppState>,
 ) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
-    let path = state.store.lock().unwrap().attachment_path(&name);
+    let path = resolved_attachment(&name, &state)?;
     app.opener()
         .open_path(path.to_string_lossy().to_string(), None::<&str>)
         .map_err(|e| e.to_string())
@@ -524,7 +551,7 @@ fn rename_attachment(
 /// menu item, matching the Mac's activateFileViewerSelecting.
 #[tauri::command]
 fn reveal_attachment(name: String, state: State<AppState>) -> Result<(), String> {
-    let path = state.store.lock().unwrap().attachment_path(&name);
+    let path = resolved_attachment(&name, &state)?;
     reveal_path(&path)
 }
 
@@ -741,6 +768,16 @@ fn set_index_directory(
     state: State<AppState>,
     app: tauri::AppHandle,
 ) -> Result<usize, String> {
+    // The root has no parent, and scanning it would walk the whole machine —
+    // as would an empty path, which resolves to the working directory. A path
+    // that exists but isn't a folder can't hold notes either.
+    let chosen = Path::new(&path);
+    if chosen.parent().is_none() {
+        return Err("Choose a folder, not the whole filesystem.".to_string());
+    }
+    if chosen.exists() && !chosen.is_dir() {
+        return Err("That is a file, not a folder.".to_string());
+    }
     let store = NoteStore::open(&path, include_subfolders).map_err(|e| e.to_string())?;
     let count = store.notes().len();
     *state.store.lock().unwrap() = store;
@@ -831,8 +868,6 @@ fn list_templates(fragment: String, state: State<AppState>) -> Vec<TemplateDto> 
         .collect()
 }
 
-/// A template is a plain `.md` file, so this is a plain read — deliberately
-/// not routed through the note store, which never treats one as a note.
 /// Creates a note from a template, with the tokens substituted.
 ///
 /// An explicit action rather than a side effect of opening a template to look
@@ -864,13 +899,37 @@ fn create_note_from_template(
         .map_err(|e| e.to_string())
 }
 
+/// The template `path` names, or an error.
+///
+/// `path` is whatever the frontend sent and both commands below use it
+/// directly, so it is matched against the store's own list rather than
+/// trusted — the same check `create_note_from_template` makes. The editor
+/// only ever opens a template the picker listed, and there is no "new
+/// template" flow, so a path that isn't already a template is refused rather
+/// than created.
+fn template_path(path: &str, state: &State<AppState>) -> Result<PathBuf, String> {
+    state
+        .store
+        .lock()
+        .unwrap()
+        .templates()
+        .into_iter()
+        .find(|t| t.path.to_string_lossy() == path)
+        .map(|t| t.path)
+        .ok_or_else(|| "no such template".to_string())
+}
+
+/// A template is a plain `.md` file, so this is a plain read — deliberately
+/// not routed through the note store, which never treats one as a note.
 #[tauri::command]
-fn read_template(path: String) -> Result<String, String> {
+fn read_template(path: String, state: State<AppState>) -> Result<String, String> {
+    let path = template_path(&path, &state)?;
     std::fs::read_to_string(&path).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn save_template(path: String, content: String, state: State<AppState>) -> Result<(), String> {
+    let path = template_path(&path, &state)?;
     // Templates live inside The Index, so writing one trips the watcher just
     // like a note does.
     state.mark_internal_write();
@@ -2082,6 +2141,16 @@ async fn import_kindle_clippings(
             "No Kindle detected: plug it in and refresh, or choose the file by hand.".to_string()
         })?,
     };
+    // A Clippings file is plain text, a few megabytes at most, and reading one
+    // holds it in memory twice (the bytes, then the lossy String) — so a wrong
+    // pick (a disk image, a video) is refused rather than swallowed.
+    const MAX_CLIPPINGS_BYTES: u64 = 64 * 1024 * 1024;
+    let size = std::fs::metadata(&file)
+        .map_err(|e| format!("Couldn't read the Clippings file: {e}"))?
+        .len();
+    if size > MAX_CLIPPINGS_BYTES {
+        return Err("That file is over 64 MB — it isn't a Kindle Clippings file.".to_string());
+    }
     let bytes = std::fs::read(&file)
         .map_err(|e| format!("Couldn't read the Clippings file: {e}"))?;
     let raw = String::from_utf8_lossy(&bytes).into_owned();
@@ -2125,9 +2194,47 @@ fn forget_kindle_history(state: State<AppState>) -> Result<(), String> {
     Ok(())
 }
 
+/// Refuses any navigation away from the app's own pages.
+///
+/// A note holds arbitrary text — a pasted URL, an `<a href>` that survives
+/// into the editor — and a webview that follows one keeps the IPC bridge: the
+/// remote page would be able to call every `#[tauri::command]` in this file,
+/// including the ones that read and write files. External links are handed to
+/// the system browser through the opener plugin instead, so nothing
+/// legitimate navigates anywhere.
+///
+/// Registered as a plugin rather than per-window, because the main window is
+/// declared in `tauri.conf.json` and never passes through a builder here. The
+/// plugin hook runs for every webview the app creates, so the pinned popover
+/// and each pop-out are covered by the same rule.
+fn navigation_guard<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
+    tauri::plugin::Builder::new("envy-navigation-guard")
+        .on_navigation(|_webview, url| {
+            let host = url.host_str().unwrap_or("");
+            match url.scheme() {
+                // The bundled frontend: `tauri://localhost` on Linux, the
+                // `tauri.localhost` custom-protocol host elsewhere.
+                "tauri" => host == "localhost",
+                "http" | "https" => {
+                    host == "tauri.localhost"
+                        // `npm run tauri dev` serves from Vite — devUrl in
+                        // tauri.conf.json.
+                        || (cfg!(debug_assertions)
+                            && host == "localhost"
+                            && url.port() == Some(1420))
+                }
+                // WebKitGTK loads a blank page before the real one.
+                "about" => url.path() == "blank",
+                _ => false,
+            }
+        })
+        .build()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default()
+        .plugin(navigation_guard())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init());
     // Checks the endpoint in tauri.conf.json and verifies whatever it finds

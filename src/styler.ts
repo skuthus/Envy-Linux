@@ -1376,19 +1376,27 @@ function escapeHtml(s: string): string {
 }
 
 /// Enough inline markdown for the cells in the Omarchy manual: code, links,
-/// emphasis, highlights, wiki-links. Builds real DOM nodes (not innerHTML) so
-/// a cell cannot inject markup, and so a click on `<a>` opens via Tauri the
-/// same way a `[text](url)` in the prose does.
+/// emphasis, highlights, wiki-links. `renderTableCell` still builds a string
+/// and this parses it, rather than assembling nodes directly: the renderer's
+/// rules are a chain of ordered regex passes over already-escaped text, and
+/// nesting (bold inside a link, `**` inside a backtick span) only falls out of
+/// running them in that order over one string. A node builder faithful to that
+/// would need its own recursive tokenizer and would quietly change which of
+/// those overlaps render — so the escaping stays the safety boundary here, and
+/// every anchor gets its handler below.
 function tableCellNodes(md: string): Array<Node> {
   const html = renderTableCell(md)
   const wrap = document.createElement('span')
   wrap.innerHTML = html
   for (const a of wrap.querySelectorAll('a[href]')) {
     const href = a.getAttribute('href')
-    if (!href || !/^https?:\/\//i.test(href)) continue
+    // Every anchor swallows its click, whatever the href: an <a> that falls
+    // through navigates the whole webview away from the app, and there is no
+    // way back from that. Only an http(s) href is worth handing to the opener.
     a.addEventListener('click', (e) => {
       e.preventDefault()
       e.stopPropagation()
+      if (!href || !/^https?:\/\//i.test(href)) return
       void invoke('open_external_url', { url: href }).catch((err) =>
         console.error('could not open the link', err),
       )
@@ -1401,7 +1409,7 @@ function renderTableCell(md: string): string {
   let s = escapeHtml(md)
   s = s.replace(/`([^`]+)`/g, '<code class="envy-code">$1</code>')
   s = s.replace(
-    /\[([^\]]+)\]\((https?:[^)\s]+)\)/g,
+    /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,
     '<a class="envy-link" href="$2">$1</a>',
   )
   s = s.replace(/\*\*\*([^*]+)\*\*\*/g, '<strong><em>$1</em></strong>')

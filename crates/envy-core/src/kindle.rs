@@ -24,7 +24,7 @@
 //! `Envy Data/`), so [`Record::key`] must be byte-identical to the Mac's:
 //! the SHA-256 hex of `"<type>|<book lowercased>|<location ?? page ?? ?>|<text>"`.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -44,6 +44,11 @@ const LEDGER_FILENAME: &str = "kindle-imported.json";
 
 /// The Kindle's own name for the file, inside its `documents/` folder.
 pub const CLIPPINGS_FILENAME: &str = "My Clippings.txt";
+
+/// The most records one import will take from a Clippings file. A heavily used
+/// Kindle produces a few thousand; anything far past that is the wrong file
+/// (or a crafted one), and every record costs a note written to disk.
+pub const MAX_RECORDS_PER_IMPORT: usize = 20_000;
 
 // MARK: - Records
 
@@ -213,19 +218,30 @@ fn overlaps(candidate: &Record, book: &str, start: u64, end: u64) -> bool {
 /// note whose location falls inside a highlight's range attaches to it; the
 /// rest stay standalone.
 pub fn parse(raw: &str) -> Vec<Record> {
-    let all = raw_records(raw);
+    let mut all = raw_records(raw);
+    all.truncate(MAX_RECORDS_PER_IMPORT);
     let (raw_highlights, raw_notes): (Vec<Record>, Vec<Record>) = all
         .into_iter()
         .partition(|r| r.kind == RecordType::Highlight);
 
     // (1) Later duplicates replace earlier ones when longer, in place —
     // keeping first-seen order either way.
+    //
+    // Candidates are bucketed by book rather than scanned as one list. An
+    // overlap needs an equal book, so the first same-book overlap in insertion
+    // order is exactly what a scan of the whole vec found — but a file of many
+    // books no longer compares every record against every earlier one, which
+    // is what made a large Clippings file take minutes rather than seconds.
     let mut highlights: Vec<Record> = Vec::new();
+    let mut by_book: HashMap<String, Vec<usize>> = HashMap::new();
     for record in raw_highlights {
         let existing = match (record.location_start, record.location_end) {
-            (Some(start), Some(end)) => highlights
-                .iter()
-                .position(|c| overlaps(c, &record.book, start, end)),
+            (Some(start), Some(end)) => by_book.get(&record.book).and_then(|indices| {
+                indices
+                    .iter()
+                    .copied()
+                    .find(|&i| overlaps(&highlights[i], &record.book, start, end))
+            }),
             _ => None,
         };
         match existing {
@@ -234,7 +250,10 @@ pub fn parse(raw: &str) -> Vec<Record> {
                     highlights[i] = record;
                 }
             }
-            None => highlights.push(record),
+            None => {
+                by_book.entry(record.book.clone()).or_default().push(highlights.len());
+                highlights.push(record);
+            }
         }
     }
 
@@ -246,16 +265,20 @@ pub fn parse(raw: &str) -> Vec<Record> {
     // and personal documents, where records carry a page but no Location)
     // can hold many genuinely distinct notes on one page, so those must
     // never collapse into each other.
+    // Book + Location is an exact key, so this is a map lookup rather than a
+    // scan of everything kept so far.
     let mut notes: Vec<Record> = Vec::new();
+    let mut note_at: HashMap<(String, u64), usize> = HashMap::new();
     for note in raw_notes {
-        let existing = note.location_start.and_then(|location| {
-            notes
-                .iter()
-                .position(|n| n.book == note.book && n.location_start == Some(location))
-        });
-        match existing {
+        let key = note.location_start.map(|location| (note.book.clone(), location));
+        match key.as_ref().and_then(|k| note_at.get(k).copied()) {
             Some(i) => notes[i] = note,
-            None => notes.push(note),
+            None => {
+                if let Some(k) = key {
+                    note_at.insert(k, notes.len());
+                }
+                notes.push(note);
+            }
         }
     }
 
@@ -263,9 +286,12 @@ pub fn parse(raw: &str) -> Vec<Record> {
     let mut standalone = Vec::new();
     for note in notes {
         let host = note.location_start.and_then(|location| {
-            highlights
-                .iter()
-                .position(|c| overlaps(c, &note.book, location, location))
+            by_book.get(&note.book).and_then(|indices| {
+                indices
+                    .iter()
+                    .copied()
+                    .find(|&i| overlaps(&highlights[i], &note.book, location, location))
+            })
         });
         match host {
             Some(i) => {
