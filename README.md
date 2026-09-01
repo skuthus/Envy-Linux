@@ -12,20 +12,40 @@ The working brief is **[PLAN.md](PLAN.md)**; agents start there.
 
 ## Running it (owner's machine: Omarchy / Arch / Hyprland)
 
-Toolchain: Rust stable (via `mise use -g rust@stable`), Node 26, and the
-system packages `webkit2gtk-4.1 gtk3 libayatana-appindicator librsvg openssl`.
+Toolchain: Rust stable (`mise use -g rust@stable`), Node 26, and the system
+packages `webkit2gtk-4.1 gtk3 libayatana-appindicator librsvg openssl`.
 
 ```bash
 npm install
-./dev.sh      # hot-reloading dev build
-./build.sh    # release binary at target/release/envy-linux, bundles under target/release/bundle/
+./dev.sh                    # hot-reloading dev build
+./build.sh                  # release binary + .deb + AppImage under target/release/
+./linux/install-desktop.sh  # ~/.local/share/applications/envy.desktop → the release binary
 ```
 
 Notes live in `~/Documents/Envy` by default, created on first launch with a
-welcome note; point Settings at another folder to use a synced Index.
+welcome note; Settings → Change Location… points it at another folder. The
+chosen path is remembered in `~/.config/app.envynote.linux/index-path`.
 
-Desktop integration (a `.desktop` file and a Hyprland scratchpad bind for
-summon) lives in `linux/`.
+**Summon.** Wayland has no app-registered global hotkeys, so summon is a
+Hyprland bind: `linux/hyprland-envy.lua` parks Envy's main window on the
+`special:envy` scratchpad and binds **Ctrl+Alt+Return** to
+`linux/envy-summon.sh` (toggle if running, launch otherwise). The owner's
+`~/.config/hypr/bindings.lua` loads that file with a guarded `dofile`. The
+in-app shortcut settings still exist for X11 / a future portal backend.
+
+**NVIDIA.** WebKitGTK's DMA-BUF renderer aborts the Wayland connection on the
+proprietary driver ("Error 71 (Protocol error)" before any window appears).
+`src-tauri/src/main.rs` sets `WEBKIT_DISABLE_DMABUF_RENDERER=1` when the
+`nvidia` module is loaded; set the variable yourself to override either way.
+
+**Test Index.** `node scripts/gen-test-vault.mjs [dir] [count]` writes a
+seeded ~5,500-note vault (tags, task lists, due dates, wiki-links, embeds,
+image attachments, subfolders, Inbox, Templates, `.trash`) — default
+`~/Envy Test Vault`. It refuses to write into a folder that already holds
+notes. Do destructive testing there, never in a synced vault.
+
+**Updates.** There is no release channel (private repo); `./build.sh` is the
+update. See RELEASING.md.
 
 ## Structure
 
