@@ -524,7 +524,9 @@ fn list_subfolders(state: State<AppState>) -> Vec<String> {
 /// Files a note into `subfolder`, or to the Index root when it is null.
 ///
 /// A real file move, so the category is on disk and portable. The title is
-/// untouched, which is what keeps `[[links]]` pointing at it working.
+/// untouched, which is what keeps `[[links]]` pointing at it working — and why
+/// a move onto a name already taken in the destination is refused with a
+/// readable error rather than quietly renamed.
 #[tauri::command]
 fn move_note_to_subfolder(
     id: String,
@@ -534,10 +536,18 @@ fn move_note_to_subfolder(
     state.mark_internal_write();
     let mut store = state.store.lock().unwrap();
     let root = store.directory().to_path_buf();
+    let Some(title) = store.notes().iter().find(|n| n.id() == id).map(|n| n.title().to_string())
+    else {
+        return Err(format!("no note with id {id}"));
+    };
+    let target = subfolder.as_deref().unwrap_or("").trim_matches(['/', ' ']);
+    if !target.is_empty() && envy_core::store::sanitized_subfolder(target).is_none() {
+        return Err("That folder name can't be used.".to_string());
+    }
     store
         .move_note(&id, subfolder.as_deref())
         .map(|n| NoteDto::from_note(&n, false, &root))
-        .ok_or_else(|| "could not move that note".to_string())
+        .ok_or_else(|| format!("A note named \u{201c}{title}\u{201d} already exists in that folder."))
 }
 
 /// One row of a browse catalog: a folder or tag name, and how many notes it
@@ -921,11 +931,15 @@ fn vault_counts(state: State<AppState>) -> VaultCounts {
     }
 }
 
-/// Files a fleeting note into the Index proper — a plain move out of `Inbox/`.
-/// The note's text is untouched, so nothing about having been fleeting
-/// survives in the file.
+/// Files a fleeting note into the Index proper — a plain move out of `Inbox/`,
+/// to the root or straight into `subfolder` when one is given. The note's text
+/// is untouched, so nothing about having been fleeting survives in the file.
 #[tauri::command]
-fn submit_from_inbox(id: String, state: State<AppState>) -> Result<NoteDto, String> {
+fn submit_from_inbox(
+    id: String,
+    subfolder: Option<String>,
+    state: State<AppState>,
+) -> Result<NoteDto, String> {
     state.mark_internal_write();
     let mut store = state.store.lock().unwrap();
     let root = store.directory().to_path_buf();
@@ -933,7 +947,7 @@ fn submit_from_inbox(id: String, state: State<AppState>) -> Result<NoteDto, Stri
         return Err(format!("no note with id {id}"));
     };
     store
-        .submit_from_inbox(&note)
+        .submit_from_inbox(&note, subfolder.as_deref())
         .map(|n| NoteDto::from_note(&n, true, &root))
         .ok_or_else(|| "that note is not in the Inbox".to_string())
 }

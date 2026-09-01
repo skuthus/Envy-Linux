@@ -14,8 +14,7 @@ use fancy_regex::Regex;
 use rayon::prelude::*;
 
 use crate::filename::{
-    available_attachment_name, available_path, sanitize_attachment_name, sanitize_title,
-    unique_filename,
+    available_attachment_name, sanitize_attachment_name, sanitize_title, unique_filename,
 };
 use crate::note::Note;
 use crate::search::INBOX_FOLDER_NAME;
@@ -197,11 +196,25 @@ impl NoteStore {
     /// Moves a note into `subfolder` (relative to the Index root), or to the
     /// root when it is `None` or empty. Creates the destination on demand.
     ///
-    /// The title is unchanged, so `[[links]]` pointing at it still resolve —
-    /// this only changes which folder the file sits in. Returns the note at its
+    /// The title is always unchanged — a move that would collide with a
+    /// same-named note in the destination is **refused** (returns `None`)
+    /// rather than silently de-duped to "Foo (2)", so `[[links]]` pointing at
+    /// either note keep resolving to what they meant. Returns the note at its
     /// new location, or `None` if the move failed. A note already in that
-    /// folder is returned untouched rather than treated as an error.
+    /// folder is returned untouched rather than treated as an error. Mirrors
+    /// the Mac's `moveNote(_:toSubfolder:)` (1.8.1 "Safer moves").
     pub fn move_note(&mut self, id: &str, subfolder: Option<&str>) -> Option<Note> {
+        self.move_note_inner(id, subfolder, false)
+    }
+
+    /// The move shared by `move_note` and `submit_from_inbox` — the Mac's
+    /// `moveNote(_:toSubfolder:filingFromInbox:)`.
+    fn move_note_inner(
+        &mut self,
+        id: &str,
+        subfolder: Option<&str>,
+        filing_from_inbox: bool,
+    ) -> Option<Note> {
         let note = self.notes.iter().find(|n| n.id() == id)?.clone();
         // A `None`/empty subfolder means "move to the root"; a named one is
         // sanitized so a `../` can't move the note outside the vault (an
@@ -217,14 +230,39 @@ impl NoteStore {
         }
 
         fs::create_dir_all(&target_dir).ok()?;
-        // The same disambiguation a new note gets, so moving onto a name that
-        // is taken in the destination doesn't clobber it.
         let destination = target_dir.join(unique_filename(note.title(), &target_dir));
+        // `unique_filename` de-dups a collision to "Foo (2)" — but for a *move*
+        // that's a silent title change with no single right answer: half the
+        // vault's [[Foo]] links would start resolving to whichever Foo
+        // remained. Refusing keeps every link intact; the note stays put.
+        // Compared against the sanitized base, NOT the raw title — a title can
+        // legally carry characters filenames rewrite to "-", and that
+        // deterministic difference is not a collision (it used to be misread
+        // as one, which made colon-titled notes refuse to move at all).
+        //
+        // A note filed from the Inbox is exempt: it has no incoming links yet,
+        // so there's nothing to protect — it takes the "Foo (2)" name and files
+        // rather than refusing.
+        if !filing_from_inbox {
+            let stem = destination.file_stem()?.to_string_lossy();
+            if stem != sanitize_title(note.title()) {
+                return None;
+            }
+        }
         fs::rename(note.url(), &destination).ok()?;
 
         let moved = Note::new(destination, note.content().to_string(), note.modified);
         if let Some(i) = self.notes.iter().position(|n| n.id() == id) {
             self.notes[i] = moved.clone();
+        }
+        // Sanitization can still change the title ("What?" → "What-"). That's
+        // deterministic, not ambiguous — so rewrite the vault's references the
+        // same way `rename` does, and links keep working. Skipped when filing
+        // from the Inbox: the note has no incoming links, and a collision
+        // rename to "Foo (2)" must not rewrite a same-named note's existing
+        // [[Foo]] links to point at the newcomer.
+        if !filing_from_inbox && moved.title() != note.title() {
+            self.update_wiki_link_references(note.title(), moved.title());
         }
         Some(moved)
     }
@@ -647,7 +685,7 @@ impl NoteStore {
     pub fn restore_from_trash(&mut self, note: &Note) -> Option<Note> {
         let trash_dir = note.url().parent()?;
         let original_dir = trash_dir.parent()?;
-        let destination = available_path(note.title(), original_dir);
+        let destination = original_dir.join(unique_filename(note.title(), original_dir));
         fs::rename(note.url(), &destination).ok()?;
         let restored = Note::new(destination, note.content(), note.modified);
         self.notes.push(restored.clone());
@@ -898,19 +936,19 @@ impl NoteStore {
     }
 
     /// Files a fleeting note into the Index proper — a plain move out of
-    /// `Inbox/`. The note's text is untouched, so nothing about having been
+    /// `Inbox/`, to the root by default or straight into `subfolder` (created
+    /// on demand). The note's text is untouched, so nothing about having been
     /// fleeting survives in the file.
-    pub fn submit_from_inbox(&mut self, note: &Note) -> Option<Note> {
+    ///
+    /// A thin wrapper over the move, with the Inbox exemption: a fleeting note
+    /// whose title collides with one already in the destination still files,
+    /// as "Foo (2)", rather than refusing — it has no incoming links to
+    /// protect. Mirrors the Mac's `submitFromInbox(_:toSubfolder:)`.
+    pub fn submit_from_inbox(&mut self, note: &Note, subfolder: Option<&str>) -> Option<Note> {
         if !crate::search::is_inbox_note(note) {
             return None;
         }
-        let destination = available_path(note.title(), &self.directory);
-        fs::rename(note.url(), &destination).ok()?;
-        let moved = Note::new(destination, note.content(), note.modified);
-        if let Some(slot) = self.notes.iter_mut().find(|n| n.id() == note.id()) {
-            *slot = moved.clone();
-        }
-        Some(moved)
+        self.move_note_inner(note.id(), subfolder, true)
     }
 }
 
@@ -1312,8 +1350,11 @@ mod tests {
         assert_eq!(same.id(), id);
     }
 
+    /// Mac 1.8.1 "Safer moves": a move onto a taken name is refused, not
+    /// silently renamed to "A (2)" — either outcome would change what half
+    /// the vault's [[A]] links point at.
     #[test]
-    fn moving_onto_a_taken_name_does_not_clobber_it() {
+    fn moving_onto_a_taken_name_is_refused() {
         let (dir, mut store) =
             nested_store_with(&[("A.md", "root copy"), ("Projects/A.md", "folder copy")]);
         let root_id = store
@@ -1323,12 +1364,55 @@ mod tests {
             .unwrap()
             .id()
             .to_string();
-        let moved = store.move_note(&root_id, Some("Projects")).unwrap();
-        assert_eq!(moved.content(), "root copy");
-        // The note already there is untouched.
+        assert!(store.move_note(&root_id, Some("Projects")).is_none());
+        // Both notes are exactly where they were.
+        assert_eq!(fs::read_to_string(dir.path().join("A.md")).unwrap(), "root copy");
         assert_eq!(
             fs::read_to_string(dir.path().join("Projects/A.md")).unwrap(),
             "folder copy"
+        );
+        assert!(!dir.path().join("Projects/A (2).md").exists());
+        assert!(store.notes().iter().any(|n| n.id() == root_id));
+        // The collision check is case-insensitive, like the filesystems are.
+        let (dir, mut store) = nested_store_with(&[("b.md", "x"), ("Projects/B.md", "y")]);
+        let id = store.notes().iter().find(|n| n.title() == "b").unwrap().id().to_string();
+        assert!(store.move_note(&id, Some("Projects")).is_none());
+        assert!(dir.path().join("b.md").exists());
+    }
+
+    /// A note filed from the Inbox has no incoming links to protect, so it
+    /// takes the "(2)" name and files rather than refusing.
+    #[test]
+    fn filing_from_inbox_is_exempt() {
+        let (dir, mut store) =
+            store_with(&[("Journal.md", "kept"), ("Inbox/Journal.md", "fleeting")]);
+        let fleeting = store
+            .notes()
+            .iter()
+            .find(|n| crate::search::is_inbox_note(n))
+            .unwrap()
+            .clone();
+        let filed = store.submit_from_inbox(&fleeting, None).unwrap();
+        assert_eq!(filed.title(), "Journal (2)");
+        assert!(!crate::search::is_inbox_note(&filed));
+        assert!(dir.path().join("Journal (2).md").exists());
+        assert!(!dir.path().join("Inbox/Journal.md").exists());
+        // The note already at the root is untouched.
+        assert_eq!(fs::read_to_string(dir.path().join("Journal.md")).unwrap(), "kept");
+    }
+
+    /// Sanitization can still change a title on the way ("What?" is a legal
+    /// filename here but not on Windows). That's deterministic, not a
+    /// collision, so the move goes ahead and references follow, as on rename.
+    #[test]
+    fn moving_a_note_whose_title_sanitizes_rewrites_its_links() {
+        let (dir, mut store) = store_with(&[("What?.md", "x"), ("Hub.md", "see [[What?]]")]);
+        let id = store.notes().iter().find(|n| n.title() == "What?").unwrap().id().to_string();
+        let moved = store.move_note(&id, Some("Projects")).unwrap();
+        assert_eq!(moved.title(), "What-");
+        assert_eq!(
+            fs::read_to_string(dir.path().join("Hub.md")).unwrap(),
+            "see [[What-]]"
         );
     }
 
@@ -2122,7 +2206,7 @@ mod tests {
     fn submit_moves_a_fleeting_note_into_the_index() {
         let (dir, mut store) = store_with(&[("Inbox/Captured.md", "a thought")]);
         let note = store.notes()[0].clone();
-        let filed = store.submit_from_inbox(&note).unwrap();
+        let filed = store.submit_from_inbox(&note, None).unwrap();
 
         assert_eq!(filed.url().parent().unwrap(), dir.path());
         assert!(dir.path().join("Captured.md").exists());
@@ -2135,7 +2219,31 @@ mod tests {
     fn submit_refuses_a_note_that_is_not_fleeting() {
         let (_d, mut store) = store_with(&[("Filed.md", "x")]);
         let note = store.notes()[0].clone();
-        assert!(store.submit_from_inbox(&note).is_none());
+        assert!(store.submit_from_inbox(&note, None).is_none());
+        assert!(store.submit_from_inbox(&note, Some("Projects")).is_none());
+    }
+
+    /// Mac 1.8.4: submit can file straight into a chosen folder, creating it
+    /// on demand.
+    #[test]
+    fn submit_files_straight_into_a_subfolder() {
+        let (dir, mut store) = nested_store_with(&[("Inbox/Filed Deep.md", "another")]);
+        let note = store.notes()[0].clone();
+        let filed = store.submit_from_inbox(&note, Some("Projects/Work")).unwrap();
+        assert!(dir.path().join("Projects/Work/Filed Deep.md").exists());
+        assert!(!crate::search::is_inbox_note(&filed));
+        assert_eq!(store.subfolder_path(&filed), Some("Projects/Work".to_string()));
+    }
+
+    #[test]
+    fn consecutive_inbox_submits_to_the_same_folder_both_land() {
+        let (dir, mut store) = nested_store_with(&[]);
+        let first = store.create_inbox_note("First Thought").unwrap();
+        let second = store.create_inbox_note("Second Thought").unwrap();
+        assert!(store.submit_from_inbox(&first, Some("Projects")).is_some());
+        assert!(store.submit_from_inbox(&second, Some("Projects")).is_some());
+        assert!(dir.path().join("Projects/First Thought.md").exists());
+        assert!(dir.path().join("Projects/Second Thought.md").exists());
     }
 
     #[test]
