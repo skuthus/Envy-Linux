@@ -498,6 +498,7 @@ body.bold-file-list .row-date { font-weight: 700; }
   flex: 1 1 0;
   min-width: 0;
   color: var(--envy-blockquote);
+  font-style: italic;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
