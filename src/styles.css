@@ -27,6 +27,11 @@
      text starts in the same column down the whole window and the left and right
      margins match. */
   --envy-inset: 12px;
+  /* Ink for the status bar. Secondary text is pitched for a paragraph at note
+     size; at the footer's 11px, and on a theme whose body text is near-white
+     on black, the same colour reads as faint. Halfway to body text keeps it
+     visibly quieter than the note without disappearing. */
+  --envy-chrome-text: color-mix(in srgb, var(--envy-blockquote) 50%, var(--envy-text));
 }
 
 /* --- Scrollbars ------------------------------------------------------------
@@ -888,7 +893,7 @@ body.popout-window {
   /* A touch smaller than the note/list text — the status bar is chrome. */
   font-size: 11px;
   font-variant-numeric: tabular-nums;
-  color: var(--envy-blockquote);
+  color: var(--envy-chrome-text);
   background: color-mix(in srgb, var(--envy-marker) 10%, var(--envy-title-bar-background));
   border-top: 1px solid color-mix(in srgb, var(--envy-marker) 45%, transparent);
   -webkit-app-region: drag;
@@ -936,7 +941,7 @@ body.popout-window {
   border: none;
   border-radius: 0;
   background: none;
-  color: var(--envy-blockquote);
+  color: var(--envy-chrome-text);
   cursor: default;
 }
 #interlinks-toggle:hover {

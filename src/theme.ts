@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
+import { contrastRatio, legible, parseHex } from './contrast'
 
 // Envy-Omarchy: Envy's named color roles, filled either from the current
 // Omarchy theme (`colors.toml`) or from the Envious light/dark faces kept as
@@ -208,6 +209,15 @@ function withSurfaceAlpha(theme: EnvyTheme, light: boolean): EnvyTheme {
   }
 }
 
+/// Contrast floors for the roles that carry text, measured against the editor
+/// and list backgrounds. The Envious faces sit at 4.5–5 for body and secondary
+/// text and about 2.1–2.4 for syntax markers, and those are the floors: a
+/// theme that already reads at least as well as Envious is left exactly as
+/// written. Body text is held to WCAG AA (4.5:1); markers are meant to recede,
+/// so they only have to be visible.
+const TEXT_CONTRAST = 4.5
+const MARKER_CONTRAST = 2.4
+
 export function omarchyToEnvy(colors: Record<string, string>, fontFamily: string): EnvyTheme {
   const light = isLightMode(colors)
   const background = pick(colors, ['background', 'bg'], '#1a1b26')
@@ -221,37 +231,54 @@ export function omarchyToEnvy(colors: Record<string, string>, fontFamily: string
   const lighter = pick(colors, ['lighter_background', 'lighter_bg'], light ? '#e8e8e8' : '#24283b')
   const bright = pick(colors, ['bright_foreground', 'bright_fg', 'light_foreground'], foreground)
   const darkFg = pick(colors, ['dark_foreground', 'dark_fg'], muted)
+  const magenta = pick(colors, ['bright_magenta', 'magenta'], yellow)
+
+  // Text sits on `background` in the editor and on `darker` in the note list;
+  // a colour has to read on both. Only the text-bearing roles are adjusted —
+  // fills built from the same colours (selection, tag chip, search highlight)
+  // keep the theme's own value so the palette still looks like the theme.
+  const surfaces = [background, darker]
+  const text = (color: string) => legible(color, surfaces, TEXT_CONTRAST)
+
+  // Ink for search matches: whichever of the theme's dark surface and its
+  // foreground reads better on the highlight, then pushed to the floor. Light
+  // themes are the case that matters — a light `dark_background` on a
+  // mid-tone yellow is invisible.
+  const highlight = yellow
+  const highlightInk = [darker, foreground]
+    .map((c) => ({ c, ratio: contrastRatio(parseHex(c) ?? { r: 0, g: 0, b: 0 }, parseHex(highlight) ?? { r: 0, g: 0, b: 0 }) }))
+    .sort((a, b) => b.ratio - a.ratio)[0].c
 
   return withSurfaceAlpha(
     {
       fontFamily,
       monoFamily: fontFamily,
       fontSize: '12px',
-      text: foreground,
+      text: text(foreground),
       background,
-      marker: muted,
-      link: accent,
-      due: bright,
-      dueSoon: yellow,
-      dueOverdue: red,
+      marker: legible(muted, surfaces, MARKER_CONTRAST),
+      link: text(accent),
+      due: text(bright),
+      dueSoon: text(yellow),
+      dueOverdue: text(red),
       codeBackground: lighter,
-      tag: green,
+      tag: text(green),
       tagBackground: hexToRgba(green.startsWith('#') ? green : '#9ece6a', 0.16),
-      highlight: yellow,
-      highlightText: darker,
+      highlight,
+      highlightText: legible(highlightInk, [highlight], TEXT_CONTRAST),
       // The theme's most vivid warm accent. Several Omarchy themes keep it under
       // `magenta` (a gold in the monochrome-blue themes, a real magenta/pink in
       // colourful ones) — a genuine standout next to the blue link/due colours.
-      flag: pick(colors, ['bright_magenta', 'magenta'], yellow),
+      flag: text(magenta),
       selection: light ? hexToRgba(accent.startsWith('#') ? accent : '#7aa2f7', 0.18) : accent,
       selectedText: light
         ? hexToRgba(red.startsWith('#') ? red : '#f7768e', 0.22)
         : hexToRgba(red.startsWith('#') ? red : '#f7768e', 0.45),
       focusHighlight: hexToRgba(accent.startsWith('#') ? accent : '#7aa2f7', 0.28),
       fileListBackground: darker,
-      blockquote: darkFg,
-      completedTask: darkFg,
-      footnote: darkFg,
+      blockquote: text(darkFg),
+      completedTask: text(darkFg),
+      footnote: text(darkFg),
       checkedCheckbox: green,
       titleBarBackground: darker,
     },
