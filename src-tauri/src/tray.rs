@@ -197,6 +197,20 @@ impl ksni::Tray for EnvyTray {
                 ..Default::default()
             }
             .into(),
+            // The bar widget's own setting, kept in its shell.json entry where
+            // Omarchy keeps every widget's settings. Off, the eye is only in
+            // the bar while Envy runs; on, a dim eye stays as a launcher.
+            CheckmarkItem {
+                label: "Show Eye in Bar When Closed".into(),
+                checked: bar_show_when_closed(),
+                activate: Box::new(|tray: &mut Self| {
+                    set_bar_show_when_closed(!bar_show_when_closed());
+                    let app = tray.app.clone();
+                    on_main(&tray.app, move |_| refresh(&app));
+                }),
+                ..Default::default()
+            }
+            .into(),
             // The Mac's File → Import from Kindle. The frontend owns the
             // enabled flag and the title/body preferences, so it decides
             // between importing and opening Settings.
@@ -692,13 +706,15 @@ fn install_bar_widget(app: &AppHandle) {
     }
 
     let dir = config.join("plugins").join(PLUGIN_ID);
+    let upgrade = dir.join("manifest.json").exists();
     if std::fs::create_dir_all(&dir).is_err() {
         return;
     }
-    let mut changed = false;
+    let mut code_changed = false;
     for (name, content) in PLUGIN_FILES {
-        changed |= write_if_changed(&dir.join(name), content).unwrap_or(false);
+        code_changed |= write_if_changed(&dir.join(name), content).unwrap_or(false);
     }
+    let mut changed = code_changed;
     // The widget's "launch Envy" action needs a binary; the installed .desktop
     // entry is optional and the owner runs straight from the build tree.
     if let Ok(exe) = std::env::current_exe() {
@@ -711,7 +727,17 @@ fn install_bar_widget(app: &AppHandle) {
             let _ = std::fs::set_permissions(&launch, std::fs::Permissions::from_mode(0o755));
         }
     }
-    if changed {
+    if code_changed && upgrade {
+        // The shell re-reads a changed plugin but keeps the widget instance
+        // already in the bar, so new widget code only shows after a restart —
+        // the same restart `omarchy update` does. launch.sh is read fresh on
+        // every click and never needs one, and a first install creates the
+        // slot from the new code anyway.
+        let _ = std::process::Command::new("omarchy-restart-shell")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    } else if changed {
         let _ = omarchy_shell(&["shell", "rescanPlugins"]);
     }
 
@@ -774,6 +800,70 @@ fn install_bar_widget(app: &AppHandle) {
     let _ = std::fs::write(&marker, "");
 }
 
+fn omarchy_shell_json() -> Option<PathBuf> {
+    dirs::config_dir().map(|d| d.join("omarchy/shell.json"))
+}
+
+/// The widget's `showWhenClosed` setting, read from its `shell.json` entry.
+pub(crate) fn bar_show_when_closed() -> bool {
+    let Some(path) = omarchy_shell_json() else { return false };
+    let Ok(text) = std::fs::read_to_string(path) else { return false };
+    let Ok(root) = serde_json::from_str::<serde_json::Value>(&text) else { return false };
+    widget_entry_flag(&root, "showWhenClosed")
+}
+
+fn widget_entry_flag(root: &serde_json::Value, key: &str) -> bool {
+    ["left", "center", "right"].iter().any(|side| {
+        root.pointer(&format!("/bar/layout/{side}"))
+            .and_then(|s| s.as_array())
+            .map(|entries| {
+                entries.iter().any(|e| {
+                    e.get("id").and_then(|v| v.as_str()) == Some(PLUGIN_ID)
+                        && e.get(key).and_then(|v| v.as_bool()) == Some(true)
+                })
+            })
+            .unwrap_or(false)
+    })
+}
+
+/// Writes the widget's `showWhenClosed` setting into its `shell.json` entry,
+/// the way the widget itself would through `updateEntryInline`. The shell
+/// hot-reloads the file, so the bar follows at once.
+pub(crate) fn set_bar_show_when_closed(on: bool) {
+    let Some(path) = omarchy_shell_json() else { return };
+    let Ok(text) = std::fs::read_to_string(&path) else { return };
+    let Ok(mut root) = serde_json::from_str::<serde_json::Value>(&text) else { return };
+    if set_widget_entry_flag(&mut root, "showWhenClosed", on) {
+        if let Ok(pretty) = serde_json::to_string_pretty(&root) {
+            let _ = std::fs::write(path, pretty + "\n");
+        }
+    }
+}
+
+fn set_widget_entry_flag(root: &mut serde_json::Value, key: &str, on: bool) -> bool {
+    let mut changed = false;
+    for side in ["left", "center", "right"] {
+        let Some(entries) = root
+            .pointer_mut(&format!("/bar/layout/{side}"))
+            .and_then(|s| s.as_array_mut())
+        else {
+            continue;
+        };
+        for entry in entries.iter_mut() {
+            if entry.get("id").and_then(|v| v.as_str()) != Some(PLUGIN_ID) {
+                continue;
+            }
+            let Some(obj) = entry.as_object_mut() else { continue };
+            let current = obj.get(key).and_then(|v| v.as_bool()) == Some(true);
+            if current != on {
+                obj.insert(key.to_string(), serde_json::Value::Bool(on));
+                changed = true;
+            }
+        }
+    }
+    changed
+}
+
 /// Adds "envy" to the tray widget's `hidden` list in `shell.json`, keeping
 /// everything else — key order included — exactly as the user had it.
 fn hide_in_tray(path: &std::path::Path) {
@@ -828,6 +918,23 @@ fn shell_quote(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn show_when_closed_flag_round_trips_in_the_widget_entry() {
+        let mut root: serde_json::Value = serde_json::from_str(
+            r#"{"bar":{"layout":{"right":[{"id":"omarchy.tray"},{"id":"skuthus.envy"}]}}}"#,
+        )
+        .unwrap();
+        assert!(!widget_entry_flag(&root, "showWhenClosed"));
+        assert!(set_widget_entry_flag(&mut root, "showWhenClosed", true));
+        assert!(widget_entry_flag(&root, "showWhenClosed"));
+        // Same value again: nothing to write.
+        assert!(!set_widget_entry_flag(&mut root, "showWhenClosed", true));
+        assert!(set_widget_entry_flag(&mut root, "showWhenClosed", false));
+        assert!(!widget_entry_flag(&root, "showWhenClosed"));
+        // The tray entry is never touched.
+        assert!(root.pointer("/bar/layout/right/0/showWhenClosed").is_none());
+    }
 
     #[test]
     fn every_eye_renders_something_at_every_size() {

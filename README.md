@@ -40,8 +40,10 @@ launch Envy installs `linux/omarchy-plugin` into
 (after a hidden-bar chevron if you use one, else at the start of the right
 section); move it with `omarchy bar move` and it stays put. Open while the
 window is on screen, squinting while only the pinned note is, closed while
-hidden or not running. Left click summons (or launches) Envy, right click
-opens the app menu. Underneath it is a StatusNotifierItem Envy registers
+hidden. While Envy isn't running the eye leaves the bar, unless the menu's
+"Show Eye in Bar When Closed" is on (the widget's `showWhenClosed` setting in
+`shell.json`), which keeps a dim eye there as a launcher. Left click summons
+(or launches) Envy, right click opens the app menu. Underneath it is a StatusNotifierItem Envy registers
 itself, drawn as a solid `-symbolic` eye in the bar's text colour, so other
 bars (Waybar) show it in their tray; the Omarchy tray widget hides it so it
 isn't shown twice.

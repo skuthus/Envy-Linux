@@ -27,6 +27,12 @@ BarWidget {
     return null
   }
   readonly property bool running: item !== null
+  // The widget's own entry in shell.json: `"showWhenClosed": true` keeps a
+  // dim eye in the bar as a launcher while Envy isn't running. Off — the
+  // default — the eye is only there while Envy is, like a running-app
+  // indicator; Ctrl+Alt+Return or the app launcher starts it. Envy's own
+  // menu toggles this, and writes it here.
+  readonly property bool showWhenClosed: !!(root.settings && root.settings.showWhenClosed === true)
   readonly property string eye: {
     var icon = item ? String(item.icon || "") : ""
     if (icon.indexOf("envy-open") !== -1) return "open"
@@ -38,7 +44,8 @@ BarWidget {
 
   property bool menuOpen: false
 
-  implicitWidth: button.implicitWidth
+  visible: running || showWhenClosed
+  implicitWidth: visible ? button.implicitWidth : 0
   implicitHeight: button.implicitHeight
 
   function summon() {
