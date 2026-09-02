@@ -2,6 +2,21 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
+    // `envy-linux --toggle` (or --show / --pinned) is what a compositor
+    // keybind runs: hand the verb to the running instance and leave, or, with
+    // none running, fall through and become it — the window shows on launch,
+    // which is what a summon wants.
+    #[cfg(target_os = "linux")]
+    if let Some(verb) = std::env::args().nth(1).and_then(|a| match a.as_str() {
+        "--toggle" => Some("toggle"),
+        "--show" => Some("show"),
+        "--pinned" => Some("pinned"),
+        _ => None,
+    }) {
+        if envy_linux_lib::control_send(verb) {
+            return;
+        }
+    }
     #[cfg(target_os = "linux")]
     linux_webkit_workarounds();
     #[cfg(target_os = "linux")]

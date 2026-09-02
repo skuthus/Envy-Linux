@@ -45,11 +45,14 @@ bars (Waybar) show it in their tray; the Omarchy tray widget hides it so it
 isn't shown twice.
 
 **Summon.** Wayland has no app-registered global hotkeys, so summon is a
-Hyprland bind: `linux/hyprland-envy.lua` parks Envy's main window on the
-`special:envy` scratchpad and binds **Ctrl+Alt+Return** to
-`linux/envy-summon.sh` (toggle if running, launch otherwise). The owner's
-`~/.config/hypr/bindings.lua` loads that file with a guarded `dofile`. The
-in-app shortcut settings still exist for X11 / a future portal backend.
+Hyprland bind: `linux/hyprland-envy.lua` binds **Ctrl+Alt+Return** to
+`linux/envy-summon.sh`, which runs `envy-linux --toggle`. That hands the verb
+to the running instance over its control socket
+(`$XDG_RUNTIME_DIR/envy-control.sock`; verbs `toggle`, `show`, `pinned`) and
+does exactly what the bar icon's click does, or launches Envy when nothing is
+running. The owner's `~/.config/hypr/bindings.lua` loads that file with a
+guarded `dofile`. The in-app shortcut settings still exist for X11 / a future
+portal backend.
 
 **NVIDIA.** WebKitGTK's DMA-BUF renderer aborts the Wayland connection on the
 proprietary driver ("Error 71 (Protocol error)" before any window appears).

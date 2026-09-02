@@ -240,7 +240,7 @@ impl ksni::Tray for EnvyTray {
 /// asks that same service to update — a wait on itself that timed out the
 /// D-Bus call and left "New Pinned Note" half done. The main thread is also
 /// where Tauri wants windows built.
-fn on_main(app: &AppHandle, action: impl FnOnce(&AppHandle) + Send + 'static) {
+pub(crate) fn on_main(app: &AppHandle, action: impl FnOnce(&AppHandle) + Send + 'static) {
     let handle = app.clone();
     let _ = app.run_on_main_thread(move || action(&handle));
 }

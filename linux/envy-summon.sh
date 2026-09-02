@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Summon Envy under Hyprland: toggle its scratchpad (special workspace) if it's
-# running, launch it otherwise. Bound to Ctrl+Alt+Return by hyprland-envy.lua.
-# Global hotkeys inside the app don't work on Wayland; this is the summon.
+# Summon Envy: show it if hidden, hide it if showing — the bar icon's click,
+# on a key. `envy-linux --toggle` talks to the running instance over its
+# control socket; with none running it simply launches, and the window
+# appears. Point ENVY_BIN somewhere else to summon a different build.
+#
+# Backgrounded and detached: when nothing is running the binary *becomes*
+# the app, and a keybind (or a shell) must not sit waiting on it.
 set -euo pipefail
 bin="${ENVY_BIN:-$(cd "$(dirname "$0")/.." && pwd)/target/release/envy-linux}"
-if pgrep -x envy-linux >/dev/null; then
-  hyprctl dispatch "hl.dsp.workspace.toggle_special('envy')" >/dev/null
+if command -v uwsm-app >/dev/null 2>&1; then
+  uwsm-app -- "$bin" --toggle >/dev/null 2>&1 &
 else
-  if command -v uwsm-app >/dev/null 2>&1; then
-    uwsm-app -- "$bin" >/dev/null 2>&1 &
-  else
-    setsid "$bin" >/dev/null 2>&1 &
-  fi
+  setsid "$bin" --toggle >/dev/null 2>&1 &
 fi

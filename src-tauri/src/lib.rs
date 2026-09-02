@@ -14,8 +14,14 @@ use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager, State, WebviewWindow};
 use tauri_plugin_autostart::ManagerExt as AutostartManagerExt;
 
+mod control;
 mod omarchy;
 mod tray;
+
+/// `envy-linux --toggle` and friends: see `control`.
+pub fn control_send(verb: &str) -> bool {
+    control::send(verb)
+}
 
 /// A note as the frontend sees it. The store's `Note` isn't serialized
 /// directly — its derived values are lazy and private, and the UI wants them
@@ -2280,6 +2286,7 @@ pub fn run() {
 
             setup_global_hotkey(app.handle())?;
             tray::setup(app.handle())?;
+            control::serve(app.handle());
             // Re-assert the remembered on-top state now the window exists.
             apply_keep_on_top(app.handle(), persisted_keep_on_top(app.handle()));
             omarchy::spawn_watcher(app.handle().clone());

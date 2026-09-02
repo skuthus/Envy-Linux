@@ -1,23 +1,25 @@
 -- Envy on Hyprland (Omarchy Lua config).
 --
--- Summon = a scratchpad: Envy lives on special workspace "envy", floating and
--- centred, and Ctrl+Alt+Return (the same chord as Envy for Windows) slides it
--- in and out. If Envy isn't running the bind launches it. Wayland has no
--- app-registered global hotkeys, so this bind *is* the summon.
+-- Ctrl+Alt+Return (the same chord as Envy for Windows) shows Envy if it is
+-- hidden and hides it if it is showing — exactly the bar icon's click — and
+-- launches it if it isn't running. Wayland has no app-registered global
+-- hotkeys, so this bind *is* the summon; it runs `envy-linux --toggle`, which
+-- hands the verb to the running instance over its control socket.
 --
--- Install: append to ~/.config/hypr/bindings.lua (or `require` this file),
+-- Install: append to ~/.config/hypr/bindings.lua
+--   pcall(dofile, os.getenv("HOME") .. "/Work/Envy-omarchy/linux/hyprland-envy.lua")
 -- then `hyprctl reload`. Edit the path below if the checkout moves.
 
-local envy_summon = os.getenv("HOME") .. "/Work/envy-omarchy/Envy-Linux/linux/envy-summon.sh"
+local envy_summon = os.getenv("HOME") .. "/Work/Envy-omarchy/linux/envy-summon.sh"
 
 -- Match on class AND title: pop-out notes and the pinned popover share the
 -- `envy-linux` class, and those should stay ordinary windows.
 o.window({ class = "envy-linux", title = "^Envy$" }, {
   float = true,
-  -- Narrow stacked column — list above the note, not a square tile.
-  size = { "(monitor_w*0.23)", "(monitor_h*0.78)" },
+  -- The owner's chosen default: about a third of the screen wide and most
+  -- of it tall (507x739 on a 1440x900 display).
+  size = { "(monitor_w*0.35)", "(monitor_h*0.82)" },
   center = true,
-  workspace = "special:envy silent",
 })
 
 -- Omarchy's default window opacity (0.985 / 0.96) multiplies every glyph.
