@@ -499,6 +499,24 @@ function countWords(text: string): number {
   return trimmed === '' ? 0 : trimmed.split(/\s+/u).length
 }
 
+/// The footer's labels with a box-drawing rule between them. The rule is its
+/// own element so it can take the marker colour, quieter than the counts,
+/// like the bar's own border; a "│" inside the text would have to be the
+/// text's colour.
+function withFooterRules(parts: string[]): Node[] {
+  const nodes: Node[] = []
+  parts.forEach((part, i) => {
+    if (i > 0) {
+      const rule = document.createElement('span')
+      rule.className = 'footer-rule'
+      rule.textContent = '│'
+      nodes.push(rule)
+    }
+    nodes.push(document.createTextNode(part))
+  })
+  return nodes
+}
+
 function renderStats() {
   if (!openNoteId && !openExternal) {
     statsEl.textContent = ''
@@ -515,7 +533,7 @@ function renderStats() {
     const chars = countCharacters(text)
     parts.push(`${chars.toLocaleString()} character${chars === 1 ? '' : 's'}`)
   }
-  statsEl.textContent = parts.join(' │ ')
+  statsEl.replaceChildren(...withFooterRules(parts))
   renderVaultLabel()
 }
 
@@ -540,7 +558,7 @@ function renderVaultLabel() {
     vaultStatsEl.classList.add('hidden')
     return
   }
-  vaultStatsEl.textContent = parts.join(' │ ')
+  vaultStatsEl.replaceChildren(...withFooterRules(parts))
   vaultStatsEl.classList.remove('hidden')
   vaultStatsEl.classList.toggle('with-divider', statsEl.textContent !== '')
 }

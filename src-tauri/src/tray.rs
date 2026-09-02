@@ -368,10 +368,23 @@ pub fn follow_window(app: &AppHandle, window: &tauri::WebviewWindow) {
     let window = window.clone();
     let _ = app.clone().run_on_main_thread(move || {
         let Ok(gtk_window) = window.gtk_window() else { return };
+        // Deferred to the next main-loop turn, never run inside the signal.
+        // Closing a window unmaps it from within Tauri's close handling, which
+        // holds its window table borrowed while the GTK window is disposed; a
+        // `refresh` right then asks that table for the main window, hits the
+        // borrow, and panics — and a panic inside a GTK signal handler cannot
+        // unwind, so the whole app aborted. An idle callback runs after the
+        // close has finished and sees a consistent table.
         let on_map = app.clone();
-        gtk_window.connect_map(move |_| refresh(&on_map));
+        gtk_window.connect_map(move |_| {
+            let app = on_map.clone();
+            gtk::glib::idle_add_local_once(move || refresh(&app));
+        });
         let on_unmap = app.clone();
-        gtk_window.connect_unmap(move |_| refresh(&on_unmap));
+        gtk_window.connect_unmap(move |_| {
+            let app = on_unmap.clone();
+            gtk::glib::idle_add_local_once(move || refresh(&app));
+        });
     });
 }
 

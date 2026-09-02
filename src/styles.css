@@ -953,6 +953,12 @@ body.popout-window {
   margin-right: 0.75em;
   color: var(--envy-marker);
 }
+/* Every rule in the footer, the marker colour: the bar's own border, not the
+   counts' ink. */
+.footer-rule {
+  margin: 0 0.75em;
+  color: var(--envy-marker);
+}
 #loading-indicator { opacity: 0.8; }
 /* Config and theme notices. Truncated rather than allowed to push the counts
    off the end of the footer — the whole list is in the tooltip. */
@@ -1879,6 +1885,12 @@ body.popout-window {
    own padding still keeps the caret off the very edge. */
 .cm-editor .cm-line {
   padding-left: 0;
+}
+/* CodeMirror's default content padding (4px top and bottom) sat on top of the
+   scroller's inset, so the first line started 16px down while the text began
+   12px in. Zero the top so the gap above matches the gap to the left. */
+.cm-editor .cm-content {
+  padding-top: 0;
 }
 /* Real Bold is already heavier; the Regular hairline would fatten it twice. */
 .envy-bold, .envy-h1, .envy-h2 {
