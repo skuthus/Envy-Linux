@@ -52,7 +52,7 @@ if command -v makepkg >/dev/null; then
   TARBALL_ABS=$(realpath "$TARBALL")
   ( cd "$PKGDIR" && ENVY_LOCAL_TARBALL="$TARBALL_ABS" makepkg -f --skipchecksums --nodeps >/dev/null 2>"$PKGDIR/makepkg.log" ) \
     || { echo "release: makepkg failed - see $PKGDIR/makepkg.log" >&2; exit 1; }
-  PKG=$(ls "$PKGDIR"/envy-bin-*.pkg.tar.* | head -1)
+  PKG=$(ls "$PKGDIR"/envy-linux-*.pkg.tar.* | head -1)
   # Listed to a file: under pipefail, `tar | grep -q` fails on the broken
   # pipe grep's early exit hands tar, even when the entry is present.
   tar -tf "$PKG" > "$PKGDIR/files.txt"

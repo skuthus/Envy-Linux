@@ -22,7 +22,7 @@ the assets, and an AUR package that installs from them.
    with a local `makepkg`. Read what it prints.
 3. `scripts/release.sh` — the same, then tags, pushes the tag, and creates
    the GitHub release with `gh`.
-4. Publish the AUR package: in your AUR checkout of `envy-bin`, update
+4. Publish the AUR package: in your AUR checkout of `envy-linux`, update
    `_tauriver` and paste the sha256 the script printed into `sha256sums`,
    regenerate `.SRCINFO` (`makepkg --printsrcinfo > .SRCINFO`), commit, push.
    Omarchy users then get the update through `yay -Syu`.
@@ -32,7 +32,7 @@ is the template and the local-test harness, not the published package.
 
 ## Installing
 
-- Omarchy / Arch: `yay -S envy-bin`, then add
+- Omarchy / Arch: `yay -S envy-linux`, then add
   `pcall(dofile, "/usr/share/envy/hyprland-envy.lua")` to
   `~/.config/hypr/bindings.lua` and `hyprctl reload` for Ctrl+Alt+Return.
   The bar widget installs itself on first launch.

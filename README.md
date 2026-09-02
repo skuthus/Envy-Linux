@@ -4,7 +4,7 @@ A Linux port of [Envy](https://github.com/skuthus/Envy) — a flat-file,
 frictionless note-taking application. One search box, instant results, and
 notes stored as plain `.md` files.
 
-This repository is **private** and proprietary. It is the Linux sibling of
+Open source under the MIT licence. It is the Linux sibling of
 [Envy-Windows](https://github.com/skuthus/Envy-Windows): the same Rust
 `envy-core`, the same CodeMirror 6 frontend, the same Tauri v2 shell, built
 for WebKitGTK instead of WebView2. It is not a rebuild of the macOS Swift app.
@@ -13,7 +13,7 @@ The working brief is **[PLAN.md](PLAN.md)**; agents start there.
 ## Running it (owner's machine: Omarchy / Arch / Hyprland)
 
 Toolchain: Rust stable (`mise use -g rust@stable`), Node 26, and the system
-packages `webkit2gtk-4.1 gtk3 libayatana-appindicator librsvg openssl`.
+packages `webkit2gtk-4.1 gtk3 librsvg openssl`.
 
 ```bash
 npm install
@@ -65,7 +65,7 @@ image attachments, subfolders, Inbox, Templates, `.trash`) — default
 `~/Envy Test Vault`. It refuses to write into a folder that already holds
 notes. Do destructive testing there, never in a synced vault.
 
-**Installing a release.** Omarchy / Arch: `yay -S envy-bin`, then add
+**Installing a release.** Omarchy / Arch: `yay -S envy-linux`, then add
 `pcall(dofile, "/usr/share/envy/hyprland-envy.lua")` to
 `~/.config/hypr/bindings.lua` for the Ctrl+Alt+Return summon. Elsewhere, run
 the AppImage from the GitHub release. Cutting a release is `scripts/release.sh`;
@@ -84,4 +84,4 @@ Built by [Skyler Schoos](https://github.com/skuthus). The macOS original is at
 
 ## License
 
-Proprietary. All rights reserved. See [LICENSE](LICENSE).
+MIT, the same terms as Omarchy. See [LICENSE](LICENSE).

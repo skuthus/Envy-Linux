@@ -1,6 +1,6 @@
 # Maintainer: Skyler Schoos
 #
-# envy-bin: Envy for Omarchy from the prebuilt release tarball that
+# envy-linux: Envy for Omarchy from the prebuilt release tarball that
 # scripts/release.sh publishes. The tarball is exactly the tree package()
 # copies below, so a release and this file move in lockstep: bump
 # _tauriver, paste the sha256 the release script prints, `updpkgsums` if you
@@ -12,7 +12,7 @@
 # (the source() below resolves to a local file when ENVY_LOCAL_TARBALL points
 # at one, which the release script sets for its own check).
 
-pkgname=envy-bin
+pkgname=envy-linux
 _tauriver=1.8.1-beta
 # pacman forbids "-" in a version; the tag and tarball keep Tauri's spelling.
 pkgver=${_tauriver//-/}
@@ -24,7 +24,7 @@ license=('MIT')
 depends=('webkit2gtk-4.1' 'gtk3' 'hyprland')
 optdepends=('omarchy: bar widget, theme following and the Ctrl+Alt+Return summon bind')
 provides=('envy')
-conflicts=('envy')
+conflicts=('envy' 'envy-bin')
 options=('!strip')
 _tarball="envy-linux-${_tauriver}-x86_64.tar.gz"
 if [ -n "${ENVY_LOCAL_TARBALL:-}" ]; then
