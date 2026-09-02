@@ -1,20 +1,47 @@
 # Releasing Envy for Linux
 
-There is no release channel yet. This repository is private, and a private
-GitHub repo cannot serve `releases/latest/download/latest.json` to an
-unauthenticated Tauri updater, so the updater plugin is deliberately left
-unconfigured in `src-tauri/tauri.conf.json` (see PLAN.md, Phase 6).
+The source is public (MIT). A release is a git tag, a GitHub release with
+the assets, and an AUR package that installs from them.
 
-To get a new build on this machine:
+## What a release is
 
-```bash
-./build.sh
-```
+- **Tag** `v<version>`, where `<version>` is `src-tauri/tauri.conf.json`'s
+  version (for example `1.8.1-beta`).
+- **Tarball** `envy-linux-<version>-x86_64.tar.gz`: the release binary, the
+  desktop entry, icons, the Hyprland bind file and its summon script, the
+  README and LICENSE. This is what the AUR package installs; `linux/PKGBUILD`
+  copies exactly that tree into `/usr`.
+- **AppImage**, for people not on Arch.
 
-That produces a standalone binary at `target/release/envy-linux`, plus an
-AppImage and a `.deb` under `target/release/bundle/`. The `.desktop` file in
-`linux/` points at the release binary; re-running `build.sh` is the update.
+## Cutting one
 
-When a public Linux channel is wanted, revisit the Windows repo's
-`RELEASING.md` for the updater-key procedure. The private signing key must
-never be committed here.
+1. Bump the version in `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`
+   and `_tauriver` in `linux/PKGBUILD`. Commit.
+2. `scripts/release.sh --dry-run` — runs the ship gate through `build.sh`,
+   builds, assembles the tarball, and proves `linux/PKGBUILD` packages it
+   with a local `makepkg`. Read what it prints.
+3. `scripts/release.sh` — the same, then tags, pushes the tag, and creates
+   the GitHub release with `gh`.
+4. Publish the AUR package: in your AUR checkout of `envy-bin`, update
+   `_tauriver` and paste the sha256 the script printed into `sha256sums`,
+   regenerate `.SRCINFO` (`makepkg --printsrcinfo > .SRCINFO`), commit, push.
+   Omarchy users then get the update through `yay -Syu`.
+
+The repo copy of `linux/PKGBUILD` keeps `sha256sums=('SKIP')` on purpose: it
+is the template and the local-test harness, not the published package.
+
+## Installing
+
+- Omarchy / Arch: `yay -S envy-bin`, then add
+  `pcall(dofile, "/usr/share/envy/hyprland-envy.lua")` to
+  `~/.config/hypr/bindings.lua` and `hyprctl reload` for Ctrl+Alt+Return.
+  The bar widget installs itself on first launch.
+- Anything else: download the AppImage from the release and run it.
+
+## Updater
+
+The in-app "Check for Updates" is still a no-op on Linux: the Tauri updater
+needs a signing key and a `latest.json` next to the release assets. With the
+repo public that is now possible; it is a separate piece of work (Windows'
+`RELEASING.md` has the key procedure). The private signing key must never be
+committed here.

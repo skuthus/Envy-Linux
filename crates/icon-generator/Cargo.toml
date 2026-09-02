@@ -4,6 +4,7 @@ description = "Renders the Envy app icon at every size Windows asks for."
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
+license = "MIT"
 
 [dependencies]
 # A pure-Rust 2D rasteriser. Needed rather than downscaling one master image

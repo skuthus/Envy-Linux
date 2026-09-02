@@ -65,8 +65,11 @@ image attachments, subfolders, Inbox, Templates, `.trash`) — default
 `~/Envy Test Vault`. It refuses to write into a folder that already holds
 notes. Do destructive testing there, never in a synced vault.
 
-**Updates.** There is no release channel (private repo); `./build.sh` is the
-update. See RELEASING.md.
+**Installing a release.** Omarchy / Arch: `yay -S envy-bin`, then add
+`pcall(dofile, "/usr/share/envy/hyprland-envy.lua")` to
+`~/.config/hypr/bindings.lua` for the Ctrl+Alt+Return summon. Elsewhere, run
+the AppImage from the GitHub release. Cutting a release is `scripts/release.sh`;
+see RELEASING.md. Envy is MIT licensed (LICENSE).
 
 ## Structure
 

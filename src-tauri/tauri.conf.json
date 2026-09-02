@@ -47,8 +47,7 @@
     "linux": {
       "deb": {
         "depends": [
-          "webkit2gtk-4.1",
-          "libayatana-appindicator3-1"
+          "webkit2gtk-4.1"
         ]
       }
     }

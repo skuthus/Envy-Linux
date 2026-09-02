@@ -1,9 +1,9 @@
 [Desktop Entry]
 Type=Application
-Name=Envy Omarchy
+Name=Envy
 GenericName=Notes
-Comment=Envy for Omarchy — flat-file notes that follow the current theme.
-Exec=/home/skuthus/Work/envy-omarchy/Envy-Linux/target/release/envy-linux
+Comment=Flat-file notes that follow the current Omarchy theme.
+Exec=envy-linux
 Icon=envy
 Terminal=false
 Categories=Office;Utility;TextEditor;

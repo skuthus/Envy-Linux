@@ -68,7 +68,7 @@ page.
    import, Continuity Camera, VisionKit Live Text, OCR, AeroSpace, the Mac
    theme gallery (Windows has not built it either).
 
-7. **This repo stays private and proprietary** unless the owner says otherwise.
+7. **This repo is public under the MIT licence** (since Sep 2026; it was private and proprietary before).
    Same LICENSE as the other Envy repos. Do not publish to Flathub, AUR, or
    a public GitHub repo on your own.
 

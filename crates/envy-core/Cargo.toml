@@ -4,6 +4,7 @@ description = "The note model and store — the platform-agnostic half of Envy."
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
+license = "MIT"
 
 [dependencies]
 fancy-regex.workspace = true

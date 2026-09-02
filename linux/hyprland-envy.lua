@@ -6,11 +6,14 @@
 -- hotkeys, so this bind *is* the summon; it runs `envy-linux --toggle`, which
 -- hands the verb to the running instance over its control socket.
 --
--- Install: append to ~/.config/hypr/bindings.lua
---   pcall(dofile, os.getenv("HOME") .. "/Work/Envy-omarchy/linux/hyprland-envy.lua")
--- then `hyprctl reload`. Edit the path below if the checkout moves.
+-- Install: append to ~/.config/hypr/bindings.lua one of
+--   pcall(dofile, "/usr/share/envy/hyprland-envy.lua")                                -- package
+--   pcall(dofile, os.getenv("HOME") .. "/Work/Envy-omarchy/linux/hyprland-envy.lua")  -- checkout
+-- then `hyprctl reload`.
 
-local envy_summon = os.getenv("HOME") .. "/Work/Envy-omarchy/linux/envy-summon.sh"
+-- The summon script sits next to this file, wherever this file lives.
+local here = (debug.getinfo(1, "S").source:sub(2)):match("(.*/)") or "./"
+local envy_summon = here .. "envy-summon.sh"
 
 -- Match on class AND title: pop-out notes and the pinned popover share the
 -- `envy-linux` class, and those should stay ordinary windows.
