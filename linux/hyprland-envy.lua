@@ -30,3 +30,6 @@ o.window("envy-linux", {
 })
 
 o.bind("CTRL + ALT + RETURN", "Envy", envy_summon)
+-- Drag it around, then bring it back: centres whichever floating window has
+-- focus, so it serves any floating window, Envy included.
+o.bind("CTRL + ALT + C", "Centre the floating window", hl.dsp.window.center())
