@@ -16,6 +16,7 @@ use tauri_plugin_autostart::ManagerExt as AutostartManagerExt;
 
 pub mod config;
 mod control;
+mod hyprland;
 mod omarchy;
 pub mod themes;
 mod tray;
@@ -932,6 +933,7 @@ fn open_index(
 /// `config-changed` event; this is the half no window can do.
 pub(crate) fn apply_config_owned(app: &tauri::AppHandle) {
     apply_autostart(app);
+    hyprland::apply(config::hyprland_bind());
     let on = config::keep_on_top();
     if KEEP_ON_TOP_APPLIED.swap(on, Ordering::Relaxed) != on {
         apply_keep_on_top(app, on);

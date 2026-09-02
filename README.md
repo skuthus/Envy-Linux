@@ -52,9 +52,11 @@ Hyprland bind: `linux/hyprland-envy.lua` binds **Ctrl+Alt+Return** to
 to the running instance over its control socket
 (`$XDG_RUNTIME_DIR/envy-control.sock`; verbs `toggle`, `show`, `pinned`) and
 does exactly what the bar icon's click does, or launches Envy when nothing is
-running. The owner's `~/.config/hypr/bindings.lua` loads that file with a
-guarded `dofile`. The in-app shortcut settings still exist for X11 / a future
-portal backend.
+running. Settings → System → "Bind Ctrl+Alt+Return in Hyprland" (the
+`system.hyprland_bind` key) adds a guarded `dofile` line for that file to
+`~/.config/hypr/bindings.lua` and reloads Hyprland; off removes it. A line you
+wrote yourself is left alone, and none is added beside it. The in-app shortcut
+settings still exist for X11 / a future portal backend.
 
 **NVIDIA.** WebKitGTK's DMA-BUF renderer aborts the Wayland connection on the
 proprietary driver ("Error 71 (Protocol error)" before any window appears).
@@ -67,9 +69,10 @@ image attachments, subfolders, Inbox, Templates, `.trash`) — default
 `~/Envy Test Vault`. It refuses to write into a folder that already holds
 notes. Do destructive testing there, never in a synced vault.
 
-**Installing a release.** Omarchy / Arch: `yay -S envy-linux`, then add
+**Installing a release.** Omarchy / Arch: `yay -S envy-linux`, launch it,
+and turn on Settings → System → "Bind Ctrl+Alt+Return in Hyprland" (or add
 `pcall(dofile, "/usr/share/envy/hyprland-envy.lua")` to
-`~/.config/hypr/bindings.lua` for the Ctrl+Alt+Return summon. Elsewhere, run
+`~/.config/hypr/bindings.lua` yourself). Elsewhere, run
 the AppImage from the GitHub release. Cutting a release is `scripts/release.sh`;
 see RELEASING.md. Envy is MIT licensed (LICENSE).
 

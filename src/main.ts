@@ -1338,6 +1338,7 @@ const SETTING_KEY = {
   requireModifierForLinkClick: ['editor', 'require_modifier_for_links'],
   showBacklinks: ['editor', 'show_interlinks'],
   hideOnFocusLoss: ['system', 'hide_on_focus_loss'],
+  hyprlandBind: ['system', 'hyprland_bind'],
   restoreFocusOnSummon: ['system', 'restore_focus_on_summon'],
   linkPreview: ['editor', 'link_preview'],
   listDensity: ['list', 'density'],
@@ -1411,6 +1412,7 @@ function readSettings() {
     requireModifierForLinkClick: settingBool('requireModifierForLinkClick'),
     showBacklinks: settingBool('showBacklinks'),
     hideOnFocusLoss: settingBool('hideOnFocusLoss'),
+    hyprlandBind: settingBool('hyprlandBind'),
     restoreFocusOnSummon: settingBool('restoreFocusOnSummon'),
     linkPreview: settingText('linkPreview'),
     listDensity: settingText('listDensity'),
@@ -5308,6 +5310,7 @@ function syncSettingsControls() {
   checkbox('setting-plain-text').checked = plainTextMode
   checkbox('setting-show-interlinks').checked = settings.showBacklinks
   checkbox('setting-hide-on-blur').checked = settings.hideOnFocusLoss
+  checkbox('setting-hyprland-bind').checked = settings.hyprlandBind
   checkbox('setting-restore-focus').checked = settings.restoreFocusOnSummon
   checkbox('setting-auto-update').checked = settings.checkForUpdatesAutomatically
   renderLastChecked()
@@ -5469,6 +5472,9 @@ checkbox('setting-plain-text').onchange = (e) => {
 }
 bindToggle('setting-show-interlinks', 'showBacklinks', renderInterlinks)
 bindToggle('setting-hide-on-blur', 'hideOnFocusLoss')
+// Applied by Rust when the config write lands: it edits bindings.lua and
+// reloads Hyprland, which is not the webview's to do.
+bindToggle('setting-hyprland-bind', 'hyprlandBind')
 bindToggle('setting-restore-focus', 'restoreFocusOnSummon')
 bindToggle('setting-auto-update', 'checkForUpdatesAutomatically')
 // Always checks, regardless of the auto toggle — that's the point of asking.

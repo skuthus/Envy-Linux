@@ -477,9 +477,16 @@
               The tray icon is always there, so turning this off still leaves a
               way back besides the hotkey.
             </p>
+            <label>
+              <input type="checkbox" id="setting-hyprland-bind" />
+              Bind Ctrl+Alt+Return in Hyprland
+            </label>
             <p class="setting-note">
-              <strong>Ctrl+Alt+Enter</strong> shows or hides Envy from any app.
-              The tray icon does the same on click.
+              Adds one line to <code>~/.config/hypr/bindings.lua</code> so
+              <strong>Ctrl+Alt+Return</strong> shows or hides Envy from any app,
+              <strong>Ctrl+Alt+C</strong> centres it, and the window opens
+              floating. Off removes that line again. A line you added yourself
+              is left alone. The bar icon does the same on click either way.
             </p>
           </section>
 

@@ -34,9 +34,10 @@ is the template and the local-test harness, not the published package.
 
 ## Installing
 
-- Omarchy / Arch: `yay -S envy-linux`, then add
-  `pcall(dofile, "/usr/share/envy/hyprland-envy.lua")` to
-  `~/.config/hypr/bindings.lua` and `hyprctl reload` for Ctrl+Alt+Return.
+- Omarchy / Arch: `yay -S envy-linux`, launch it, and turn on Settings →
+  System → "Bind Ctrl+Alt+Return in Hyprland", which adds the
+  `pcall(dofile, "/usr/share/envy/hyprland-envy.lua")` line to
+  `~/.config/hypr/bindings.lua` and reloads Hyprland (or add it by hand).
   The bar widget installs itself on first launch.
 - Anything else: download the AppImage from the release and run it.
 

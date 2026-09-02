@@ -49,9 +49,12 @@ These are meant to work from any app. On Wayland no app can register a
 global hotkey, so on Omarchy and Hyprland the chord in the config file is
 not what fires them: a Hyprland bind is. `linux/hyprland-envy.lua` binds
 `CTRL + ALT + RETURN` to `envy-summon.sh`, which runs `envy-linux --toggle`
-over the control socket. To change the summon chord, edit the Hyprland
-bind (see the `omarchy` skill) and not this table. The entries here still
-matter on X11 and for a future portal backend.
+over the control socket. That file is loaded by one line in
+`~/.config/hypr/bindings.lua`, which `system.hyprland_bind = true` in
+config.md adds (and `false` removes) — see settings.md. To change the
+summon chord, edit the Hyprland bind (see the `omarchy` skill) and not
+this table. The entries here still matter on X11 and for a future portal
+backend.
 
 | Id | What it does | Default chord |
 | --- | --- | --- |

@@ -374,6 +374,14 @@
           "doc": "Keep the window above others and never hide it on focus loss. Also toggled by the keepOnTop shortcut and the bar icon menu.",
           "owner": "rust",
           "legacy": "file:keep-on-top"
+        },
+        {
+          "key": "hyprland_bind",
+          "type": "bool",
+          "default": false,
+          "label": "Bind Ctrl+Alt+Return in Hyprland",
+          "doc": "Adds one line to ~/.config/hypr/bindings.lua that loads Envy's Hyprland file (the Ctrl+Alt+Return summon, the Ctrl+Alt+C centre bind and the floating window rule) and reloads Hyprland; off removes that line again. Only the line Envy added is ever touched: a bind you wrote yourself is left alone, and Envy will not add a second one beside it.",
+          "owner": "rust"
         }
       ]
     },

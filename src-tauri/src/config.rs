@@ -982,6 +982,12 @@ pub fn autostart() -> bool {
         .unwrap_or(false)
 }
 
+pub fn hyprland_bind() -> bool {
+    value_of("system", "hyprland_bind")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
+
 /// The `[shortcuts]` overrides for the four chords Rust registers with the
 /// compositor, defaults filled in. The frontend still calls
 /// `set_global_shortcuts` once it is up; this is what runs before it.

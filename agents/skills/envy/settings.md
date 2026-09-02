@@ -88,6 +88,7 @@ belongs under the header named in each section below.
 | `restore_focus_on_summon` | bool | `true` | Put the cursor back where it was (search box or editor) when the window is shown again. |
 | `show_in_taskbar` | bool | `true` | Whether the window appears in taskbars and window switchers. |
 | `keep_on_top` | bool | `false` | Keep the window above others and never hide it on focus loss. Also toggled by the keepOnTop shortcut and the bar icon menu. Read by Rust at startup, before the window opens. |
+| `hyprland_bind` | bool | `false` | Adds one line to ~/.config/hypr/bindings.lua that loads Envy's Hyprland file (the Ctrl+Alt+Return summon, the Ctrl+Alt+C centre bind and the floating window rule) and reloads Hyprland; off removes that line again. Only the line Envy added is ever touched: a bind you wrote yourself is left alone, and Envy will not add a second one beside it. Read by Rust at startup, before the window opens. |
 
 ## Updates / `[updates]`
 
