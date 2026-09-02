@@ -103,7 +103,8 @@ const KEYBOARD_CONVENTIONS: Array<[string, string]> = [
 /// in the shortcut table and cannot be derived from it.
 const MOUSE_GESTURES: Array<[string, string]> = [
   ['Ctrl-click a [[link]]', 'Open it, creating it if needed'],
-  ['Alt-click a [[link]]', 'Preview it without leaving'],
+  ['Alt-click a [[link]]', 'Preview it without leaving (drag the preview by its title)'],
+  ['Alt+Shift-click a [[link]]', 'Open it in its own window'],
   ['Click a due date', 'Retire it, or bring it back'],
 ]
 

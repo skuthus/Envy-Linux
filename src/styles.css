@@ -883,23 +883,25 @@ body.popout-window {
 #popout-editor { flex: 1; min-height: 0; overflow: hidden; padding: 4px 10px; }
 /* The pop-out's editable title — click it to rename the note, the same as the
    main window's title bar. */
+/* The same bar the main window's title sits in: the same face size, the same
+   chrome background, the same rule beneath it. */
 #popout-title {
   flex: none;
   font: inherit;
   font-weight: 600;
-  font-size: calc(15px * var(--envy-ui-scale, 1));
-  margin: 8px 10px 2px;
-  padding: 3px 6px;
-  border: 1px solid transparent;
+  font-size: var(--envy-font-size);
+  margin: 0;
+  padding: 3px var(--envy-inset);
+  border: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--envy-marker) 30%, transparent);
   border-radius: 0;
-  background: transparent;
+  background: var(--envy-title-bar-background);
   color: var(--envy-text);
   text-overflow: ellipsis;
 }
 #popout-title:focus {
   outline: none;
-  border-color: color-mix(in srgb, var(--envy-marker) 55%, transparent);
-  background: var(--envy-background);
+  border-bottom-color: var(--envy-link);
 }
 
 /* --- Footer and interlinks --------------------------------------------------
@@ -2149,7 +2151,9 @@ body.popout-window {
   display: flex;
   flex-direction: column;
   border-radius: 0;
-  background: var(--envy-title-bar-background);
+  /* Opaque: the peek floats over the note's own text, and a translucent bar
+     lets that text show through the title. */
+  background: var(--envy-title-bar-background-opaque, var(--envy-title-bar-background));
   border: 1px solid var(--envy-link);
   box-shadow: none;
   overflow: hidden;
@@ -2159,6 +2163,8 @@ body.popout-window {
   flex: none;
   display: flex;
   align-items: center;
+  cursor: move;
+  user-select: none;
   gap: 8px;
   padding: 5px 8px 5px 12px;
   font-size: 12px;
@@ -2202,7 +2208,7 @@ body.popout-window {
   min-height: 0;
   overflow: auto;
   padding: 8px 12px;
-  background: var(--envy-background);
+  background: var(--envy-background-opaque, var(--envy-background));
 }
 #link-preview-body .cm-editor { background: transparent; }
 #link-preview-body .cm-scroller { padding: 0; }

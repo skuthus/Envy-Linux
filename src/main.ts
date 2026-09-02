@@ -51,10 +51,10 @@ import {
 } from './tables'
 import { installSmoothScroll, scrollTarget, smoothScrollTo } from './smooth-scroll'
 import {
+  applyEditorZoom,
   applyStoredAppearance,
   currentOmarchy,
   currentTheme,
-  enviousDark,
   initAppearance,
   themeNotices,
 } from './theme'
@@ -316,12 +316,14 @@ const view = new EditorView({
           const pos = v.posAtCoords({ x: event.clientX, y: event.clientY })
           if (pos === null) return false
 
-          // Alt-click previews a link instead of following it.
+          // Alt-click previews a link instead of following it; Alt+Shift-click
+          // skips the peek and opens the note in its own window.
           if (event.altKey && settings.linkPreview !== 'off') {
             const target = wikiLinkTargetAt(v, pos)
             if (!target) return false
             event.preventDefault()
-            void showLinkPreview(target, event.clientX, event.clientY)
+            if (event.shiftKey) void popOutLink(target, event.clientX, event.clientY)
+            else void showLinkPreview(target, event.clientX, event.clientY)
             return true
           }
 
@@ -2333,6 +2335,50 @@ linkPreviewPinEl.onclick = async () => {
   }
 }
 
+/// Alt+Shift-click: straight to a floating window, the same one the peek's
+/// pin makes. A link to a note that doesn't exist yet has nothing to float,
+/// so that case falls back to the peek and its "doesn't exist" message.
+async function popOutLink(target: string, x: number, y: number) {
+  const note = await invoke<NoteDto | null>('resolve_title', { title: target })
+  if (!note) {
+    void showLinkPreview(target, x, y)
+    return
+  }
+  hideLinkPreview()
+  try {
+    await invoke('pop_out_note', { id: note.id, innerSize: storedPopoutSize() })
+  } catch (e) {
+    console.error('could not pop the link out', e)
+  }
+}
+
+// The peek drags by its title bar. It opens where the pointer was, which is
+// often over the very text someone wants to keep reading, so being able to
+// shove it aside is what keeps it from having to be dismissed and reopened.
+const linkPreviewTitleEl = document.getElementById('link-preview-title')!
+linkPreviewTitleEl.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0 || (e.target as HTMLElement).closest('button')) return
+  const startX = e.clientX - linkPreviewEl.offsetLeft
+  const startY = e.clientY - linkPreviewEl.offsetTop
+  linkPreviewTitleEl.setPointerCapture(e.pointerId)
+  const move = (ev: PointerEvent) => {
+    const { width, height } = linkPreviewEl.getBoundingClientRect()
+    const left = Math.min(Math.max(0, ev.clientX - startX), window.innerWidth - width)
+    const top = Math.min(Math.max(0, ev.clientY - startY), window.innerHeight - height)
+    linkPreviewEl.style.left = `${left}px`
+    linkPreviewEl.style.top = `${top}px`
+  }
+  const up = () => {
+    linkPreviewTitleEl.removeEventListener('pointermove', move)
+    linkPreviewTitleEl.removeEventListener('pointerup', up)
+    linkPreviewTitleEl.removeEventListener('pointercancel', up)
+  }
+  linkPreviewTitleEl.addEventListener('pointermove', move)
+  linkPreviewTitleEl.addEventListener('pointerup', up)
+  linkPreviewTitleEl.addEventListener('pointercancel', up)
+  e.preventDefault()
+})
+
 async function showLinkPreview(target: string, x: number, y: number) {
   hideLinkPreview()
   const note = await invoke<NoteDto | null>('resolve_title', { title: target })
@@ -2384,12 +2430,7 @@ window.addEventListener('keydown', (e) => {
 let editorZoom = settingNumber('editorZoom')
 
 function applyZoom() {
-  const base = Number.parseFloat(enviousDark.fontSize)
-  // Whole pixels: a 15×1.15 = 17.25px face is the usual WebKit softness.
-  const px = Math.max(9, Math.round(base * editorZoom))
-  const root = document.documentElement.style
-  root.setProperty('--envy-font-size', `${px}px`)
-  root.setProperty('--envy-line-height', `${Math.round(px * 1.6)}px`)
+  applyEditorZoom(editorZoom)
   view.requestMeasure()
 }
 

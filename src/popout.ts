@@ -28,9 +28,9 @@ import {
   loadCompletionSources,
   type CompletionSources,
 } from './completion'
-import { initAppearance } from './theme'
+import { initAppearance, applyEditorZoom } from './theme'
 import { installSmoothScroll } from './smooth-scroll'
-import { getBool } from './config'
+import { getBool, getNumber, onChange as onConfigChange } from './config'
 
 // Its own entry point, so it needs its own last-resort handler — the main
 // window's doesn't reach here.
@@ -267,7 +267,19 @@ editorEl.addEventListener('contextmenu', (e) => {
   ])
 })
 
-void initAppearance()
+// The same face size and chrome scale as the main window, from the same two
+// settings, so a popped-out note reads at the size it was popped out at —
+// and follows if either setting changes while it is open.
+function applySizing() {
+  applyEditorZoom(getNumber('editor', 'zoom'))
+  document.documentElement.style.setProperty(
+    '--envy-ui-scale',
+    String(getNumber('appearance', 'text_size')),
+  )
+  view.requestMeasure()
+}
+void initAppearance(applySizing)
+onConfigChange(() => applySizing())
 
 // The size sticks: drag any edge and the next pop-out opens that size, as the
 // Mac's self-persisting peek panel does. Stored in the origin's localStorage,

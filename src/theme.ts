@@ -154,6 +154,23 @@ export function applyTheme(theme: EnvyTheme, dark = true) {
     const safe = CSS.supports(prop, value) ? value : defaults[key as keyof EnvyTheme]
     root.setProperty(`--envy-${key.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase())}`, safe)
   }
+  // Opaque twins of the two translucent surfaces, for overlays that sit on
+  // top of the note rather than on the wallpaper: the link preview would
+  // otherwise show the text beneath it through its own title bar.
+  root.setProperty('--envy-background-opaque', toAlpha(theme.background, 1))
+  root.setProperty('--envy-title-bar-background-opaque', toAlpha(theme.titleBarBackground, 1))
+}
+
+/// The editor's face size for a zoom factor, as the two CSS variables every
+/// window reads. Shared by the main window and the pop-outs so a note looks
+/// the same size wherever it is opened. Whole pixels: a 15×1.15 = 17.25px
+/// face is the usual WebKit softness.
+export function applyEditorZoom(zoom: number) {
+  const base = Number.parseFloat(enviousDark.fontSize)
+  const px = Math.max(9, Math.round(base * zoom))
+  const root = document.documentElement.style
+  root.setProperty('--envy-font-size', `${px}px`)
+  root.setProperty('--envy-line-height', `${Math.round(px * 1.6)}px`)
 }
 
 export function cssFontStack(family: string): string {
