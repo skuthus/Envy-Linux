@@ -433,6 +433,11 @@ body.fade-focus #editor-pane:focus-within {
 
 .row {
   align-items: baseline;
+  /* One measured height for every row (set by the list from a real row), so a
+     row with an emoji or CJK title cannot be a pixel taller than the rest and
+     throw the virtualised positions off. */
+  height: var(--envy-row-height, auto);
+  box-sizing: border-box;
   /* 12px each side, matching the Mac's 8 on the row plus 4 on the stack around
      it — except that the trailing side has to pay for the scrollbar gutter as
      well. The gutter is reserved whether or not a scrollbar is showing (see
@@ -929,6 +934,16 @@ body.popout-window {
   color: var(--envy-marker);
 }
 #loading-indicator { opacity: 0.8; }
+/* Config and theme notices. Truncated rather than allowed to push the counts
+   off the end of the footer — the whole list is in the tooltip. */
+#footer-notice {
+  color: var(--envy-due-soon);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 45%;
+}
+#footer-notice.hidden { display: none; }
 
 #template-actions { display: flex; gap: 6px; flex: none; }
 #template-actions.hidden { display: none; }
@@ -1385,6 +1400,9 @@ body.popout-window {
   color: var(--envy-blockquote);
   word-break: break-all;
 }
+/* Problems reported by `envy-linux config check` are the one thing in the
+   panel that wants to be noticed. */
+#settings-config-problems { color: var(--envy-due-soon); }
 #settings-panel button {
   font: inherit;
   font-size: 12px;
@@ -1449,6 +1467,11 @@ body.popout-window {
 #settings-panel input#setting-font-custom {
   width: 22ch;
 }
+/* The label rule above sets display: flex, which outranks a bare .hidden;
+   the custom-font row needs its own rule to actually disappear. */
+#settings-panel #setting-font-custom-row.hidden {
+  display: none;
+}
 /* A number field paired with a unit dropdown, kept together at the row's right
    edge (the group takes the auto margin so the two don't drift apart). */
 #settings-panel .setting-inline-group {
@@ -1463,7 +1486,7 @@ body.popout-window {
 #settings-panel input[type='number'] {
   font: inherit;
   font-size: 12px;
-  width: 4ch;
+  width: 6ch;
   padding: 3px 6px;
   border-radius: 0;
   border: 1px solid color-mix(in srgb, var(--envy-marker) 55%, transparent);

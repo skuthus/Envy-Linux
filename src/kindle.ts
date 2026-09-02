@@ -1,7 +1,7 @@
 //! Settings → Import → Kindle: the frontend half of the Kindle highlights
 //! importer. The parsing, the ledger and the note writing live in
-//! `envy_core::kindle`; this file owns the preferences (localStorage, under
-//! the Mac's own key names), the Settings controls, and the two ways an
+//! `envy_core::kindle`; this file owns the preferences (the config file's
+//! `[kindle]` table), the Settings controls, and the two ways an
 //! import starts — the buttons here and the tray's "Import from Kindle",
 //! which behaves like the Mac's File-menu command: with the feature on and a
 //! Kindle plugged in it imports straight away, otherwise it opens Settings so
@@ -11,6 +11,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { open as openFilePicker } from '@tauri-apps/plugin-dialog'
 import { alertModal, confirmModal } from './prompt-modal'
+import { getBool, getString, set as setConfig } from './config'
 
 type TitleReference = 'page' | 'location' | 'both' | 'none'
 
@@ -24,19 +25,21 @@ interface KindleProgress {
   total: number
 }
 
-// Same names as the Mac's UserDefaults keys. The two "omit" flags are stored
-// in the negative so an unset key means "included" — the default.
-const ENABLED_KEY = 'kindleImportEnabled'
-const TITLE_REFERENCE_KEY = 'kindleTitleReference'
-const OMIT_AUTHOR_KEY = 'kindleBodyOmitAuthor'
-const OMIT_LOCATION_KEY = 'kindleBodyOmitLocation'
+// The keys of the config file's `[kindle]` table. The two "omit" flags are
+// stored in the negative, as they were on the Mac, so an unset key means
+// "included" — the default.
+const TABLE = 'kindle'
+const ENABLED_KEY = 'enabled'
+const TITLE_REFERENCE_KEY = 'title_reference'
+const OMIT_AUTHOR_KEY = 'omit_author'
+const OMIT_LOCATION_KEY = 'omit_location'
 
 function flag(key: string): boolean {
-  return localStorage.getItem(key) === 'true'
+  return getBool(TABLE, key)
 }
 
 function titleReference(): TitleReference {
-  const raw = localStorage.getItem(TITLE_REFERENCE_KEY)
+  const raw = getString(TABLE, TITLE_REFERENCE_KEY)
   return raw === 'location' || raw === 'both' || raw === 'none' ? raw : 'page'
 }
 
@@ -147,29 +150,36 @@ async function forgetHistory() {
   }
 }
 
-/// Wires the Settings controls and the tray trigger. `openSettings` is the
-/// main window's own opener, handed in so the tray path can land the user on
-/// this section when there's nothing to import yet.
-export function initKindleImport(openSettings: () => void) {
+/// Puts the controls back in step with the config — at startup, and again
+/// whenever the file changes underneath us, so an edit made outside Envy shows
+/// in the panel rather than being overwritten by a stale checkbox.
+export function syncKindleSettings() {
   enabledBox.checked = flag(ENABLED_KEY)
   referenceSelect.value = titleReference()
   authorBox.checked = !flag(OMIT_AUTHOR_KEY)
   locationBox.checked = !flag(OMIT_LOCATION_KEY)
   syncControls()
+}
+
+/// Wires the Settings controls and the tray trigger. `openSettings` is the
+/// main window's own opener, handed in so the tray path can land the user on
+/// this section when there's nothing to import yet.
+export function initKindleImport(openSettings: () => void) {
+  syncKindleSettings()
 
   enabledBox.onchange = () => {
-    localStorage.setItem(ENABLED_KEY, String(enabledBox.checked))
+    setConfig(TABLE, ENABLED_KEY, enabledBox.checked)
     syncControls()
     if (enabledBox.checked) void detect()
   }
   referenceSelect.onchange = () => {
-    localStorage.setItem(TITLE_REFERENCE_KEY, referenceSelect.value)
+    setConfig(TABLE, TITLE_REFERENCE_KEY, referenceSelect.value)
   }
   authorBox.onchange = () => {
-    localStorage.setItem(OMIT_AUTHOR_KEY, String(!authorBox.checked))
+    setConfig(TABLE, OMIT_AUTHOR_KEY, !authorBox.checked)
   }
   locationBox.onchange = () => {
-    localStorage.setItem(OMIT_LOCATION_KEY, String(!locationBox.checked))
+    setConfig(TABLE, OMIT_LOCATION_KEY, !locationBox.checked)
   }
   refreshButton.onclick = () => void detect()
   importButton.onclick = () => {

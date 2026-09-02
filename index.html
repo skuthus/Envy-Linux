@@ -118,6 +118,10 @@
             <button id="interlinks-toggle" type="button" class="hidden"></button>
             <span id="loading-indicator" class="hidden">Loading notes…</span>
             <span id="footer-clock" class="hidden"></span>
+            <!-- Things Envy noticed but shouldn't interrupt anyone about: a
+                 problem in config.md, a theme file whose colours don't read.
+                 The full list is in the tooltip and the console. -->
+            <span id="footer-notice" class="hidden"></span>
             <span id="stats"></span>
             <!-- Whole-vault note (and, with subfolders on, folder) totals,
                  sitting to the right of the open note's own counts. -->
@@ -542,6 +546,23 @@
               Font family
               <input type="text" id="setting-font-custom" placeholder="Family name" />
             </label>
+          </section>
+
+          <section id="settings-config">
+            <h3>Config file</h3>
+            <p class="setting-path" id="settings-config-path"></p>
+            <div class="setting-row">
+              <button id="setting-edit-config" type="button">Edit in Envy</button>
+              <button id="setting-open-config-folder" type="button">Open Folder</button>
+            </div>
+            <p class="setting-note">
+              Every setting on this panel lives in that file, and the two stay
+              in sync: edit it here, in any editor, or with an agent, and Envy
+              follows along without a restart. Themes live beside it, one
+              markdown file each, in
+              <span id="settings-themes-path"></span>.
+            </p>
+            <p class="setting-note" id="settings-config-problems" hidden></p>
           </section>
 
           <section id="settings-import">

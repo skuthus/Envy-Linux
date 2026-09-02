@@ -20,6 +20,10 @@ NAME="envy-linux-$VERSION"
 OUT="target/release/dist"
 TARBALL="$OUT/$NAME-x86_64.tar.gz"
 
+if [ ! -f agents/skills/envy/SKILL.md ]; then
+  echo "release: agents/skills/envy/SKILL.md is missing - the package installs it" >&2
+  exit 1
+fi
 if ! grep -q "^_tauriver=$VERSION\$" linux/PKGBUILD; then
   echo "release: linux/PKGBUILD _tauriver does not match $VERSION - bump it first" >&2
   exit 1
@@ -37,6 +41,9 @@ rm -rf "$OUT/$NAME"
 mkdir -p "$OUT/$NAME/icons"
 cp target/release/envy-linux "$OUT/$NAME/"
 cp linux/envy.desktop linux/hyprland-envy.lua linux/envy-summon.sh LICENSE README.md "$OUT/$NAME/"
+# The agent skill, as the PKGBUILD installs it: /usr/share/envy/agents/skills/envy.
+mkdir -p "$OUT/$NAME/agents/skills"
+cp -r agents/skills/envy "$OUT/$NAME/agents/skills/"
 cp src-tauri/icons/32x32.png "$OUT/$NAME/icons/32.png"
 cp src-tauri/icons/128x128.png "$OUT/$NAME/icons/128.png"
 cp src-tauri/icons/128x128@2x.png "$OUT/$NAME/icons/256.png"
@@ -57,6 +64,8 @@ if command -v makepkg >/dev/null; then
   # pipe grep's early exit hands tar, even when the entry is present.
   tar -tf "$PKG" > "$PKGDIR/files.txt"
   grep -q '^usr/bin/envy-linux$' "$PKGDIR/files.txt" || { echo "release: package lacks usr/bin/envy-linux" >&2; exit 1; }
+  grep -q '^usr/share/envy/agents/skills/envy/SKILL.md$' "$PKGDIR/files.txt" \
+    || { echo "release: package lacks the envy agent skill" >&2; exit 1; }
   echo "   ok: $(basename "$PKG") ($(grep -c '^usr/' "$PKGDIR/files.txt") files under usr/)"
   cp "$PKG" "$OUT/"
   rm -rf "$PKGDIR"

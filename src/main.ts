@@ -49,11 +49,34 @@ import {
   serializeTableRow,
   tableEditing,
 } from './tables'
-import { installSmoothScroll, cancelSmoothScroll } from './smooth-scroll'
-import { applyStoredAppearance, enviousDark, initAppearance } from './theme'
+import { installSmoothScroll, scrollTarget, smoothScrollTo } from './smooth-scroll'
+import {
+  applyStoredAppearance,
+  currentOmarchy,
+  currentTheme,
+  enviousDark,
+  initAppearance,
+  themeNotices,
+} from './theme'
+import * as config from './config'
+import {
+  RESERVED_THEME_NAMES,
+  THEME_NAME_PATTERN,
+  type ThemeFileDto,
+  cssToHex,
+  legibilityNotices,
+  overlayTokens,
+  readThemeText,
+  renderThemeFile,
+  themeFile,
+  themeFiles,
+  themesDir,
+  tokensFromTheme,
+  writeThemeFile,
+} from './themes'
 import { createMiniNoteEditor, type MiniNoteEditor } from './mininote'
 import { renderReference, toggleReference, type ReferenceTab } from './reference'
-import { initKindleImport } from './kindle'
+import { initKindleImport, syncKindleSettings } from './kindle'
 import {
   SHORTCUT_SPECS,
   bindingFor,
@@ -396,7 +419,7 @@ const view = new EditorView({
         // Only claimed when the clipboard carries an image and no text — a
         // copied text run pastes as text, matching the Mac's no-string guard.
         paste: (event, v) => {
-          if (!openNoteId && !openTemplatePath) return false
+          if (!openNoteId && !openExternal) return false
           const dt = event.clipboardData
           if (!dt || dt.getData('text/plain')) return false
           const item = [...dt.items].find(
@@ -411,7 +434,7 @@ const view = new EditorView({
       }),
       editable.of(EditorView.editable.of(false)),
       EditorView.updateListener.of((u) => {
-        if (u.docChanged && (openNoteId || openTemplatePath)) {
+        if (u.docChanged && (openNoteId || openExternal)) {
           scheduleSave()
           // Counts track the buffer, not the saved file — they should move as
           // you type, not lag 400ms behind on the save debounce.
@@ -475,7 +498,7 @@ function countWords(text: string): number {
 }
 
 function renderStats() {
-  if (!openNoteId && !openTemplatePath) {
+  if (!openNoteId && !openExternal) {
     statsEl.textContent = ''
     renderVaultLabel()
     return
@@ -654,7 +677,7 @@ async function refreshInterlinks() {
 
 interlinksToggleEl.onclick = () => {
   interlinksExpanded = !interlinksExpanded
-  saveSetting('backlinksExpanded', interlinksExpanded)
+  localStorage.setItem('backlinksExpanded', String(interlinksExpanded))
   renderInterlinks()
   view.requestMeasure()
 }
@@ -790,7 +813,7 @@ async function importPastedImage(file: File, v: EditorView) {
 // Attachments/ (leaving the original in place) and referenced at the drop point.
 void getCurrentWebview().onDragDropEvent(async (event) => {
   if (event.payload.type !== 'drop') return
-  if (!openNoteId && !openTemplatePath) return
+  if (!openNoteId && !openExternal) return
   const imagePath = event.payload.paths.find((p) => isImageTarget(p))
   if (!imagePath) return
   // The reported position is in physical pixels; posAtCoords wants CSS pixels.
@@ -893,8 +916,10 @@ function jumpToRange(range: { from: number; to: number }) {
 
 // --- Layout -----------------------------------------------------------------
 // Vertical (list above, note below) is how Envy-Omarchy opens: a stacked
-// Notational Velocity pane, not a sidebar. Horizontal is still available via
-// the layout shortcut for the session; the next launch is vertical again.
+// Notational Velocity pane, not a sidebar. Horizontal is the other choice, and
+// it is `appearance.layout` in config.md, so it survives a relaunch and can be
+// set from the file. The split position itself stays in localStorage: it is a
+// pixel measurement of this window, not a preference anyone would write down.
 
 type LayoutMode = 'vertical' | 'horizontal'
 
@@ -926,15 +951,22 @@ function applyLayout() {
     listPaneEl.style.width = `${width}px`
     listPaneEl.style.height = ''
   }
-  localStorage.setItem('layoutMode', layoutMode)
   // The editor's viewport just changed shape, and the styler decorates only
   // what's visible.
   view.requestMeasure()
 }
 
-function toggleLayout() {
-  layoutMode = layoutMode === 'vertical' ? 'horizontal' : 'vertical'
+/// Applying and persisting are separate: `applyAllSettings` re-applies the
+/// layout the file already holds, and writing it back from there would be a
+/// change made in answer to itself.
+function setLayout(next: LayoutMode) {
+  layoutMode = next
+  saveSetting('layout', layoutMode)
   applyLayout()
+}
+
+function toggleLayout() {
+  setLayout(layoutMode === 'vertical' ? 'horizontal' : 'vertical')
 }
 
 dividerEl.addEventListener('pointerdown', (e) => {
@@ -989,12 +1021,12 @@ async function save() {
   // reorder the list for no reason.
   if (content === openNoteSavedContent) return
 
-  if (openTemplatePath) {
+  if (openExternal) {
     try {
-      await invoke('save_template', { path: openTemplatePath, content })
+      await saveExternalDocument(openExternal, content)
       openNoteSavedContent = content
     } catch (e) {
-      console.error('template save failed', e)
+      console.error(`could not save ${openExternal.name}`, e)
     }
     return
   }
@@ -1076,18 +1108,11 @@ function renderDueBadge(due: string | null) {
 const DOMAIN_EMOJI_PRESETS = ['📰', '📄', '📚', '📺', '🎥', '🎧', '🐙', '💻', '🛒', '💬', '⭐️', '🌐']
 
 function domainEmojis(): Record<string, string> {
-  try {
-    return JSON.parse(localStorage.getItem('domainEmojis') ?? '{}') as Record<string, string>
-  } catch {
-    return {}
-  }
+  return config.map('domain_emojis')
 }
 
 function setDomainEmoji(domain: string, emoji: string | null) {
-  const all = domainEmojis()
-  if (emoji) all[domain] = emoji
-  else delete all[domain]
-  localStorage.setItem('domainEmojis', JSON.stringify(all))
+  config.setMapEntry('domain_emojis', domain, emoji)
   // The pill is a widget built during styling, so a restyle is what repaints
   // it — there is no element to poke directly, and nothing in the document
   // changed for the plugin to notice on its own.
@@ -1114,7 +1139,7 @@ editorEl.addEventListener('contextmenu', (e) => {
   // Off a pill, the plain editor menu — just "Insert Image…" for now, so the
   // picker has a discoverable home besides the shortcut.
   if (!domain) {
-    if (!openNoteId && !openTemplatePath) return
+    if (!openNoteId && !openExternal) return
     e.preventDefault()
     e.stopPropagation()
     openContextMenu(e.clientX, e.clientY, [
@@ -1176,18 +1201,11 @@ function domainEmojiMenu(domain: string): MenuItemSpec[] {
 // state attached to a note behind its back.
 
 function tagColors(): Record<string, string> {
-  try {
-    return JSON.parse(localStorage.getItem('tagColors') ?? '{}') as Record<string, string>
-  } catch {
-    return {}
-  }
+  return config.map('tag_colors')
 }
 
 function setTagColor(tag: string, color: string | null) {
-  const all = tagColors()
-  if (color) all[tag] = color
-  else delete all[tag]
-  localStorage.setItem('tagColors', JSON.stringify(all))
+  config.setMapEntry('tag_colors', tag, color)
   renderTitleBarTags(openNoteDto?.tags ?? [])
 }
 
@@ -1285,83 +1303,144 @@ function dueUrgencyClass(iso: string): string {
 }
 
 // --- Settings ---------------------------------------------------------------
-// Defaults match the Mac's @AppStorage defaults exactly. `showNotePreview` is
-// off because the compact one-line row is what the list is designed around.
+// Every setting below lives in `~/.config/envy/config.md`, so the Settings
+// panel and the file are two views of one thing: change either and the other
+// follows. Defaults come from config/schema.json, not from here — a default
+// written down twice is a default that will eventually disagree with itself.
 
-function boolSetting(key: string, fallback: boolean): boolean {
-  const raw = localStorage.getItem(key)
-  return raw === null ? fallback : raw === 'true'
+/// The config.md table and key behind each field of `settings`. The property
+/// names are the app's own vocabulary and the schema's keys are the file's;
+/// this is the one place the two meet. Anything below that is not a field of
+/// `settings` — the layout, the zoom, the sort — is here for the same reason:
+/// so a write goes through one named pair rather than a string at the call
+/// site.
+const SETTING_KEY = {
+  showNotePreview: ['list', 'show_preview'],
+  showDateModified: ['list', 'show_date'],
+  showDueSort: ['list', 'show_due'],
+  includeSubfolders: ['index', 'include_subfolders'],
+  theme: ['appearance', 'theme'],
+  fontSource: ['appearance', 'font'],
+  fontCustom: ['appearance', 'font_family'],
+  moveFocusToEditorOnEnter: ['list', 'focus_editor_on_enter'],
+  dateDisplayStyle: ['list', 'date_style'],
+  inboxEnabled: ['list', 'inbox_enabled'],
+  keepPinnedNotesVisible: ['list', 'keep_pinned_visible'],
+  newNotesStartInInbox: ['list', 'new_notes_in_inbox'],
+  showInboxInMainList: ['list', 'show_inbox_in_list'],
+  showTagsInTitleBar: ['editor', 'show_tags_in_title_bar'],
+  showFooterVaultCounts: ['list', 'vault_counts'],
+  showFolderInTitleBar: ['editor', 'show_folder_in_title_bar'],
+  folderListDisplay: ['list', 'folder_display'],
+  folderDotTrailing: ['list', 'folder_marker_trailing'],
+  showDuePill: ['editor', 'show_due_pill'],
+  linkDomainPills: ['editor', 'link_domain_pills'],
+  requireModifierForLinkClick: ['editor', 'require_modifier_for_links'],
+  showBacklinks: ['editor', 'show_interlinks'],
+  hideOnFocusLoss: ['system', 'hide_on_focus_loss'],
+  restoreFocusOnSummon: ['system', 'restore_focus_on_summon'],
+  linkPreview: ['editor', 'link_preview'],
+  listDensity: ['list', 'density'],
+  interfaceTextSize: ['appearance', 'text_size'],
+  fadeFocusHighlight: ['appearance', 'fade_focus_highlight'],
+  showInTaskbar: ['system', 'show_in_taskbar'],
+  showFooterClock: ['footer_clock', 'show'],
+  showFooterClockDate: ['footer_clock', 'show_date'],
+  showFooterClockOnlyWhenFullScreen: ['footer_clock', 'only_when_fullscreen'],
+  footerClockDateFormat: ['footer_clock', 'date_format'],
+  boldFileListText: ['list', 'bold_text'],
+  templateDateFormat: ['templates', 'date_format'],
+  trashEmptyIntervalValue: ['trash', 'empty_every'],
+  trashEmptyIntervalUnit: ['trash', 'empty_unit'],
+  checkForUpdatesAutomatically: ['updates', 'check_automatically'],
+  // Live variables rather than fields of `settings`, because a shortcut flips
+  // each of them too — but they persist the same way.
+  layout: ['appearance', 'layout'],
+  editorZoom: ['editor', 'zoom'],
+  plainText: ['editor', 'plain_text'],
+  sortField: ['list', 'sort'],
+  sortAscending: ['list', 'sort_ascending'],
+} as const satisfies Record<string, readonly [string, string]>
+
+type SettingName = keyof typeof SETTING_KEY
+
+const settingBool = (name: SettingName) => config.getBool(SETTING_KEY[name][0], SETTING_KEY[name][1])
+const settingText = (name: SettingName) => config.getString(SETTING_KEY[name][0], SETTING_KEY[name][1])
+const settingNumber = (name: SettingName) =>
+  config.getNumber(SETTING_KEY[name][0], SETTING_KEY[name][1])
+
+/// Everything the app reads while it runs, snapshotted from the config. Read
+/// afresh (never patched in place from the file) so there is exactly one way a
+/// value gets here.
+function readSettings() {
+  return {
+    showNotePreview: settingBool('showNotePreview'),
+    showDateModified: settingBool('showDateModified'),
+    showDueSort: settingBool('showDueSort'),
+    includeSubfolders: settingBool('includeSubfolders'),
+    theme: settingText('theme'),
+    fontSource: settingText('fontSource'),
+    fontCustom: settingText('fontCustom'),
+    moveFocusToEditorOnEnter: settingBool('moveFocusToEditorOnEnter'),
+    dateDisplayStyle: settingText('dateDisplayStyle'),
+    // Whether the Inbox exists at all. Off, there is no capture queue: no
+    // badge, no fleeting marks, no `inbox:` mode, and the two toggles below
+    // are moot.
+    inboxEnabled: settingBool('inboxEnabled'),
+    // Parks the pinned notes (up to three) in a strip under the list header so
+    // they stay reachable however far the list scrolls. Off, pins sort to the
+    // top and scroll away with the rest.
+    keepPinnedNotesVisible: settingBool('keepPinnedNotesVisible'),
+    newNotesStartInInbox: settingBool('newNotesStartInInbox'),
+    showInboxInMainList: settingBool('showInboxInMainList'),
+    showTagsInTitleBar: settingBool('showTagsInTitleBar'),
+    showFooterVaultCounts: settingBool('showFooterVaultCounts'),
+    // The open note's folder as a chip beside its tags. Only ever shows for a
+    // note that actually sits in a subfolder.
+    showFolderInTitleBar: settingBool('showFolderInTitleBar'),
+    // How a note's subfolder shows in the list row: a coloured dot, the folder
+    // name as a chip, or nothing.
+    folderListDisplay: settingText('folderListDisplay'),
+    // Whether that marker sits after the title or before it. The Inbox mark
+    // always leads regardless — it's a different kind of signal.
+    folderDotTrailing: settingBool('folderDotTrailing'),
+    showDuePill: settingBool('showDuePill'),
+    // Also read by the styler, straight from the config, for the same reason
+    // the emoji map is: a widget is rebuilt on every restyle anyway.
+    linkDomainPills: settingBool('linkDomainPills'),
+    requireModifierForLinkClick: settingBool('requireModifierForLinkClick'),
+    showBacklinks: settingBool('showBacklinks'),
+    hideOnFocusLoss: settingBool('hideOnFocusLoss'),
+    restoreFocusOnSummon: settingBool('restoreFocusOnSummon'),
+    linkPreview: settingText('linkPreview'),
+    listDensity: settingText('listDensity'),
+    interfaceTextSize: settingNumber('interfaceTextSize'),
+    fadeFocusHighlight: settingBool('fadeFocusHighlight'),
+    showInTaskbar: settingBool('showInTaskbar'),
+    showFooterClock: settingBool('showFooterClock'),
+    showFooterClockDate: settingBool('showFooterClockDate'),
+    showFooterClockOnlyWhenFullScreen: settingBool('showFooterClockOnlyWhenFullScreen'),
+    footerClockDateFormat: settingText('footerClockDateFormat'),
+    boldFileListText: settingBool('boldFileListText'),
+    templateDateFormat: settingText('templateDateFormat'),
+    // How often the whole Trash is swept into the system Trash — a count and a
+    // unit. The schema clamps it to 1–99, so the trash always empties on some
+    // schedule.
+    trashEmptyIntervalValue: settingNumber('trashEmptyIntervalValue'),
+    trashEmptyIntervalUnit: settingText('trashEmptyIntervalUnit'),
+    // Gates the automatic check at launch (the "Check Now" button ignores it).
+    checkForUpdatesAutomatically: settingBool('checkForUpdatesAutomatically'),
+  }
 }
 
-const settings = {
-  showNotePreview: boolSetting('showNotePreview', false),
-  showDateModified: boolSetting('showDateModified', true),
-  showDueSort: boolSetting('showDueSort', true),
-  includeSubfolders: boolSetting('indexIncludeSubfolders', false),
-  theme: localStorage.getItem('appearanceMode') ?? 'omarchy',
-  fontSource: localStorage.getItem('uiFontSource') ?? 'omarchy',
-  fontCustom: localStorage.getItem('uiFontCustom') ?? '',
-  moveFocusToEditorOnEnter: boolSetting('moveFocusToEditorOnEnter', true),
-  dateDisplayStyle: localStorage.getItem('dateDisplayStyle') ?? 'smart',
-  // Whether the Inbox exists at all. Off, there is no capture queue: no badge,
-  // no fleeting marks, no `inbox:` mode, and the two toggles below are moot.
-  // On by default, matching the Mac (1.10.0).
-  inboxEnabled: boolSetting('inboxEnabled', true),
-  // Parks the pinned notes (up to three) in a strip under the list header so
-  // they stay reachable however far the list scrolls. Off — the default, as on
-  // the Mac (1.11.0) — pins sort to the top and scroll away with the rest.
-  keepPinnedNotesVisible: boolSetting('keepPinnedNotesVisible', false),
-  newNotesStartInInbox: boolSetting('newNotesStartInInbox', false),
-  showInboxInMainList: boolSetting('showInboxInMainList', true),
-  showTagsInTitleBar: boolSetting('showTagsInTitleBar', false),
-  // Whole-vault note/folder totals in the footer — on by default, like the Mac.
-  showFooterVaultCounts: boolSetting('showFooterVaultCounts', true),
-  // The open note's folder as a chip beside its tags — on by default, like the
-  // Mac. Only ever shows for a note that actually sits in a subfolder.
-  showFolderInTitleBar: boolSetting('showFolderInTitleBar', true),
-  // How a note's subfolder shows in the list row: a coloured dot, the folder
-  // name as a chip, or nothing. Default 'dot', matching FolderListDisplay.
-  folderListDisplay: localStorage.getItem('folderListDisplay') ?? 'dot',
-  // Whether that marker sits after the title (the Mac default) or before it.
-  // The Inbox mark always leads regardless — it's a different kind of signal.
-  folderDotTrailing: boolSetting('folderDotTrailing', true),
-  showDuePill: boolSetting('showDuePill', true),
-  // Read directly by the styler (styler.ts domainPillsEnabled); kept here so the
-  // Settings checkbox and its persistence go through the same path as the rest.
-  linkDomainPills: boolSetting('linkDomainPills', true),
-  requireModifierForLinkClick: boolSetting('requireModifierForLinkClick', true),
-  showBacklinks: boolSetting('showBacklinks', true),
-  // Named for its storage key, not for the DOM event behind it. `bindToggle`
-  // writes each setting back under its own property name, so a property called
-  // something other than the key it was read from saves to one place and loads
-  // from another — which is exactly what happened here: this read
-  // "hideOnFocusLoss" and saved "hideOnBlur", so the choice survived until the
-  // next launch and no further. The key matches the Mac's own preference.
-  hideOnFocusLoss: boolSetting('hideOnFocusLoss', false),
-  restoreFocusOnSummon: boolSetting('restoreFocusOnSummon', true),
-  linkPreview: localStorage.getItem('linkPreviewTrigger') ?? 'altClick',
-  listDensity: localStorage.getItem('listDensity') ?? 'compact',
-  interfaceTextSize: Number(localStorage.getItem('interfaceTextSize') ?? '1'),
-  fadeFocusHighlight: boolSetting('fadeFocusHighlight', false),
-  showInTaskbar: boolSetting('showInTaskbar', true),
-  showFooterClock: boolSetting('showFooterClock', false),
-  showFooterClockDate: boolSetting('showFooterClockDate', false),
-  showFooterClockOnlyWhenFullScreen: boolSetting('showFooterClockOnlyWhenFullScreen', false),
-  footerClockDateFormat: localStorage.getItem('footerClockDateFormat') ?? 'short',
-  boldFileListText: boolSetting('boldFileListText', false),
-  templateDateFormat: localStorage.getItem('templateDateFormat') ?? 'yyyy-MM-dd',
-  // How often the whole Trash is swept into the Recycle Bin — a count and a unit
-  // (days/weeks/months), matching the Mac's TrashPreference. Default every 30
-  // days. Clamped 1–99 on entry, so the trash always empties on some schedule.
-  trashEmptyIntervalValue: Number(localStorage.getItem('trashEmptyIntervalValue') ?? '30'),
-  trashEmptyIntervalUnit: localStorage.getItem('trashEmptyIntervalUnit') ?? 'days',
-  // Gates the automatic check at launch (the "Check Now" button ignores it).
-  // On by default, matching the Mac's Sparkle default.
-  checkForUpdatesAutomatically: boolSetting('checkForUpdatesAutomatically', true),
-}
+let settings = readSettings()
 
-function saveSetting(key: string, value: string | boolean | number) {
-  localStorage.setItem(key, String(value))
+/// Writes one setting to config.md. Nothing else in this file writes a
+/// setting: a value that reaches the file by another route is a value the
+/// panel, the shortcuts and the config check can disagree about.
+function saveSetting(name: SettingName, value: string | boolean | number) {
+  const [table, key] = SETTING_KEY[name]
+  config.set(table, key, value)
 }
 
 // --- Sorting ----------------------------------------------------------------
@@ -1378,8 +1457,8 @@ const DEFAULT_ASCENDING: Record<SortField, boolean> = {
   due: true,
 }
 
-let sortField: SortField = (localStorage.getItem('noteSortField') as SortField | null) ?? 'date'
-let sortAscending = boolSetting('noteSortAscending', false)
+let sortField = settingText('sortField') as SortField
+let sortAscending = settingBool('sortAscending')
 
 /// One reused collator instead of `localeCompare(…, options)` per comparison:
 /// the options form rebuilds collation state on every call, which is the bulk
@@ -1463,8 +1542,8 @@ function renderSortHeader() {
           sortField = field
           sortAscending = DEFAULT_ASCENDING[field]
         }
-        saveSetting('noteSortField', sortField)
-        saveSetting('noteSortAscending', sortAscending)
+        saveSetting('sortField', sortField)
+        saveSetting('sortAscending', sortAscending)
         renderSortHeader()
         if (fullyLoaded()) {
           markOrderDirty()
@@ -1580,6 +1659,17 @@ listSizer.id = 'list-sizer'
 /// track all three settings, it's measured from a real rendered row and
 /// corrected whenever it turns out to have changed.
 let rowHeight = 24
+// Whether `rowHeight` has to be measured again. Rows are content-sized and
+// baseline-aligned, so an emoji, CJK text or a folder dot can make one row a
+// pixel taller than its neighbours — measuring "the first row in the window"
+// on every render made the assumed height flip as the window moved, and
+// every flip repositioned every row: a visible jolt on each arrow press that
+// happened to land on such a row. Height depends on font, density and text
+// size only, so it is measured once and again only when one of those changes.
+let rowHeightDirty = true
+function markRowHeightDirty() {
+  rowHeightDirty = true
+}
 const ROW_OVERSCAN = 12
 
 /// The window currently in the DOM, so scrolling can skip the rebuild whenever
@@ -1755,10 +1845,19 @@ function scrollHighlightIntoView() {
   if (highlighted < stickyCount) return
   const top = (highlighted - stickyCount) * rowHeight
   const viewport = listViewport()
-  if (top < listEl.scrollTop || top + rowHeight > listEl.scrollTop + viewport) {
-    cancelSmoothScroll(listEl)
-    if (top < listEl.scrollTop) listEl.scrollTop = top
-    else listEl.scrollTop = top + rowHeight - viewport
+  // Judged against where the scroller is heading, not where the animation
+  // has got to: with a key held, the last target is a row or two ahead of the
+  // painted position, and measuring the painted one would order a fresh
+  // scroll every press even when the row is already on its way into view.
+  const heading = scrollTarget(listEl)
+  // Kept a few rows in from the edge, vim's scrolloff: the glide trails its
+  // target by a row or two while a key is held, and a highlight aligned to the
+  // very edge would spend that time just out of sight.
+  const margin = Math.min(3, Math.floor(viewport / rowHeight / 3)) * rowHeight
+  if (top < heading + margin) {
+    smoothScrollTo(listEl, top - margin)
+  } else if (top + rowHeight > heading + viewport - margin) {
+    smoothScrollTo(listEl, top + rowHeight - viewport + margin)
   }
 }
 
@@ -1855,15 +1954,24 @@ function renderRowWindow(force = false) {
   // so rows don't drift a fraction of a pixel apart down a long list.
   // A blank row is not a fair sample — it carries no date and no preview — so
   // the measurement takes the first row that is actually a note.
-  if (force) {
-    const sample = rows.find((_, k) => results[from + k] !== undefined)
-    const measured = sample?.getBoundingClientRect().height
-    if (measured && Math.abs(measured - rowHeight) > 0.5) {
-      rowHeight = measured
-      listSizer.style.height = `${(results.length - stickyCount) * rowHeight}px`
-      renderedFrom = -1
-      renderedTo = -1
-      renderRowWindow(false)
+  if (force && rowHeightDirty) {
+    // Natural heights, then the tallest note row in the window: every row is
+    // then given exactly that height, so none is clipped and none overlaps.
+    listPaneEl.style.removeProperty('--envy-row-height')
+    let measured = 0
+    rows.forEach((row, k) => {
+      if (results[from + k] !== undefined) measured = Math.max(measured, row.getBoundingClientRect().height)
+    })
+    if (measured > 0) {
+      rowHeightDirty = false
+      listPaneEl.style.setProperty('--envy-row-height', `${measured}px`)
+      if (Math.abs(measured - rowHeight) > 0.5) {
+        rowHeight = measured
+        listSizer.style.height = `${(results.length - stickyCount) * rowHeight}px`
+        renderedFrom = -1
+        renderedTo = -1
+        renderRowWindow(false)
+      }
     }
   }
 }
@@ -1992,6 +2100,7 @@ function buildRow(note: NoteDto, i: number): HTMLElement {
         'row' + (i === highlighted ? ' highlighted' : selected ? ' multi-selected' : '')
       row.setAttribute('role', 'option')
       row.setAttribute('aria-selected', String(selected))
+      row.dataset.index = String(i)
 
       const title = document.createElement('div')
       title.className = 'row-title'
@@ -2251,7 +2360,7 @@ window.addEventListener('keydown', (e) => {
 
 /// Editor text size, independent of the interface. Notes are what you read for
 /// hours; the chrome isn't.
-let editorZoom = Number(localStorage.getItem('editorFontZoom') ?? '1')
+let editorZoom = settingNumber('editorZoom')
 
 function applyZoom() {
   const base = Number.parseFloat(enviousDark.fontSize)
@@ -2260,23 +2369,32 @@ function applyZoom() {
   const root = document.documentElement.style
   root.setProperty('--envy-font-size', `${px}px`)
   root.setProperty('--envy-line-height', `${Math.round(px * 1.6)}px`)
-  saveSetting('editorFontZoom', editorZoom)
   view.requestMeasure()
 }
 
 function setZoom(next: number) {
   // Clamped so a stuck key can't leave the editor unreadably small or absurdly
   // large with no obvious way back short of clearing storage.
-  editorZoom = Math.min(2.5, Math.max(0.6, next))
+  // Rounded so ten presses of Ctrl+= write 2 to the config file, not
+  // 1.9999999999999998.
+  editorZoom = Math.round(Math.min(2.5, Math.max(0.6, next)) * 100) / 100
+  saveSetting('editorZoom', editorZoom)
   applyZoom()
 }
 
 /// Plain-text mode shows the raw markdown instead of styling it — for when you
 /// want to see exactly what's in the file rather than what it means.
-let plainTextMode = boolSetting('plainTextMode', false)
+let plainTextMode = settingBool('plainText')
+
+/// Applying is separate from persisting, so that re-applying the config after
+/// the file changed cannot write the value straight back out again.
+function setPlainTextMode(on: boolean) {
+  plainTextMode = on
+  saveSetting('plainText', on)
+  applyPlainTextMode()
+}
 
 function applyPlainTextMode() {
-  saveSetting('plainTextMode', plainTextMode)
   // Nothing else to change: the styler simply stops emitting decorations, so
   // the text, cursor and scroll position all stay exactly where they were.
   view.dispatch({ effects: setPlainText.of(plainTextMode) })
@@ -2536,9 +2654,22 @@ interface TemplateDto {
 }
 
 let templateResults: TemplateDto[] = []
-/// Set while a template (rather than a note) is open in the editor, so saves
-/// route to the template file instead of the store.
-let openTemplatePath: string | null = null
+
+/// A file from outside the vault, open in the editor. Templates were the first
+/// of these; config.md and the theme files are the same idea, so they share
+/// one path rather than each growing a parallel one. `id` is whatever that
+/// kind's save command needs — a template path, a theme name, nothing for the
+/// config, which there is only one of.
+interface ExternalDoc {
+  kind: 'template' | 'config' | 'theme'
+  id: string
+  name: string
+}
+
+/// Set while such a file is open, so saves route to it rather than the note
+/// store, and so everything that asks "is there something to type into?" can
+/// keep asking one question.
+let openExternal: ExternalDoc | null = null
 
 function renderTemplateList() {
   // Same as trash: a single trailing label in the value column.
@@ -2569,16 +2700,34 @@ function renderTemplateList() {
   scrollHighlightedRowIntoView()
 }
 
-async function openTemplate(t: TemplateDto) {
+/// Where an external document's edits go. Each kind has its own command
+/// because each is a different file with a different owner — but from the
+/// editor's side they are all "save this text back where it came from".
+function saveExternalDocument(doc: ExternalDoc, content: string): Promise<unknown> {
+  if (doc.kind === 'template') return invoke('save_template', { path: doc.id, content })
+  // config_write_text re-emits config-changed, so every window re-applies the
+  // settings the moment the file is saved from here.
+  if (doc.kind === 'config') return invoke('config_write_text', { content })
+  return invoke('theme_write_text', { name: doc.id, content })
+}
+
+/// Opens a file that isn't a note in the editor. They are all markdown, which
+/// is the whole reason config.md and the theme files are markdown: the editor
+/// styles them exactly as it styles a note, so the toml block renders as a
+/// code block and a theme file's sample body previews the theme it describes.
+async function openExternalDocument(doc: ExternalDoc, content: string) {
   cancelPendingSave()
   await save()
-  const content = await invoke<string>('read_template', { path: t.id })
   openNoteId = null
-  openTemplatePath = t.id
+  openNoteDto = null
+  openExternal = doc
   openNoteSavedContent = content
-  titleEl.value = t.name
-  titleEl.disabled = true // renaming templates isn't wired up yet
+  titleEl.value = doc.name
+  titleEl.disabled = true // these files are renamed on disk, not from here
   renderDueBadge(null)
+  renderTitleBarTags([])
+  renderTitleBarFolder(null)
+  fleetingActionsEl.classList.add('hidden')
   emptyEl.classList.add('hidden')
   view.dispatch({
     changes: { from: 0, to: view.state.doc.length, insert: content },
@@ -2589,17 +2738,24 @@ async function openTemplate(t: TemplateDto) {
   currentInterlinks = { links: [], backlinks: [], suggested: [] }
   renderInterlinks()
   renderStats()
-  templateActionsEl.classList.remove('hidden')
+  // "Create Note from Template" only means anything for a template.
+  templateActionsEl.classList.toggle('hidden', doc.kind !== 'template')
   view.focus()
+}
+
+async function openTemplate(t: TemplateDto) {
+  const content = await invoke<string>('read_template', { path: t.id })
+  await openExternalDocument({ kind: 'template', id: t.id, name: t.name }, content)
 }
 
 const templateActionsEl = document.getElementById('template-actions')!
 
 document.getElementById('template-create')!.onclick = async () => {
-  if (!openTemplatePath) return
-  const name = templateResults.find((t) => t.id === openTemplatePath)?.name ?? ''
+  const doc = openExternal
+  if (doc?.kind !== 'template') return
+  const name = templateResults.find((t) => t.id === doc.id)?.name ?? ''
   const created = await invoke<NoteDto>('create_note_from_template', {
-    path: openTemplatePath,
+    path: doc.id,
     title: name,
   })
   void refreshCompletionSources()
@@ -2990,7 +3146,7 @@ async function openNote(id: string) {
   openNoteId = note.id
   // Held for the title bar, which used to hunt for this row in `results`.
   openNoteDto = note
-  openTemplatePath = null
+  openExternal = null
   openNoteSavedContent = note.content ?? ''
   titleEl.value = note.title
   titleEl.disabled = false
@@ -3060,15 +3216,63 @@ async function arrowNavigate(delta: number, extend: boolean) {
     highlighted = next
     renderCatalog(catalog)
   } else {
-    // The row being moved onto has to exist before it can be selected and
-    // opened — otherwise arrowing past the loaded pages lands on a blank row
-    // and the editor is left showing the note before it. Usually already
-    // loaded, since the render window prefetches a page ahead of itself.
-    await ensureLoaded(next)
+    // The index moves first, synchronously. A held key repeats forty times a
+    // second, and the old order — wait for the row's page, then select — let
+    // every press that arrived during a fetch compute from the same stale
+    // index and resolve out of order, so the highlight lurched while the
+    // scroll position, set for whichever press finished last, ran ahead of
+    // it. Now each press lands on exactly the next row and the scroll follows
+    // the index the highlight shows; a fetch only delays the note opening.
     selectSingle(next)
-    renderList()
-    void openHighlighted(false)
+    repaintSelection()
+    scrollHighlightIntoView()
+    const token = ++navToken
+    // The row being moved onto has to exist before it can be opened —
+    // otherwise arrowing past the loaded pages lands on a blank row and the
+    // editor is left showing the note before it. Usually already loaded,
+    // since the render window prefetches a page ahead of itself.
+    await ensureLoaded(next)
+    if (token !== navToken) return // a later press has moved on
+    const row = results[next]
+    if (!row) return
+    if (anchorId === null) anchorId = row.id // the row arrived after selectSingle
+    scheduleOpenHighlighted()
   }
+}
+
+let navToken = 0
+let openHighlightedTimer = 0
+
+/// Re-marks the highlighted and multi-selected rows in place. Moving the
+/// highlight changes no row's content, so rebuilding the window for it — the
+/// full render's job — is forty rebuilds a second under a held arrow key for
+/// no visible gain; toggling two classes on the rows already on screen is the
+/// whole change. Rows the scroll brings in are built with the right classes.
+function repaintSelection() {
+  const rows = [...listSizer.children, ...pinnedStripEl.children] as HTMLElement[]
+  for (const row of rows) {
+    const i = Number(row.dataset.index)
+    if (!Number.isFinite(i)) continue
+    const note = results[i]
+    const selected = note ? isSelected(note) : false
+    // Toggled, not reassigned: a row carries other classes (sticky, inbox,
+    // folder marks) that the highlight has no business clearing.
+    row.classList.toggle('highlighted', i === highlighted)
+    row.classList.toggle('multi-selected', i !== highlighted && selected)
+    row.setAttribute('aria-selected', String(selected))
+  }
+}
+
+/// Opens the highlighted note once the arrow key rests. Held down, the
+/// highlight moves every 25 ms; opening every note it passes over is a load,
+/// a restyle and an interlink lookup per row, none of which anyone sees. The
+/// delay is short enough that a single press still feels immediate.
+function scheduleOpenHighlighted() {
+  if (openHighlightedTimer) clearTimeout(openHighlightedTimer)
+  openHighlightedTimer = window.setTimeout(() => {
+    openHighlightedTimer = 0
+    void openHighlighted(false)
+  }, 40)
 }
 
 // --- Multi-select -----------------------------------------------------------
@@ -3215,19 +3419,11 @@ const FOLDER_PRESETS: Array<[string, string]> = [
 ]
 
 function folderColors(): Record<string, string> {
-  try {
-    return JSON.parse(localStorage.getItem('folderColors') ?? '{}') as Record<string, string>
-  } catch {
-    // A corrupted preference should cost the colours, not the folders.
-    return {}
-  }
+  return config.map('folder_colors')
 }
 
 function setFolderColor(folder: string, color: string | null) {
-  const all = folderColors()
-  if (color) all[folder] = color
-  else delete all[folder]
-  localStorage.setItem('folderColors', JSON.stringify(all))
+  config.setMapEntry('folder_colors', folder, color)
   // Every folder is born coloured, so "Remove Color" rolls a fresh preset
   // rather than leaving a gap — the same thing the Mac's rebuild does the
   // moment the preference changes.
@@ -3249,14 +3445,15 @@ function repaintFolderColors() {
 /// recolour menu, always exist. Mirrors the Mac's rebuildFolderColors.
 function ensureFolderColors(folders: string[]) {
   const all = folderColors()
-  let assigned = false
+  const assigned: Record<string, string> = {}
   for (const folder of folders) {
     if (all[folder]) continue
-    all[folder] = FOLDER_PRESETS[Math.floor(Math.random() * FOLDER_PRESETS.length)][1]
-    assigned = true
+    assigned[folder] = FOLDER_PRESETS[Math.floor(Math.random() * FOLDER_PRESETS.length)][1]
   }
-  if (!assigned) return
-  localStorage.setItem('folderColors', JSON.stringify(all))
+  if (Object.keys(assigned).length === 0) return
+  // One write for the whole batch: a first scan of a big vault would otherwise
+  // rewrite config.md once per folder it had never seen.
+  config.setMapEntries('folder_colors', assigned)
   repaintFolderColors()
 }
 
@@ -3321,16 +3518,14 @@ function catalogMode(): CatalogKind | null {
 /// silently losing it (the thing a plain Explorer rename does).
 function migrateFolderColors(oldPath: string, newPath: string) {
   const all = folderColors()
-  let changed = false
+  const moves: Record<string, string | null> = {}
   for (const key of Object.keys(all)) {
     if (key === oldPath || key.startsWith(`${oldPath}/`)) {
-      const moved = newPath + key.slice(oldPath.length)
-      all[moved] = all[key]
-      delete all[key]
-      changed = true
+      moves[newPath + key.slice(oldPath.length)] = all[key]
+      moves[key] = null
     }
   }
-  if (changed) localStorage.setItem('folderColors', JSON.stringify(all))
+  if (Object.keys(moves).length > 0) config.setMapEntries('folder_colors', moves)
 }
 
 async function renameTagFlow(oldName: string) {
@@ -4439,7 +4634,7 @@ titleEl.addEventListener('mouseleave', () => {
 function closeEditor() {
   openNoteId = null
   openNoteDto = null
-  openTemplatePath = null
+  openExternal = null
   openNoteSavedContent = ''
   titleEl.value = ''
   titleEl.disabled = false
@@ -4479,8 +4674,7 @@ const SHORTCUT_HANDLERS: Partial<Record<ShortcutId, () => void>> = {
   zoomOut: () => setZoom(editorZoom - 0.1),
   actualSize: () => setZoom(1),
   togglePlainTextMode: () => {
-    plainTextMode = !plainTextMode
-    applyPlainTextMode()
+    setPlainTextMode(!plainTextMode)
     // Keep the Settings checkbox honest if the panel happens to be open.
     checkbox('setting-plain-text').checked = plainTextMode
   },
@@ -4504,12 +4698,12 @@ const SHORTCUT_HANDLERS: Partial<Record<ShortcutId, () => void>> = {
   },
   extractToNote: () => void extractSelectionToNote(),
   insertImage: () => {
-    if (openNoteId || openTemplatePath) {
+    if (openNoteId || openExternal) {
       void openImagePicker((name) => insertImageReference(name, view))
     }
   },
   insertTable: () => {
-    if (openNoteId || openTemplatePath) insertTable(view)
+    if (openNoteId || openExternal) insertTable(view)
   },
   focusNextArea: () => cycleArea(1),
   focusPreviousArea: () => cycleArea(-1),
@@ -4532,18 +4726,18 @@ const SHORTCUT_HANDLERS: Partial<Record<ShortcutId, () => void>> = {
     void showLinkPreview(target, c?.left ?? 0, c?.bottom ?? 0)
   },
   toggleCheckbox: () => {
-    if (!openNoteId && !openTemplatePath) return
+    if (!openNoteId && !openExternal) return
     // Returns false when the caret line has no checkbox, which is a no-op
     // rather than an error — the same as clicking where there is no box.
     toggleTaskAtCursor(view)
   },
   retireDue: () => {
-    if (!openNoteId && !openTemplatePath) return
+    if (!openNoteId && !openExternal) return
     const pos = dueTokenPosForCaret()
     if (pos !== null) toggleDueToken(view, pos)
   },
   emojiForLink: () => {
-    if (!openNoteId && !openTemplatePath) return
+    if (!openNoteId && !openExternal) return
     const found = urlNearCaret(false)
     const domain = found ? urlDomain(found.url) : null
     if (!found || !domain) return
@@ -4837,9 +5031,18 @@ void listen('pinned-note-changed', async () => {
 // a Settings override; System still tracks prefers-color-scheme.
 const darkQuery = window.matchMedia('(prefers-color-scheme: dark)')
 function syncTheme() {
+  markRowHeightDirty()
   applyStoredAppearance()
   applyZoom()
-  void document.fonts.ready.then(() => syncDateColumnWidth(true))
+  // A theme file that fails the legibility floors keeps its colours — somebody
+  // chose them — but says so, so the file and the screen never disagree
+  // silently.
+  setFooterNotice('theme', themeNotices())
+  void document.fonts.ready.then(() => {
+    markRowHeightDirty()
+    syncDateColumnWidth(true)
+    renderRowWindow(true)
+  })
 }
 function syncFontSettingsRow() {
   const custom = settings.fontSource === 'custom'
@@ -4928,6 +5131,26 @@ function startClockTick() {
   clockTimer = window.setInterval(() => void tick(), 30_000)
 }
 
+// --- Footer notices ---------------------------------------------------------
+// One line in the footer for the things the app noticed but shouldn't
+// interrupt anybody about: a problem in config.md, a theme file whose colours
+// don't read. Keyed by source so one can be replaced without losing the other,
+// and only the first is shown — the rest are counted, and all of them are in
+// the tooltip and the console.
+
+const noticeEl = document.getElementById('footer-notice')!
+const footerNotices = new Map<string, string[]>()
+
+function setFooterNotice(source: string, lines: string[]) {
+  if (lines.length === 0) footerNotices.delete(source)
+  else footerNotices.set(source, lines)
+  const all = [...footerNotices.values()].flat()
+  noticeEl.textContent =
+    all.length === 0 ? '' : all.length === 1 ? all[0] : `${all[0]} (+${all.length - 1} more)`
+  noticeEl.title = all.join('\n')
+  noticeEl.classList.toggle('hidden', all.length === 0)
+}
+
 /// Shown while a rescan is in flight. It lives in the footer rather than above
 /// the list, so it can't shift the list's layout every time it appears — a
 /// scan over several thousand notes is common enough (external sync, a bulk
@@ -4992,7 +5215,7 @@ try {
 function showWhatsNewIfUpdated(version: string) {
   if (!version || version === 'unknown') return
   const seen = localStorage.getItem('lastSeenWhatsNewVersion')
-  saveSetting('lastSeenWhatsNewVersion', version)
+  localStorage.setItem('lastSeenWhatsNewVersion', version)
   if (seen === null || seen === version) return
   openReference('whatsnew')
 }
@@ -5034,12 +5257,30 @@ const checkbox = (id: string) => el<HTMLInputElement>(id)
 const dropdown = (id: string) => el<HTMLSelectElement>(id)
 
 function openSettings() {
-  // Autostart is the one value whose truth lives outside the app — a registry
-  // entry other tools can change — so it is read from the system each time
-  // rather than cached.
+  // Autostart is the one value whose truth lives outside the app — an XDG
+  // autostart entry other tools can change — so it is read from the system
+  // each time rather than cached.
   void invoke<boolean>('autostart_enabled').then((on) => {
     checkbox('setting-autostart').checked = on
   })
+  recording = null
+  syncSettingsControls()
+  settingsEl.classList.remove('hidden')
+}
+
+/// Assigns to a text field only when the cursor isn't in it. The panel is
+/// re-synced whenever config.md changes, and an agent writing an unrelated key
+/// while somebody is halfway through typing a font name should not take the
+/// half-typed name away.
+function setField(id: string, value: string) {
+  const field = el<HTMLInputElement>(id)
+  if (document.activeElement !== field) field.value = value
+}
+
+/// Puts every control in the panel back in step with the settings. Called when
+/// the panel opens and whenever config.md changes underneath it, so the panel
+/// is never showing a value the app has stopped using.
+function syncSettingsControls() {
   checkbox('setting-preview').checked = settings.showNotePreview
   checkbox('setting-date').checked = settings.showDateModified
   checkbox('setting-due').checked = settings.showDueSort
@@ -5062,8 +5303,8 @@ function openSettings() {
   checkbox('setting-show-due-pill').checked = settings.showDuePill
   checkbox('setting-domain-pills').checked = settings.linkDomainPills
   checkbox('setting-require-modifier').checked = settings.requireModifierForLinkClick
-  // Not part of `settings`: plain-text mode is its own live variable, toggled by
-  // shortcut too, so the checkbox reads that rather than the settings object.
+  // Not part of `settings`: plain-text mode is its own live variable, toggled
+  // by shortcut too, so the checkbox reads that rather than the settings object.
   checkbox('setting-plain-text').checked = plainTextMode
   checkbox('setting-show-interlinks').checked = settings.showBacklinks
   checkbox('setting-hide-on-blur').checked = settings.hideOnFocusLoss
@@ -5081,18 +5322,18 @@ function openSettings() {
   checkbox('setting-clock-date').checked = settings.showFooterClockDate
   checkbox('setting-clock-fullscreen').checked = settings.showFooterClockOnlyWhenFullScreen
   dropdown('setting-clock-date-format').value = settings.footerClockDateFormat
-  recording = null
   renderShortcutSettings()
-  el<HTMLInputElement>('setting-trash-interval').value = String(settings.trashEmptyIntervalValue)
+  setField('setting-trash-interval', String(settings.trashEmptyIntervalValue))
   dropdown('setting-trash-unit').value = settings.trashEmptyIntervalUnit
-  el<HTMLInputElement>('setting-template-date').value = settings.templateDateFormat
+  setField('setting-template-date', settings.templateDateFormat)
   updateTemplateDatePreview()
   dropdown('setting-layout').value = layoutMode
-  dropdown('setting-theme').value = settings.theme
+  renderThemeOptions()
   dropdown('setting-font').value = settings.fontSource
-  el<HTMLInputElement>('setting-font-custom').value = settings.fontCustom
+  setField('setting-font-custom', settings.fontCustom)
   syncFontSettingsRow()
-  settingsEl.classList.remove('hidden')
+  syncKindleSettings()
+  renderConfigSection()
 }
 
 /// A live preview, because the token language is the part nobody remembers.
@@ -5119,6 +5360,7 @@ const DENSITY_PADDING: Record<string, string> = { compact: '1px', cozy: '5px', c
 /// the note text, which has its own zoom: the two are different jobs, and
 /// wanting bigger UI is not the same as wanting bigger prose.
 function applyChromeSettings() {
+  markRowHeightDirty()
   document.documentElement.style.setProperty(
     '--envy-row-padding',
     DENSITY_PADDING[settings.listDensity] ?? DENSITY_PADDING.compact,
@@ -5223,8 +5465,7 @@ bindToggle('setting-require-modifier', 'requireModifierForLinkClick')
 // Plain-text mode isn't a `settings` key (it's a live variable the shortcut
 // flips too), so it can't ride bindToggle — wire it straight to the same apply.
 checkbox('setting-plain-text').onchange = (e) => {
-  plainTextMode = (e.target as HTMLInputElement).checked
-  applyPlainTextMode()
+  setPlainTextMode((e.target as HTMLInputElement).checked)
 }
 bindToggle('setting-show-interlinks', 'showBacklinks', renderInterlinks)
 bindToggle('setting-hide-on-blur', 'hideOnFocusLoss')
@@ -5278,7 +5519,7 @@ dropdown('setting-clock-date-format').onchange = (e) => {
 
 dropdown('setting-link-preview').onchange = (e) => {
   settings.linkPreview = (e.target as HTMLSelectElement).value
-  saveSetting('linkPreviewTrigger', settings.linkPreview)
+  saveSetting('linkPreview', settings.linkPreview)
   if (settings.linkPreview === 'off') hideLinkPreview()
 }
 
@@ -5448,7 +5689,7 @@ el('setting-change-index').onclick = async () => {
 }
 el<HTMLInputElement>('setting-subfolders').onchange = async (e) => {
   settings.includeSubfolders = (e.target as HTMLInputElement).checked
-  saveSetting('indexIncludeSubfolders', settings.includeSubfolders)
+  saveSetting('includeSubfolders', settings.includeSubfolders)
   await invoke('set_include_subfolders', { include: settings.includeSubfolders })
   void refreshCompletionSources()
   await runSearch()
@@ -5456,26 +5697,238 @@ el<HTMLInputElement>('setting-subfolders').onchange = async (e) => {
   applyFleetingSubmitShape()
 }
 el<HTMLSelectElement>('setting-layout').onchange = (e) => {
-  layoutMode = (e.target as HTMLSelectElement).value as LayoutMode
-  applyLayout()
-}
-el<HTMLSelectElement>('setting-theme').onchange = (e) => {
-  settings.theme = (e.target as HTMLSelectElement).value
-  saveSetting('appearanceMode', settings.theme)
-  syncTheme()
+  setLayout((e.target as HTMLSelectElement).value as LayoutMode)
 }
 el<HTMLSelectElement>('setting-font').onchange = (e) => {
   settings.fontSource = (e.target as HTMLSelectElement).value
-  saveSetting('uiFontSource', settings.fontSource)
+  saveSetting('fontSource', settings.fontSource)
   syncFontSettingsRow()
   syncTheme()
 }
 el<HTMLInputElement>('setting-font-custom').oninput = (e) => {
   settings.fontCustom = (e.target as HTMLInputElement).value
-  saveSetting('uiFontCustom', settings.fontCustom)
+  saveSetting('fontCustom', settings.fontCustom)
   syncTheme()
 }
 el('settings-open-folder').onclick = () => void invoke('reveal_index')
+
+// --- Theme files and the config file ----------------------------------------
+// The theme dropdown lists the four built-in faces, then every file in
+// ~/.config/envy/themes, then the things you can do with them. The actions use
+// values no theme name can take (a name is `[a-z0-9][a-z0-9-]*`), so choosing
+// one can never be mistaken for choosing a theme.
+
+const THEME_EXPORT = '!export'
+const THEME_EDIT = '!edit'
+const THEME_FOLDER = '!folder'
+const BUILT_IN_THEMES = ['omarchy', 'system', 'dark', 'light']
+
+/// The theme file actually in play: the one named by the setting, or — in
+/// Omarchy mode — one named after the current Omarchy theme, which is how an
+/// override for a single Omarchy theme gets picked up without being selected.
+function activeThemeFile(): ThemeFileDto | null {
+  if (!BUILT_IN_THEMES.includes(settings.theme)) return themeFile(settings.theme)
+  const slug = currentOmarchy()?.theme
+  return settings.theme === 'omarchy' && slug ? themeFile(slug) : null
+}
+
+function themeOption(value: string, label: string, disabled = false): HTMLOptionElement {
+  const option = document.createElement('option')
+  option.value = value
+  option.textContent = label
+  option.disabled = disabled
+  return option
+}
+
+function renderThemeOptions() {
+  const select = dropdown('setting-theme')
+  const files = themeFiles()
+  const options = [
+    themeOption('omarchy', 'Follow Omarchy'),
+    themeOption('system', 'Follow system'),
+    themeOption('dark', 'Dark (Envious)'),
+    themeOption('light', 'Light (Envious)'),
+  ]
+  if (files.length > 0) {
+    options.push(themeOption('', '── Theme files ──', true))
+    for (const file of files) {
+      // The four built-in words are spoken for, so a file with one of those
+      // names can never be selected. Listed greyed rather than hidden: a file
+      // that silently does nothing is the worse puzzle.
+      const reserved = RESERVED_THEME_NAMES.includes(file.name)
+      options.push(
+        themeOption(file.name, reserved ? `${file.name} (reserved name)` : file.name, reserved),
+      )
+    }
+  }
+  // A theme named in config.md with no file behind it is still listed, or the
+  // dropdown would show a face the app isn't using.
+  if (!BUILT_IN_THEMES.includes(settings.theme) && !files.some((f) => f.name === settings.theme)) {
+    options.push(themeOption(settings.theme, `${settings.theme} (no such file)`))
+  }
+  options.push(themeOption('', '──────────', true))
+  options.push(themeOption(THEME_EXPORT, 'Export current theme…'))
+  options.push(themeOption(THEME_EDIT, 'Edit theme file', activeThemeFile() === null))
+  options.push(themeOption(THEME_FOLDER, 'Open themes folder'))
+  select.replaceChildren(...options)
+  select.value = settings.theme
+}
+
+dropdown('setting-theme').onchange = (e) => {
+  const value = (e.target as HTMLSelectElement).value
+  // The three actions aren't choices, so the dropdown goes back to showing the
+  // theme that is actually on.
+  if (value === THEME_EXPORT || value === THEME_EDIT || value === THEME_FOLDER) {
+    if (value === THEME_EXPORT) void exportThemeFlow()
+    if (value === THEME_EDIT) void editThemeFileInEnvy()
+    if (value === THEME_FOLDER) void invoke('reveal_folder', { which: 'themes' })
+    renderThemeOptions()
+    return
+  }
+  settings.theme = value
+  saveSetting('theme', value)
+  syncTheme()
+  renderThemeOptions()
+}
+
+/// Writes what is on screen to a theme file, so "I like this, but…" starts
+/// from the real thing rather than from a blank file.
+async function exportTheme(name: string) {
+  const { theme, dark } = currentTheme()
+  const error = await writeThemeFile(name, tokensFromTheme(theme, dark))
+  if (error) await alertModal(error)
+}
+
+async function exportThemeFlow() {
+  // The current Omarchy theme's own name is the likeliest answer: exporting it
+  // and editing the result is exactly how a per-Omarchy-theme override starts.
+  const suggestion = currentOmarchy()?.theme ?? 'my-theme'
+  const typed = await textPrompt('Save the current theme as', suggestion)
+  if (typed === null) return
+  const name = typed.trim().toLowerCase()
+  if (!name) return
+  if (!THEME_NAME_PATTERN.test(name)) {
+    await alertModal(
+      'A theme name is lower-case letters, digits and dashes, starting with a letter or digit.',
+    )
+    return
+  }
+  await exportTheme(name)
+}
+
+async function editThemeFileInEnvy() {
+  const file = activeThemeFile()
+  if (!file) return
+  try {
+    await openExternalDocument(
+      { kind: 'theme', id: file.name, name: `${file.name}.md` },
+      await readThemeText(file.name),
+    )
+    closeSettings()
+  } catch (err) {
+    await alertModal(String(err))
+  }
+}
+
+/// config.md in Envy's own editor — the same as opening it in any editor,
+/// except that saving it re-applies every setting straight away.
+async function editConfigInEnvy() {
+  try {
+    await openExternalDocument(
+      { kind: 'config', id: '', name: 'config.md' },
+      await invoke<string>('config_read_text'),
+    )
+    closeSettings()
+  } catch (err) {
+    await alertModal(String(err))
+  }
+}
+
+function renderConfigSection() {
+  el('settings-config-path').textContent = config.configPath()
+  el('settings-themes-path').textContent = themesDir()
+  const problems = config.configProblems()
+  const note = el('settings-config-problems')
+  note.textContent = problems.length === 0 ? '' : `Problems: ${problems.join('; ')}`
+  note.hidden = problems.length === 0
+}
+
+el('setting-edit-config').onclick = () => void editConfigInEnvy()
+el('setting-open-config-folder').onclick = () => void invoke('reveal_folder', { which: 'config' })
+
+// --- Applying the whole config ----------------------------------------------
+
+/// Re-reads every setting and makes the app match it — the side effect each
+/// control's own handler would have run, plus the controls themselves.
+///
+/// One function, used by the boot path and by every change that arrives from
+/// the file, because a setting that only takes effect when it is toggled in
+/// the panel is a setting that only half exists. `initial` is the boot call,
+/// where the pushes to Rust and the first search are already in flight (in
+/// parallel, deliberately) and repeating them would only cost a round trip.
+function applyAllSettings({ initial = false } = {}) {
+  const before = settings
+  settings = readSettings()
+  layoutMode = settingText('layout') === 'horizontal' ? 'horizontal' : 'vertical'
+  editorZoom = settingNumber('editorZoom')
+  plainTextMode = settingBool('plainText')
+  sortField = settingText('sortField') as SortField
+  sortAscending = settingBool('sortAscending')
+
+  setFooterNotice(
+    'config',
+    config.configProblems().map((p) => `config.md: ${p}`),
+  )
+  syncTheme()
+  applyChromeSettings()
+  document.body.classList.toggle('fade-focus', settings.fadeFocusHighlight)
+  applyPlainTextMode()
+  applyLayout()
+  startClockTick()
+  applyEditorKeymap()
+  renderSortHeader()
+  renderList()
+  renderTitleBarTags(openNoteDto?.tags ?? [])
+  renderTitleBarFolder(openNoteDto?.subfolder ?? null)
+  renderDueBadge(openNoteDto?.due ?? null)
+  renderInterlinks()
+  // Tag colours, domain emojis and the link-pill switch are all read during
+  // styling, and none of them is in the document — only a restyle repaints them.
+  view.dispatch({ effects: restyle.of(null) })
+  // Only worth doing while the panel is on screen; opening it syncs anyway.
+  if (!settingsEl.classList.contains('hidden')) syncSettingsControls()
+  if (initial) return
+
+  void syncGlobalShortcuts()
+  void invoke('set_template_date_format', { pattern: settings.templateDateFormat })
+  // These three change what the store considers in scope, so they only go back
+  // to Rust when they actually changed — each one costs a rescan.
+  if (before.includeSubfolders !== settings.includeSubfolders) {
+    void invoke('set_include_subfolders', { include: settings.includeSubfolders }).then(
+      () => void refreshCompletionSources(),
+    )
+  }
+  if (before.inboxEnabled !== settings.inboxEnabled) void pushInboxEnabled()
+  if (before.showInTaskbar !== settings.showInTaskbar) {
+    void invoke('set_show_in_taskbar', { show: settings.showInTaskbar })
+  }
+  markOrderDirty()
+  void refreshVaultCounts()
+  void runSearch()
+}
+
+// A change to config.md this window didn't make: an agent, an editor, the
+// `envy-linux config edit` path, or another window. Everything is re-applied
+// rather than just the key that changed — the file arrives whole, and working
+// out the difference would be a second model of what a setting does.
+config.onChange((local) => {
+  if (!local) applyAllSettings()
+})
+
+// `envy-linux theme export <name>` and `envy-linux config edit`, forwarded by
+// Rust from the control socket after showing the window.
+void listen<string>('export-theme', (e) => void exportTheme(e.payload))
+void listen('edit-config', () => void editConfigInEnvy())
 
 /// The moment a trash emptied at `fromMs` next falls due, adding the interval
 /// as real calendar units — a month means the same day next month, not a fixed
@@ -5618,6 +6071,11 @@ try {
 
 async function boot() {
   installSmoothScroll()
+  // The config comes first, before anything reads a setting: every value below
+  // is in it, and starting from a default that then has to be corrected on
+  // screen is a flicker with nothing to gain.
+  await config.initConfig()
+  settings = readSettings()
   // Startup was a chain of nine awaited round trips, each waiting on the one
   // before it for no reason: these are one-way pushes of stored preferences,
   // and none of them reads anything another one writes. Fired together they
@@ -5660,15 +6118,15 @@ async function boot() {
   const pushed = Promise.all(pushes)
   await initAppearance(() => {
     applyZoom()
-    void document.fonts.ready.then(() => syncDateColumnWidth(true))
+    void document.fonts.ready.then(() => {
+    markRowHeightDirty()
+    syncDateColumnWidth(true)
+    renderRowWindow(true)
   })
-  applyChromeSettings()
-  document.body.classList.toggle('fade-focus', settings.fadeFocusHighlight)
-  applyZoom()
-  applyPlainTextMode()
-  startClockTick()
-  applyLayout()
-  renderSortHeader()
+  })
+  // The same pass a change to config.md takes, so a value can never behave
+  // differently at launch than it does when the file changes.
+  applyAllSettings({ initial: true })
   await pushed
   // The autofill and wiki-link title sources, seeded once. From here they only
   // refresh when the note set actually changes — see refreshCompletionSources.
@@ -5738,6 +6196,18 @@ async function boot() {
   fullSelection,
   ghostCompletion,
   acceptCompletion,
+  // The config and theme-file pure functions. There is no JS test runner in
+  // this repo, so — like the table and list helpers above — the parts worth
+  // checking are the ones with no DOM in them: what the schema defaults to,
+  // what an overlay produces, and that a theme survives the round trip out to
+  // a file and back.
+  config,
+  renderThemeFile,
+  tokensFromTheme,
+  overlayTokens,
+  legibilityNotices,
+  cssToHex,
+  currentTheme,
   // The WebView2 dialog stand-ins, so their resolve behaviour (OK vs Cancel,
   // confirm vs prompt) can be exercised without the native dialogs that don't
   // exist in this webview.
@@ -5800,3 +6270,4 @@ async function boot() {
 }
 
 void boot()
+

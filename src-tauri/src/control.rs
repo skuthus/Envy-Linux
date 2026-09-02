@@ -12,7 +12,7 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 use std::time::Duration;
 
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::tray::on_main;
 use crate::{toggle_pinned_window, toggle_window};
@@ -52,6 +52,16 @@ pub fn serve(app: &AppHandle) {
     });
 }
 
+/// Shows the main window and hands the frontend an event to act on — the
+/// window has to exist and be visible before an editor can open in it.
+fn summon_with(app: &AppHandle, event: &str, payload: Option<String>) {
+    let Some(w) = app.get_webview_window("main") else { return };
+    let _ = w.show();
+    let _ = w.unminimize();
+    let _ = w.set_focus();
+    let _ = w.emit(event, payload);
+}
+
 fn handle(app: &AppHandle, stream: UnixStream) {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
     let mut reader = BufReader::new(&stream);
@@ -85,6 +95,25 @@ fn handle(app: &AppHandle, stream: UnixStream) {
         "pinned" => {
             on_main(app, |app| toggle_pinned_window(app));
             true
+        }
+        // `envy-linux config edit`: the file opens in Envy's own editor, so
+        // the window has to be up first.
+        "edit-config" => {
+            on_main(app, |app| summon_with(app, "edit-config", None));
+            true
+        }
+        // `envy-linux theme export <name>`: only the running app knows what
+        // the *resolved* theme is — the Omarchy-derived colours, the Envious
+        // face, and any overlay — so it writes the file, not the CLI.
+        verb if verb.starts_with("export-theme ") => {
+            let name = verb["export-theme ".len()..].trim().to_string();
+            let valid = crate::themes::is_valid_name(&name);
+            if valid {
+                on_main(app, move |app| {
+                    summon_with(app, "export-theme", Some(name.clone()))
+                });
+            }
+            valid
         }
         _ => false,
     };

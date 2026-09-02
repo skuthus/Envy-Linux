@@ -2,6 +2,18 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
+    // `envy-linux config check|path|edit` and `envy-linux theme list|export
+    // <name>`: answered before any GTK or Tauri initialisation, so the
+    // read-only verbs work over ssh, in a build script, or from an agent with
+    // no display at all.
+    #[cfg(target_os = "linux")]
+    {
+        let args: Vec<String> = std::env::args().skip(1).collect();
+        if let Some(code) = envy_linux_lib::config::cli(&args) {
+            std::process::exit(code);
+        }
+    }
+
     // `envy-linux --toggle` (or --show / --pinned) is what a compositor
     // keybind runs: hand the verb to the running instance and leave, or, with
     // none running, fall through and become it — the window shows on launch,

@@ -30,6 +30,7 @@ import {
 } from './completion'
 import { enviousDark, initAppearance } from './theme'
 import { installSmoothScroll } from './smooth-scroll'
+import { getBool } from './config'
 
 // This window is where the silent-failure pattern first bit — see `hide()`
 // below. Its own entry point, so it needs its own handler; the main window's
@@ -51,8 +52,9 @@ const editorEl = document.getElementById('pinned-editor')!
 let noteId: string | null = null
 let savedContent = ''
 let saveTimer: number | undefined
-// Shared with the main window through the common origin's localStorage.
-const requireModifier = localStorage.getItem('requireModifierForLinkClick') !== 'false'
+// Read from the config file, which every window shares. A function rather
+// than a captured value: the file can change while this window is open.
+const requireModifier = () => getBool('editor', 'require_modifier_for_links')
 
 /// Ghost-completion pools, fetched with the note and again whenever the index
 /// changes, so a `#tag` or `[[link]]` completes here as it does in the app.
@@ -123,7 +125,7 @@ const view = new EditorView({
           }
           const pos = v.posAtCoords({ x: event.clientX, y: event.clientY })
           if (pos === null) return false
-          if (requireModifier && !event.ctrlKey) return false
+          if (requireModifier() && !event.ctrlKey) return false
           const target = wikiLinkTargetAt(v, pos)
           if (!target) return false
           event.preventDefault()

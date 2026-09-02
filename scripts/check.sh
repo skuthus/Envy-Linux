@@ -164,6 +164,10 @@ cargo test --quiet >/dev/null
 step "TypeScript type-check"
 npx tsc --noEmit
 
+step "Agent skill docs match the schema and the shortcut table"
+node scripts/gen-skill-docs.mjs --check \
+  || die "agents/skills/envy is stale — run node scripts/gen-skill-docs.mjs and commit it"
+
 step "Frontend build"
 npm run build --silent
 

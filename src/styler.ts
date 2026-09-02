@@ -16,6 +16,7 @@ import {
 import { emphasisEdit } from './input'
 import { matches as matchesShortcut } from './shortcuts'
 import { findFencedBlocks, type FenceBlock } from './fences'
+import { getBool, map as configMap } from './config'
 
 // --- Embeds -----------------------------------------------------------------
 
@@ -749,19 +750,14 @@ export function urlDomain(urlText: string): string | null {
 /// widget is rebuilt on every restyle anyway and threading it through the
 /// facets would buy nothing.
 function domainEmoji(domain: string): string | null {
-  try {
-    const all = JSON.parse(localStorage.getItem('domainEmojis') ?? '{}') as Record<string, string>
-    return all[domain] ?? null
-  } catch {
-    return null
-  }
+  return configMap('domain_emojis')[domain] ?? null
 }
 
-/// Whether bare URLs collapse to domain pills. Read from localStorage for the
+/// Whether bare URLs collapse to domain pills. Read from the config for the
 /// same reason as the emoji map — the setting changes rarely and a restyle
 /// repaints when it does. Defaults on, matching the Mac.
 function domainPillsEnabled(): boolean {
-  return localStorage.getItem('linkDomainPills') !== 'false'
+  return getBool('editor', 'link_domain_pills')
 }
 
 /// A bare URL collapsed to `emoji domain ↗`.

@@ -40,6 +40,9 @@ chrono = "0.4"
 ksni = { version = "0.3", features = ["blocking"] }
 tiny-skia = "0.11"
 gtk = "0.18"
+toml = "1.1.5"
+toml_edit = "0.25.13"
+notify.workspace = true
 
 [dev-dependencies]
 # Only for the test that reads this file's own source and refuses a new command

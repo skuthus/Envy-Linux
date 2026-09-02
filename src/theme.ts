@@ -1,6 +1,15 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { contrastRatio, legible, parseHex } from './contrast'
+import { getString, initConfig, onChange as onConfigChange } from './config'
+import {
+  cssToRgb,
+  initThemes,
+  legibilityNotices,
+  metaFromTokens,
+  overlayTokens,
+  themeFile,
+} from './themes'
 
 // Envy-Omarchy: Envy's named color roles, filled either from the current
 // Omarchy theme (`colors.toml`) or from the Envious light/dark faces kept as
@@ -60,6 +69,10 @@ export interface EnvyTheme {
 export interface OmarchyAppearance {
   colors: Record<string, string>
   font: string
+  /// The current Omarchy theme's slug (its directory name, or a numeric id for
+  /// an Aether-generated one). A theme file named after it overlays the
+  /// derived palette, which is how "tokyo-night, but…" is written down.
+  theme: string | null
 }
 
 export const enviousDark: EnvyTheme = {
@@ -193,19 +206,25 @@ function isLightMode(colors: Record<string, string>): boolean {
 
 /// Hyprland blur only shows through if the surfaces themselves have alpha —
 /// an opaque `rgb()` slab hides the wallpaper even with a transparent window.
-function withSurfaceAlpha(theme: EnvyTheme, light: boolean): EnvyTheme {
+///
+/// `keep` names surfaces a theme file gave an alpha of its own: someone who
+/// wrote `#1a1b26ff` meant it, and re-writing their alpha would make the file
+/// and the screen disagree.
+function withSurfaceAlpha(theme: EnvyTheme, light: boolean, keep?: Set<string>): EnvyTheme {
   // High enough that glyph coverage doesn't mix with the wallpaper blur —
   // that's the usual "WebKit looks soft" look — but still short of opaque so
   // Hyprland blur remains visible in the chrome.
   const body = light ? 0.92 : 0.88
   const chrome = light ? 0.94 : 0.90
   const code = light ? 0.82 : 0.72
+  const alpha = (role: keyof EnvyTheme, value: number) =>
+    keep?.has(role) ? theme[role] : toAlpha(theme[role], value)
   return {
     ...theme,
-    background: toAlpha(theme.background, body),
-    fileListBackground: toAlpha(theme.fileListBackground, body),
-    titleBarBackground: toAlpha(theme.titleBarBackground, chrome),
-    codeBackground: toAlpha(theme.codeBackground, code),
+    background: alpha('background', body),
+    fileListBackground: alpha('fileListBackground', body),
+    titleBarBackground: alpha('titleBarBackground', chrome),
+    codeBackground: alpha('codeBackground', code),
   }
 }
 
@@ -299,8 +318,8 @@ export function setOmarchyAppearance(next: OmarchyAppearance) {
 }
 
 function resolveFont(omarchyFont: string | undefined): string {
-  const source = localStorage.getItem('uiFontSource') ?? 'omarchy'
-  const custom = localStorage.getItem('uiFontCustom') ?? ''
+  const source = getString('appearance', 'font')
+  const custom = getString('appearance', 'font_family')
   if (source === 'custom' && custom.trim()) return cssFontStack(custom)
   if (omarchyFont) return cssFontStack(omarchyFont)
   return MONO_FONT
@@ -310,35 +329,122 @@ function prefersDark(): boolean {
   return window.matchMedia('(prefers-color-scheme: dark)').matches
 }
 
-export function applyStoredAppearance() {
-  const mode = localStorage.getItem('appearanceMode') ?? 'omarchy'
-  const font = resolveFont(omarchy?.font)
-  const omarchyReady = Boolean(omarchy?.colors?.background)
-  const useOmarchy = (mode === 'omarchy' || !mode) && omarchyReady
+const BUILT_IN_THEMES = ['omarchy', 'system', 'dark', 'light']
 
-  let theme: EnvyTheme
-  let dark: boolean
-  if (useOmarchy && omarchy) {
-    theme = omarchyToEnvy(omarchy.colors, font)
-    dark = !isLightMode(omarchy.colors)
-  } else {
-    dark = mode === 'system' || mode === 'omarchy' ? prefersDark() : mode !== 'light'
-    theme = withSurfaceAlpha({ ...(dark ? enviousDark : enviousLight), fontFamily: font, monoFamily: font }, !dark)
+/// The surfaces a theme file wrote down, as role names, so the blur treatment
+/// leaves them alone. A colour in a theme file is used exactly as written —
+/// somebody chose it, and quietly changing its alpha would make the file and
+/// the screen disagree. The blur alpha is for surfaces Envy derived itself.
+function pinnedSurfaces(tokens: Record<string, string>): Set<string> {
+  const pinned = new Set<string>()
+  for (const [token, role] of [
+    ['background', 'background'],
+    ['file_list_background', 'fileListBackground'],
+    ['title_bar_background', 'titleBarBackground'],
+    ['code_background', 'codeBackground'],
+  ]) {
+    if (tokens[token] && cssToRgb(tokens[token])) pinned.add(role)
   }
+  return pinned
+}
 
-  applyTheme(theme, dark)
-  document.documentElement.style.colorScheme = dark ? 'dark' : 'light'
-  document.documentElement.classList.toggle('theme-light', !dark)
-  document.documentElement.classList.toggle('theme-dark', dark)
+/// The theme as it should look right now: `appearance.theme` picks a base
+/// face, and a theme file — named outright, or named after the current
+/// Omarchy theme — paints over it.
+function resolveAppearance(): { theme: EnvyTheme; dark: boolean; notices: string[] } {
+  const selection = getString('appearance', 'theme') || 'omarchy'
+  const builtIn = BUILT_IN_THEMES.includes(selection)
+  // In Omarchy mode a file named after the current Omarchy theme is an
+  // override for that theme alone, which is what makes partial overrides the
+  // point: three lines change three colours of tokyo-night and nothing else.
+  const file = builtIn
+    ? selection === 'omarchy' && omarchy?.theme
+      ? themeFile(omarchy.theme)
+      : null
+    : themeFile(selection)
+  const tokens = file?.tokens ?? {}
+  const meta = metaFromTokens(tokens)
+  const font = meta.fontFamily ? cssFontStack(meta.fontFamily) : resolveFont(omarchy?.font)
+  const omarchyReady = Boolean(omarchy?.colors?.background)
+
+  let dark: boolean
+  let base: EnvyTheme
+  if (selection === 'omarchy' && omarchyReady && omarchy) {
+    dark = !isLightMode(omarchy.colors)
+    base = omarchyToEnvy(omarchy.colors, font)
+  } else {
+    // A file selected by name says which Envious face it was written against;
+    // an Omarchy override doesn't get to flip the desktop's own light/dark.
+    dark = builtIn
+      ? selection === 'system' || selection === 'omarchy'
+        ? prefersDark()
+        : selection !== 'light'
+      : (file?.mode ?? 'dark') === 'dark'
+    base = withSurfaceAlpha(
+      { ...(dark ? enviousDark : enviousLight), fontFamily: font, monoFamily: font },
+      !dark,
+    )
+  }
+  if (meta.fontSize) base = { ...base, fontSize: meta.fontSize }
+  if (!file) return { theme: base, dark, notices: [] }
+
+  const theme = withSurfaceAlpha(overlayTokens(base, tokens), !dark, pinnedSurfaces(tokens))
+  const notices = [
+    ...file.problems,
+    // An override for an Omarchy theme rides on whatever colors.toml says it
+    // is. A file claiming the other mode is a mistake worth naming, but the
+    // desktop's own judgement is not something a colour override gets to flip.
+    ...(builtIn && file.mode && file.mode !== (dark ? 'dark' : 'light')
+      ? [`mode is ${file.mode} but the Omarchy theme is ${dark ? 'dark' : 'light'}`]
+      : []),
+    ...legibilityNotices(theme, tokens),
+  ].map((n) => `themes/${file.name}.md: ${n}`)
+  return { theme, dark, notices }
+}
+
+let applied: { theme: EnvyTheme; dark: boolean; notices: string[] } = {
+  theme: enviousDark,
+  dark: true,
+  notices: [],
+}
+
+/// The theme currently on screen — what "export the current theme" exports.
+export function currentTheme(): { theme: EnvyTheme; dark: boolean } {
+  return { theme: applied.theme, dark: applied.dark }
+}
+
+/// Anything wrong with the theme file that is in play, for the footer.
+export function themeNotices(): string[] {
+  return applied.notices
+}
+
+export function applyStoredAppearance() {
+  applied = resolveAppearance()
+  applyTheme(applied.theme, applied.dark)
+  document.documentElement.style.colorScheme = applied.dark ? 'dark' : 'light'
+  document.documentElement.classList.toggle('theme-light', !applied.dark)
+  document.documentElement.classList.toggle('theme-dark', applied.dark)
 }
 
 /// Subscribe to Omarchy theme/font changes and apply once the first payload
 /// arrives. `onApply` runs after every apply so a window can refresh zoom.
+///
+/// The config and the theme files are pulled in here rather than by the
+/// caller: every window that shows notes needs the same three inputs
+/// (appearance settings, theme files, Omarchy's palette), and making each one
+/// remember to load two of them by hand is how they drift apart.
 export async function initAppearance(onApply?: () => void) {
   appearanceListener = () => {
     applyStoredAppearance()
     onApply?.()
   }
+  await Promise.all([initConfig(), initThemes(() => appearanceListener?.())])
+  // Only for a change that came from the file: a change made in this window
+  // came from a control that re-applies the theme itself, and re-applying it a
+  // second time on every unrelated checkbox is work for nothing.
+  onConfigChange((local) => {
+    if (!local) appearanceListener?.()
+  })
   applyStoredAppearance()
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
     appearanceListener?.()

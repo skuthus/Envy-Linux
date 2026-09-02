@@ -30,6 +30,7 @@ import {
 } from './completion'
 import { initAppearance } from './theme'
 import { installSmoothScroll } from './smooth-scroll'
+import { getBool } from './config'
 
 // Its own entry point, so it needs its own last-resort handler — the main
 // window's doesn't reach here.
@@ -50,9 +51,10 @@ let noteId: string | null = null
 let noteTitle = ''
 let savedContent = ''
 let saveTimer: number | undefined
-// Shared with the main window through the common origin's localStorage; default
-// on, so a plain click still places the caret to edit a link.
-const requireModifier = localStorage.getItem('requireModifierForLinkClick') !== 'false'
+// Read from the config file, which every window shares. A function rather
+// than a captured value: the file can change while this window is open.
+// Defaults on, so a plain click still places the caret to edit a link.
+const requireModifier = () => getBool('editor', 'require_modifier_for_links')
 
 /// Ghost-completion pools, fetched with the note and again whenever the index
 /// changes, so a `#tag` or `[[link]]` completes here as it does in the app.
@@ -110,7 +112,7 @@ const view = new EditorView({
           if (pos === null) return false
           // Honour the same modifier gate as the main editor, so a plain click
           // can still land the caret inside a link to edit it.
-          if (requireModifier && !event.ctrlKey) return false
+          if (requireModifier() && !event.ctrlKey) return false
           const target = wikiLinkTargetAt(v, pos)
           if (!target) return false
           event.preventDefault()

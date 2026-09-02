@@ -21,6 +21,11 @@ const POLL: Duration = Duration::from_millis(400);
 pub struct OmarchyAppearance {
     pub colors: HashMap<String, String>,
     pub font: String,
+    /// The current theme's directory name (`tokyo-night`, or a numeric id for
+    /// an Aether-generated theme). It is what a per-theme override file in
+    /// `~/.config/envy/themes/` is named after, so the frontend needs it to
+    /// find one. `None` when Omarchy is not installed.
+    pub theme: Option<String>,
 }
 
 fn home() -> Option<PathBuf> {
@@ -156,6 +161,16 @@ pub fn omarchy_font() -> String {
         .unwrap_or_else(|| "monospace".into())
 }
 
+/// The theme's own name, as Omarchy stages it. Restricted to the slug shape a
+/// theme file can be named after: the value crosses into the frontend, which
+/// uses it to build a path, and `theme.name` is a plain file anything can
+/// write.
+fn current_theme_slug() -> Option<String> {
+    let raw = theme_name_file().and_then(|p| std::fs::read_to_string(p).ok())?;
+    let slug = raw.trim().to_ascii_lowercase();
+    crate::themes::is_valid_name(&slug).then_some(slug)
+}
+
 pub fn read_appearance() -> OmarchyAppearance {
     let colors = colors_toml()
         .and_then(|p| std::fs::read_to_string(p).ok())
@@ -164,6 +179,7 @@ pub fn read_appearance() -> OmarchyAppearance {
     OmarchyAppearance {
         colors,
         font: omarchy_font(),
+        theme: current_theme_slug(),
     }
 }
 

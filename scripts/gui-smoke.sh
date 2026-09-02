@@ -220,6 +220,25 @@ else
   append_line "$MARK-note"
   grep -q "$MARK-note" "$NOTE" && pass "edit saved" || fail "edit did not reach $NOTE"
 
+  echo "== arrow keys move the highlight and open the next row (and it stays there)"
+  # A second note, written after the first was edited, so with the list sorted
+  # newest-first it is row 1 and the original is row 2. Return opens row 1;
+  # Down from the search box must move to row 2, open it, and leave the
+  # highlight there — a re-run of the search from anywhere (a settings loop, a
+  # watcher misfire) snaps the highlight back to row 1 and the marker lands in
+  # the second note instead.
+  NOTE2="$VAULT/$TITLE 2.md"
+  printf '# %s 2\n\nSecond note for the arrow check.\n' "$TITLE" >"$NOTE2"
+  sleep 3; focus; search "$TITLE"
+  wtype -M ctrl l -m ctrl; sleep 0.3; tap Down; sleep 1.5; shot 2b-arrow-down
+  append_line "$MARK-arrow"
+  if grep -q "$MARK-arrow" "$NOTE" && ! grep -q "$MARK-arrow" "$NOTE2"; then
+    pass "Down opened the second row and the edit landed there"
+  else
+    fail "Down did not open the second row (marker in: $(grep -l "$MARK-arrow" "$NOTE" "$NOTE2" 2>/dev/null | tr '\n' ' '))"
+  fi
+  rm -f "$NOTE2"
+
   if [[ -n "$TEMPLATE" ]]; then
     echo "== template opens and saves through the validated template path"
     cp "$TEMPLATE" "$SHOT/template.bak"

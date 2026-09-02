@@ -95,6 +95,15 @@ Consult in this order when behavior is unclear:
    exactly”; Linux inherits that.
 4. The owner, if those conflict.
 
+**Where a setting is born:** `config/schema.json`. It is the single source of
+truth for every user setting, and a key that is not in it does not exist. The
+frontend reads it for defaults and validation, Rust reads it for
+`envy-linux config check` and the handful of keys it needs before the window
+opens, and `scripts/gen-skill-docs.mjs` turns it into the agent skill's
+reference page. Add the key there first, then wire it up. Settings live in
+`~/.config/envy/config.md`, not in localStorage, which keeps only per-window
+state the user never edits.
+
 Do not scrape envynote.app for implementation details.
 
 ---

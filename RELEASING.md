@@ -9,8 +9,10 @@ the assets, and an AUR package that installs from them.
   version (for example `1.8.1-beta`).
 - **Tarball** `envy-linux-<version>-x86_64.tar.gz`: the release binary, the
   desktop entry, icons, the Hyprland bind file and its summon script, the
-  README and LICENSE. This is what the AUR package installs; `linux/PKGBUILD`
-  copies exactly that tree into `/usr`.
+  `agents/skills/envy` skill, the README and LICENSE. This is what the AUR
+  package installs; `linux/PKGBUILD` copies exactly that tree into `/usr`, so
+  the skill lands at `/usr/share/envy/agents/skills/envy` where Envy links it
+  into `~/.claude/skills` and `~/.agents/skills` at launch.
 - **AppImage**, for people not on Arch.
 
 ## Cutting one

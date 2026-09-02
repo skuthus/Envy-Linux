@@ -160,6 +160,48 @@ function onWheel(e: WheelEvent) {
 }
 
 /// Stop interpolating `el` so a keyboard or selection jump can land instantly.
+/// Glides `el` to an absolute vertical position through the same animation
+/// the wheel uses, so keyboard navigation that keeps moving the target — a
+/// held arrow key advancing a row every 25 ms — reads as one continuous scroll
+/// rather than a hop per row. Honours the reduced-motion preference by
+/// jumping, exactly as the wheel path does.
+export function smoothScrollTo(el: HTMLElement, top: number) {
+  if (reducedMotion()) {
+    cancelSmoothScroll(el)
+    el.scrollTop = top
+    return
+  }
+  let run = runs.get(el)
+  if (!run) {
+    run = {
+      el,
+      x: { current: el.scrollLeft, target: el.scrollLeft },
+      y: { current: el.scrollTop, target: el.scrollTop },
+      frame: 0,
+      last: performance.now(),
+    }
+    runs.set(el, run)
+  } else if (Math.abs(el.scrollTop - run.y.current) > 2 || Math.abs(el.scrollLeft - run.x.current) > 2) {
+    // Something else moved the scroller since the last frame; continue from
+    // where it actually is rather than snapping back to the animation's idea.
+    run.x.current = el.scrollLeft
+    run.y.current = el.scrollTop
+    run.x.target = el.scrollLeft
+  }
+  run.y.target = top
+  clampRun(run)
+  if (!run.frame) {
+    run.last = performance.now()
+    run.frame = requestAnimationFrame((t) => tick(run as Run, t))
+  }
+}
+
+/// Where `el` is scrolling to: the animation's target while one is running,
+/// else its resting position.
+export function scrollTarget(el: HTMLElement): number {
+  return runs.get(el)?.y.target ?? el.scrollTop
+}
+
 export function cancelSmoothScroll(el: HTMLElement) {
   const run = runs.get(el)
   if (!run) return

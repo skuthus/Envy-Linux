@@ -61,6 +61,32 @@ previews differ from the dev build until you set them there too.
   the watcher reloads it within ~2s.
 - Stop: `pkill -x envy-linux`, then kill the `npm run tauri dev` job (it is the parent of the CLI, vite and cargo).
 
+## Testing config edits
+
+Settings and themes are files, so most of the settings surface can be driven
+without touching the GUI. With the app running, edit
+`~/.config/envy/config.md` (only inside the ` ```toml ` fence) and watch the
+window re-apply within a moment; the watcher is debounced at ~150 ms. Same for
+`~/.config/envy/themes/*.md`.
+
+```bash
+envy-linux config path                       # where the file is
+envy-linux config check                      # parse + validate; exit 1 with the problems
+envy-linux theme list                        # theme files Envy can parse
+envy-linux theme export smoke                # save the live theme as themes/smoke.md
+```
+
+`config check` needs no running instance, so it is also the fastest way to
+prove a schema change from a terminal. `theme export` and `config edit` go
+over the control socket and fail when Envy is not running.
+
+Back up the real config before a destructive test
+(`cp ~/.config/envy/config.md{,.bak}`), and delete the whole
+`~/.config/envy/` directory to re-test first-launch creation and the
+migration from the old `~/.config/app.envynote.linux/` files. The dev and
+release builds share these files, unlike localStorage, so a setting checked in
+one is already set in the other.
+
 ## Clicking
 
 `./scripts/click.sh X Y` clicks at logical screen coordinates (right-click:

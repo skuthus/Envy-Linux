@@ -24,7 +24,9 @@ npm install
 
 Notes live in `~/Documents/Envy` by default, created on first launch with a
 welcome note; Settings → Change Location… points it at another folder. The
-chosen path is remembered in `~/.config/app.envynote.linux/index-path`.
+chosen path is the `vault` key of `~/.config/envy/config.md` (see
+Configuration below); older installs are migrated from
+`~/.config/app.envynote.linux/index-path` on first launch.
 
 **Omarchy theme.** This Envy-Omarchy variant follows the current Omarchy
 theme (`~/.local/state/omarchy/current/theme/colors.toml`) and the Omarchy
@@ -70,6 +72,80 @@ notes. Do destructive testing there, never in a synced vault.
 `~/.config/hypr/bindings.lua` for the Ctrl+Alt+Return summon. Elsewhere, run
 the AppImage from the GitHub release. Cutting a release is `scripts/release.sh`;
 see RELEASING.md. Envy is MIT licensed (LICENSE).
+
+## Configuration
+
+Everything Envy can be told is in two kinds of file, and the Settings panel
+writes the same files, so the GUI and the files never disagree. Both are
+markdown with one ` ```toml ` fence, which means they open and edit in Envy
+itself. Changes apply live; nothing needs restarting.
+
+`~/.config/envy/config.md` holds every setting. Missing keys mean defaults,
+and an unknown key or a bad value is reported rather than fatal.
+
+````markdown
+# Envy settings
+
+Edit here or in Settings; both stay in sync.
+
+```toml
+vault = "~/Documents/Envy"
+
+[list]
+density = "compact"
+
+[shortcuts]
+newFromTemplate = "Ctrl+N"
+```
+````
+
+`~/.config/envy/themes/<name>.md` is one theme. Every colour token is
+optional: what you leave out comes from the face underneath, which is the
+Omarchy-derived palette in `omarchy` mode and the Envious light or dark face
+otherwise. A file named after the current Omarchy theme's slug (the contents
+of `~/.local/state/omarchy/current/theme.name`) overlays that theme
+automatically, so per-theme tweaks are a few lines rather than a whole
+palette. The body is a sample note so the file previews the theme when opened
+in Envy.
+
+````markdown
+# Tokyo Night, warmer links
+
+```toml
+mode = "dark"
+link = "#e0af68"
+```
+
+A sample note with a [link](https://envynote.app), a #tag and `code`.
+````
+
+From the command line:
+
+```bash
+envy-linux config check          # validate config.md; exit 1 with the problems
+envy-linux config path           # print the config path
+envy-linux config edit           # open config.md in Envy (needs it running)
+envy-linux theme list            # theme file names, with any problems
+envy-linux theme check           # validate every theme file; exit 1 with the problems
+envy-linux theme export <name>   # save the theme in use now as themes/<name>.md
+```
+
+**The agent skill.** `agents/skills/envy/` teaches an agent all of the above:
+the file shapes, every setting key, every re-bindable shortcut, the colour
+tokens and the contrast floors. The package installs it to
+`/usr/share/envy/agents/skills/envy`, and Envy links it into
+`~/.claude/skills/envy` and `~/.agents/skills/envy` at launch when those are
+missing or dangling. It never replaces a real directory or a symlink pointing
+somewhere else, so linking it by hand is also fine:
+
+```bash
+ln -s /usr/share/envy/agents/skills/envy ~/.claude/skills/envy
+ln -s ~/Work/Envy-omarchy/agents/skills/envy ~/.agents/skills/envy   # checkout
+```
+
+`settings.md` and `shortcuts.md` in that directory are generated from
+`config/schema.json` and `src/shortcuts.ts` by
+`node scripts/gen-skill-docs.mjs`; `scripts/check.sh` fails if they are stale.
 
 ## Structure
 

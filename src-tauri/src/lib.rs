@@ -14,8 +14,10 @@ use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager, State, WebviewWindow};
 use tauri_plugin_autostart::ManagerExt as AutostartManagerExt;
 
+pub mod config;
 mod control;
 mod omarchy;
+pub mod themes;
 mod tray;
 
 /// `envy-linux --toggle` and friends: see `control`.
@@ -176,46 +178,39 @@ fn default_index_directory() -> PathBuf {
         .join("Envy")
 }
 
-/// Where the chosen Index path is remembered between launches.
-///
-/// A plain file under the app's config directory, holding one path. The Mac
-/// keeps this in UserDefaults under `indexPath`; on Windows the config file is
-/// the equivalent, and — unlike the frontend's localStorage — it can be read in
-/// Rust's `setup`, before any window exists, so the right vault opens straight
-/// away rather than opening the default and switching afterwards.
+/// Where the chosen Index path *used* to be remembered: a plain file under the
+/// app's config directory holding one path. `vault` in `~/.config/envy/config.md`
+/// is the record now; this is read once, to migrate it, and then left alone so
+/// a downgrade still finds it.
 fn index_path_file(app: &tauri::AppHandle) -> Option<PathBuf> {
     app.path().app_config_dir().ok().map(|d| d.join("index-path"))
 }
 
-/// The Index to open on launch: the remembered one, or the default.
+/// The Index to open on launch: the one the config names, or the default.
 ///
-/// Mirrors the Mac's `IndexPreference.load()`, including its self-heal: a
-/// missing or empty record resolves to the default *and* is written back, so
-/// the file always names a real choice after the first run.
+/// Read before any window exists, so the right vault opens straight away
+/// rather than opening the default and switching afterwards. Keeps the Mac's
+/// self-heal: a missing or empty record resolves to the default *and* is
+/// written back, so the file always names a real choice after the first run.
 fn persisted_index_directory(app: &tauri::AppHandle) -> PathBuf {
-    if let Some(file) = index_path_file(app) {
-        if let Ok(raw) = std::fs::read_to_string(&file) {
-            let trimmed = raw.trim();
-            if !trimmed.is_empty() {
-                return PathBuf::from(trimmed);
-            }
-        }
+    if let Some(dir) = config::vault() {
+        return dir;
     }
     let fallback = default_index_directory();
     save_index_directory(app, &fallback);
     fallback
 }
 
-/// Records `dir` as the Index to open next time. Best-effort: a failure here
-/// costs the persistence, not the switch, so the current session is unaffected.
+/// Records `dir` as the Index to open next time — through the config file, so
+/// Settings → Change Location… and an agent editing `vault` are the same
+/// change. Best-effort: a failure here costs the persistence, not the switch.
 fn save_index_directory(app: &tauri::AppHandle, dir: &Path) {
-    let Some(file) = index_path_file(app) else {
-        return;
-    };
-    if let Some(parent) = file.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let _ = std::fs::write(&file, dir.to_string_lossy().as_bytes());
+    config::set_owned(
+        app,
+        "",
+        "vault",
+        serde_json::Value::String(dir.to_string_lossy().into_owned()),
+    );
 }
 
 // --- Keep Envy on Top --------------------------------------------------------
@@ -224,32 +219,30 @@ fn save_index_directory(app: &tauri::AppHandle, dir: &Path) {
 // tray menu, persisted in the app config dir, and re-applied on launch. Only
 // the main window — the pinned-note popover already floats on its own.
 
+/// The pre-config record, kept only so `config::init` can migrate it.
 fn keep_on_top_file(app: &tauri::AppHandle) -> Option<PathBuf> {
     app.path().app_config_dir().ok().map(|d| d.join("keep-on-top"))
 }
 
-pub(crate) fn persisted_keep_on_top(app: &tauri::AppHandle) -> bool {
-    keep_on_top_file(app)
-        .and_then(|f| std::fs::read_to_string(f).ok())
-        .map(|s| s.trim() == "true")
-        .unwrap_or(false)
+pub(crate) fn persisted_keep_on_top(_app: &tauri::AppHandle) -> bool {
+    config::keep_on_top()
 }
 
 fn save_keep_on_top(app: &tauri::AppHandle, on: bool) {
-    let Some(file) = keep_on_top_file(app) else {
-        return;
-    };
-    if let Some(parent) = file.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let _ = std::fs::write(&file, if on { "true" } else { "false" });
+    config::set_owned(app, "system", "keep_on_top", serde_json::Value::Bool(on));
 }
+
+/// What `apply_keep_on_top` last set. The window has no reliable read-back
+/// across platforms, and re-applying on every config change would emit a
+/// `keep-on-top-changed` the frontend would act on for nothing.
+static KEEP_ON_TOP_APPLIED: AtomicBool = AtomicBool::new(false);
 
 /// Raises or lowers the main window's always-on-top flag, and tells the
 /// frontend the new state so it can suppress hide-on-focus-loss while on — a
 /// window pinned on top that vanishes the moment you click away would fight
 /// itself. Mirrors the Mac, where keepOnTop suppresses the same auto-hide.
 fn apply_keep_on_top(app: &tauri::AppHandle, on: bool) {
+    KEEP_ON_TOP_APPLIED.store(on, Ordering::Relaxed);
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.set_always_on_top(on);
         // Windows leaves a de-topmost'd window at the top of the normal stack,
@@ -866,6 +859,10 @@ fn reveal_folder(which: String, state: State<AppState>) -> Result<(), String> {
     let path = match which.as_str() {
         "templates" => dir.join("Templates"),
         "trash" => dir.join(".trash"),
+        // The two live outside the vault: the settings file's folder and the
+        // theme files beside it.
+        "config" => config::config_dir(),
+        "themes" => config::themes_dir(),
         _ => dir,
     };
     // Created on demand: Explorer cannot show a folder that doesn't exist yet,
@@ -882,23 +879,36 @@ fn set_index_directory(
     state: State<AppState>,
     app: tauri::AppHandle,
 ) -> Result<usize, String> {
+    let count = open_index(&app, &state, &path, include_subfolders)?;
+    // Remembered for next launch, so the choice sticks rather than resetting to
+    // the default folder every restart.
+    save_index_directory(&app, Path::new(&path));
+    Ok(count)
+}
+
+/// Opens `path` as the Index and re-points the watcher at it. Shared by the
+/// Change Location… command and by the config watcher, so a `vault` edited in
+/// the file lands exactly the same way as one chosen in Settings.
+fn open_index(
+    app: &tauri::AppHandle,
+    state: &State<AppState>,
+    path: &str,
+    include_subfolders: bool,
+) -> Result<usize, String> {
     // The root has no parent, and scanning it would walk the whole machine —
     // as would an empty path, which resolves to the working directory. A path
     // that exists but isn't a folder can't hold notes either.
-    let chosen = Path::new(&path);
+    let chosen = Path::new(path);
     if chosen.parent().is_none() {
         return Err("Choose a folder, not the whole filesystem.".to_string());
     }
     if chosen.exists() && !chosen.is_dir() {
         return Err("That is a file, not a folder.".to_string());
     }
-    let store = NoteStore::open(&path, include_subfolders).map_err(|e| e.to_string())?;
+    let store = NoteStore::open(path, include_subfolders).map_err(|e| e.to_string())?;
     let count = store.notes().len();
     let watched = store.directory().to_path_buf();
     *state.store.lock().unwrap() = store;
-    // Remembered for next launch, so the choice sticks rather than resetting to
-    // the default folder every restart.
-    save_index_directory(&app, Path::new(&path));
     // The old watcher is still pointed at the previous folder; replacing it is
     // what makes external edits in the new one register at all.
     let handle = app.clone();
@@ -914,6 +924,41 @@ fn set_index_directory(
     .ok();
     *state._watcher.lock().unwrap() = watcher;
     Ok(count)
+}
+
+/// Re-applies the keys Rust owns after the config file changes under it — an
+/// agent editing it, `$EDITOR`, or Envy's own editor through
+/// `config_write_text`. The frontend re-applies its own half from the same
+/// `config-changed` event; this is the half no window can do.
+pub(crate) fn apply_config_owned(app: &tauri::AppHandle) {
+    apply_autostart(app);
+    let on = config::keep_on_top();
+    if KEEP_ON_TOP_APPLIED.swap(on, Ordering::Relaxed) != on {
+        apply_keep_on_top(app, on);
+        refresh_tray_menu(app);
+    }
+    register_global_shortcuts(app, config::global_shortcuts());
+
+    // A vault named in the file is the same instruction as Change Location…,
+    // so it re-points the store rather than waiting for a restart.
+    let Some(wanted) = config::vault() else { return };
+    let Some(state) = app.try_state::<AppState>() else { return };
+    let current = state.store.lock().unwrap().directory().to_path_buf();
+    let same = dunce_canonical(&wanted) == dunce_canonical(&current);
+    if same {
+        return;
+    }
+    // The store has no accessor for it, and the config is the truth anyway.
+    let include_subfolders = config::include_subfolders();
+    if open_index(app, &state, &wanted.to_string_lossy(), include_subfolders).is_ok() {
+        let _ = app.emit("index-changed", ());
+    }
+}
+
+/// Paths compare by what they resolve to: `~/Notes` and `/home/x/Notes` are
+/// the same folder, and only one of them is what the store recorded.
+fn dunce_canonical(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 #[tauri::command]
@@ -1453,21 +1498,51 @@ fn set_global_shortcuts(
     unpin: String,
     keep_on_top: String,
     app: tauri::AppHandle,
-    state: State<AppState>,
+) -> Vec<String> {
+    register_global_shortcuts(
+        &app,
+        [
+            ("summonApp".to_string(), summon),
+            ("showPinnedNote".to_string(), show_pinned),
+            ("unpinFromTray".to_string(), unpin),
+            ("keepOnTop".to_string(), keep_on_top),
+        ]
+        .into_iter()
+        .collect(),
+    )
+}
+
+/// Registers the four compositor-level chords, replacing whatever was
+/// registered before. Shared by the frontend's command and by the startup and
+/// config-change paths, which seed the same four from `[shortcuts]` in the
+/// file — so a chord set in the config works before any window exists.
+pub(crate) fn register_global_shortcuts(
+    app: &tauri::AppHandle,
+    bindings: std::collections::HashMap<String, String>,
 ) -> Vec<String> {
     use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
+    let Some(state) = app.try_state::<AppState>() else {
+        return Vec::new();
+    };
+    // Re-registering unchanged chords would drop them with the compositor for
+    // an instant, and this is called on every settings change now. The last
+    // answer is remembered rather than recomputed.
+    {
+        let last = LAST_GLOBAL_SHORTCUTS.lock().unwrap();
+        if let Some(previous) = last.as_ref() {
+            if previous.bindings == bindings {
+                return previous.failed.clone();
+            }
+        }
+    }
     let _ = app.global_shortcut().unregister_all();
     let mut failed = Vec::new();
     let mut registry = state.global_shortcuts.lock().unwrap();
     registry.clear();
 
-    for (id, binding) in [
-        ("summonApp", summon),
-        ("showPinnedNote", show_pinned),
-        ("unpinFromTray", unpin),
-        ("keepOnTop", keep_on_top),
-    ] {
+    let bindings_copy = bindings.clone();
+    for (id, binding) in bindings {
         let Some(shortcut) = parse_shortcut(&binding) else {
             failed.push(binding);
             continue;
@@ -1481,8 +1556,21 @@ fn set_global_shortcuts(
         // then have to keep in step with the frontend's list.
         registry.insert(shortcut.id(), id.to_string());
     }
+    *LAST_GLOBAL_SHORTCUTS.lock().unwrap() = Some(RegisteredShortcuts {
+        bindings: bindings_copy,
+        failed: failed.clone(),
+    });
     failed
 }
+
+/// The chords last handed to the compositor, and what failed, so an
+/// unchanged set is a no-op with the same answer.
+struct RegisteredShortcuts {
+    bindings: std::collections::HashMap<String, String>,
+    failed: Vec<String>,
+}
+
+static LAST_GLOBAL_SHORTCUTS: Mutex<Option<RegisteredShortcuts>> = Mutex::new(None);
 
 /// The summon hotkey.
 ///
@@ -2014,6 +2102,24 @@ fn autostart_enabled(app: tauri::AppHandle) -> bool {
 
 #[tauri::command]
 fn set_autostart(enabled: bool, app: tauri::AppHandle) -> Result<(), String> {
+    // The config is the source of truth for the login item, so the write comes
+    // first and the XDG entry follows it — the same order an edit to the file
+    // takes through `apply_config_owned`.
+    config::set_owned(&app, "system", "autostart", serde_json::Value::Bool(enabled));
+    write_autostart(&app, enabled)
+}
+
+/// Makes the XDG autostart entry match the config, on launch and on every
+/// change to the file. Only touched when it disagrees: the plugin rewrites the
+/// entry on `enable`, and doing that every launch is churn for nothing.
+fn apply_autostart(app: &tauri::AppHandle) {
+    let wanted = config::autostart();
+    if app.autolaunch().is_enabled().unwrap_or(false) != wanted {
+        let _ = write_autostart(app, wanted);
+    }
+}
+
+fn write_autostart(app: &tauri::AppHandle, enabled: bool) -> Result<(), String> {
     let manager = app.autolaunch();
     if enabled {
         manager.enable().map_err(|e| e.to_string())
@@ -2212,6 +2318,17 @@ pub fn run() {
             None,
         ))
         .setup(|app| {
+            // Before anything reads a setting: create ~/.config/envy if it is
+            // missing and fold the two files Rust used to keep its own state
+            // in (`index-path`, `keep-on-top`) into the config.
+            config::init(
+                index_path_file(app.handle()),
+                keep_on_top_file(app.handle()),
+            );
+            // The skill teaches agents how to edit that file; linking it is
+            // best-effort and never overwrites what the user has there.
+            config::install_skill();
+
             // The Index the user last chose, or the default on a fresh install.
             // A saved path can go unreachable — a folder on a drive that isn't
             // plugged in — so a failure to open it falls back to the default
@@ -2285,11 +2402,20 @@ pub fn run() {
             });
 
             setup_global_hotkey(app.handle())?;
+            // Seeded from `[shortcuts]` so a chord set in the config works
+            // from the moment the app is up. The frontend calls
+            // `set_global_shortcuts` again once it has read its own settings,
+            // which lands on the same four bindings.
+            register_global_shortcuts(app.handle(), config::global_shortcuts());
             tray::setup(app.handle())?;
             control::serve(app.handle());
             // Re-assert the remembered on-top state now the window exists.
             apply_keep_on_top(app.handle(), persisted_keep_on_top(app.handle()));
+            apply_autostart(app.handle());
             omarchy::spawn_watcher(app.handle().clone());
+            // Edits to config.md and themes/ made anywhere else land as
+            // `config-changed` / `themes-changed`.
+            config::spawn_watcher(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -2361,6 +2487,14 @@ pub fn run() {
             import_kindle_clippings,
             forget_kindle_history,
             omarchy::omarchy_appearance,
+            config::config_load,
+            config::config_set,
+            config::config_read_text,
+            config::config_write_text,
+            config::envy_paths,
+            config::themes_list,
+            config::theme_read_text,
+            config::theme_write_text,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

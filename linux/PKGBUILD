@@ -46,6 +46,13 @@ package() {
   # `pcall(dofile, "/usr/share/envy/hyprland-envy.lua")` is the whole install.
   install -Dm644 hyprland-envy.lua "$pkgdir/usr/share/envy/hyprland-envy.lua"
   install -Dm755 envy-summon.sh "$pkgdir/usr/share/envy/envy-summon.sh"
+  # The agent skill. Envy links it into ~/.claude/skills/envy and
+  # ~/.agents/skills/envy on launch, so agents can read and edit
+  # ~/.config/envy/config.md without being told how each time.
+  while IFS= read -r -d '' _skillfile; do
+    install -Dm644 "$_skillfile" \
+      "$pkgdir/usr/share/envy/agents/skills/envy/${_skillfile#agents/skills/envy/}"
+  done < <(find agents/skills/envy -type f -print0)
   install -Dm644 README.md "$pkgdir/usr/share/doc/envy/README.md"
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }
