@@ -1089,11 +1089,15 @@ function buildDecorations(view: EditorView): DecorationSet {
       retired.some(([x, y]) => a < y && b > x)
 
     // --- Block constructs -------------------------------------------------
+    // Line-level constructs are gated on their *marker* sitting in code (a
+    // fenced block swallows the whole line, marker included), not on the
+    // line overlapping a code span: a heading, quote or task that merely
+    // contains `inline code` is still a heading, quote or task.
     for (const m of text.matchAll(P.header)) {
       const s = base + m.index!
-      if (insideCode(s, s + m[0].length)) continue
       const level = m[1].length
       const markerEnd = s + m[1].length + (m[0].length - m[1].length - m[2].length)
+      if (insideCode(s, markerEnd)) continue
       marks.push({ from: s, to: s + m[0].length, deco: mark(`envy-h${level}`) })
       if (!selectionTouches(view, s, s + m[0].length)) {
         marks.push({ from: s, to: markerEnd, deco: hidden })
@@ -1105,7 +1109,7 @@ function buildDecorations(view: EditorView): DecorationSet {
     for (const m of text.matchAll(P.blockquote)) {
       const s = base + m.index!
       const end = s + m[0].length
-      if (insideCode(s, end)) continue
+      if (insideCode(s, s + m[1].length)) continue
       // A bare ">" with nothing after it is left alone entirely, as on the Mac
       // — no rule, no indent, no collapse. There is no quote yet, only the
       // character that starts one, and hiding it would delete what you just
@@ -1136,8 +1140,8 @@ function buildDecorations(view: EditorView): DecorationSet {
     for (const m of text.matchAll(P.taskList)) {
       const s = base + m.index!
       const lineEnd = s + m[0].length
-      if (insideCode(s, lineEnd)) continue
       const boxFrom = s + m[1].length
+      if (insideCode(s, boxFrom + 3)) continue
       const checked = m[2][1] !== ' '
       if (!selectionTouches(view, boxFrom, boxFrom + 3)) {
         marks.push({
