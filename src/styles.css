@@ -734,7 +734,9 @@ body.bold-file-list .row-date { font-weight: 700; }
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 6px 12px;
-  padding: 3px var(--envy-inset);
+  /* Thin: the bar plus the field's own padding comes to the same height as
+     the pop-out's title bar, so a note reads the same in both. */
+  padding: 1px var(--envy-inset);
   font-weight: 600;
   background: var(--envy-title-bar-background);
   border-bottom: 1px solid color-mix(in srgb, var(--envy-marker) 30%, transparent);
@@ -750,7 +752,7 @@ body.bold-file-list .row-date { font-weight: 700; }
      to start in the same column as the list and the editor. The 1px border
      (transparent until focus) is absorbed by a matching negative margin so the
      text — not the box — is what aligns. */
-  padding: 3px 0;
+  padding: 2px 0;
   margin-left: -1px;
   border: 1px solid transparent;
   border-radius: 0;
@@ -910,6 +912,11 @@ body.popout-window {
    pane under the cursor. */
 
 #footer {
+  /* Above #empty-state, which overlays the whole pane: without this the
+     footer sat under that translucent sheet and read as faint until a note
+     was opened. */
+  position: relative;
+  z-index: 1;
   display: flex;
   align-items: center;
   gap: 0.75em;
@@ -917,6 +924,10 @@ body.popout-window {
   padding: 1px var(--envy-inset);
   /* A touch smaller than the note/list text — the status bar is chrome. */
   font-size: 11px;
+  /* One fixed line: the bar must not grow because a button or a box-drawing
+     glyph joined it, only when the window is too narrow and it wraps. */
+  line-height: 1.6;
+  min-height: calc(1.6em + 2px);
   font-variant-numeric: tabular-nums;
   color: var(--envy-chrome-text);
   background: color-mix(in srgb, var(--envy-marker) 10%, var(--envy-title-bar-background));
@@ -971,7 +982,10 @@ body.popout-window {
 
 #interlinks-toggle {
   font: inherit;
-  padding: 2px 6px;
+  line-height: inherit;
+  /* No vertical padding: the button sits inside the footer's one line rather
+     than stretching it. */
+  padding: 0 6px;
   margin-left: -6px;
   border: none;
   border-radius: 0;
