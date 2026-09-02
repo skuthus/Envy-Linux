@@ -11,12 +11,11 @@ use std::time::{Duration, Instant};
 
 use envy_core::{IndexWatcher, NoteStore, SearchContext, SortField, SortSpec};
 use serde::{Deserialize, Serialize};
-use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
-use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{Emitter, Manager, State, WebviewWindow};
 use tauri_plugin_autostart::ManagerExt as AutostartManagerExt;
 
 mod omarchy;
+mod tray;
 
 /// A note as the frontend sees it. The store's `Note` isn't serialized
 /// directly — its derived values are lazy and private, and the UI wants them
@@ -94,14 +93,14 @@ fn set_inbox_enabled(on: bool) {
 }
 
 pub struct AppState {
-    store: Mutex<NoteStore>,
+    pub(crate) store: Mutex<NoteStore>,
     /// The note pinned to the tray, if any.
     ///
     /// Held here because the tray click handler runs in Rust and has to decide
     /// what to open before any window exists. Durable storage stays in the
     /// frontend alongside the list pins — this is a cache the frontend fills
     /// on boot, not a second source of truth.
-    pinned_note: Mutex<Option<String>>,
+    pub(crate) pinned_note: Mutex<Option<String>>,
     /// Envy's own writes trip the watcher exactly like an external edit would.
     /// Suppressing a brief window after each one stops a redundant rescan —
     /// and, more importantly, stops a reload landing on top of text the user
@@ -223,7 +222,7 @@ fn keep_on_top_file(app: &tauri::AppHandle) -> Option<PathBuf> {
     app.path().app_config_dir().ok().map(|d| d.join("keep-on-top"))
 }
 
-fn persisted_keep_on_top(app: &tauri::AppHandle) -> bool {
+pub(crate) fn persisted_keep_on_top(app: &tauri::AppHandle) -> bool {
     keep_on_top_file(app)
         .and_then(|f| std::fs::read_to_string(f).ok())
         .map(|s| s.trim() == "true")
@@ -291,7 +290,7 @@ fn lower_below_foreground(w: &tauri::WebviewWindow) {
 /// Flips the on-top state, persists it, applies it, and refreshes the tray
 /// checkmark — the one action both the tray menu item and the global shortcut
 /// trigger, so the two can't drift.
-fn toggle_keep_on_top(app: &tauri::AppHandle) {
+pub(crate) fn toggle_keep_on_top(app: &tauri::AppHandle) {
     let on = !persisted_keep_on_top(app);
     save_keep_on_top(app, on);
     apply_keep_on_top(app, on);
@@ -1533,96 +1532,6 @@ fn setup_global_hotkey(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error:
     Ok(())
 }
 
-/// Builds the tray menu against current state.
-///
-/// Rebuilt on every open rather than built once, because two of its entries
-/// depend on things that change while the app runs: the template list, and
-/// whether anything is pinned. A menu assembled at launch would offer
-/// templates that have since been deleted and grey out an Unpin that is now
-/// live.
-fn build_tray_menu(app: &tauri::AppHandle) -> Result<Menu<tauri::Wry>, Box<dyn std::error::Error>> {
-    let new_note = MenuItem::with_id(app, "new_note", "New Note", true, None::<&str>)?;
-    let new_pinned =
-        MenuItem::with_id(app, "new_pinned", "New Pinned Note", true, None::<&str>)?;
-
-    let templates: Vec<envy_core::NoteTemplate> = app
-        .try_state::<AppState>()
-        .map(|s| s.store.lock().unwrap().templates())
-        .unwrap_or_default();
-
-    let template_submenu = Submenu::with_id(app, "from_template", "New Pinned Note from Template", true)?;
-    if templates.is_empty() {
-        // Present but disabled, so the feature is discoverable before any
-        // template exists rather than the entry simply vanishing.
-        template_submenu.append(&MenuItem::with_id(
-            app,
-            "no_templates",
-            "No Templates",
-            false,
-            None::<&str>,
-        )?)?;
-    } else {
-        for t in &templates {
-            template_submenu.append(&MenuItem::with_id(
-                app,
-                format!("template:{}", t.path.to_string_lossy()),
-                &t.name,
-                true,
-                None::<&str>,
-            )?)?;
-        }
-    }
-
-    let is_pinned = app
-        .try_state::<AppState>()
-        .map(|s| s.pinned_note.lock().unwrap().is_some())
-        .unwrap_or(false);
-    let unpin = MenuItem::with_id(app, "unpin", "Unpin Note", is_pinned, None::<&str>)?;
-
-    // Checkmark reflects the current state, same as the Mac's status-menu item.
-    let keep_on_top = CheckMenuItem::with_id(
-        app,
-        "keep_on_top",
-        "Keep Envy on Top",
-        true,
-        persisted_keep_on_top(app),
-        None::<&str>,
-    )?;
-
-    // The Mac's File → Import from Kindle; the tray is the closest thing to a
-    // menu bar here. With the feature on and a Kindle plugged in it imports
-    // straight away, otherwise it opens Settings → Import.
-    let import_kindle =
-        MenuItem::with_id(app, "import_kindle", "Import from Kindle", true, None::<&str>)?;
-    let settings = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
-    // The Mac carries "Check for Updates…" as a menu command beside the
-    // automatic background check, for anyone who would rather ask than wait.
-    let check_updates = MenuItem::with_id(
-        app,
-        "check_updates",
-        "Check for Updates…",
-        true,
-        None::<&str>,
-    )?;
-    let quit = MenuItem::with_id(app, "quit", "Quit Envy", true, None::<&str>)?;
-
-    Ok(Menu::with_items(
-        app,
-        &[
-            &new_note,
-            &new_pinned,
-            &template_submenu,
-            &unpin,
-            &PredefinedMenuItem::separator(app)?,
-            &keep_on_top,
-            &import_kindle,
-            &settings,
-            &check_updates,
-            &quit,
-        ],
-    )?)
-}
-
 /// Writes the verified installer to a temp file and starts it *after* this
 /// process has had a few seconds to disappear.
 ///
@@ -1687,7 +1596,7 @@ fn launch_installer_after_exit(bytes: &[u8], version: &str) -> std::io::Result<(
 /// a release that never asks will never discover its successor no matter what
 /// key it was signed against.
 #[cfg(windows)]
-async fn run_update_check(app: tauri::AppHandle, manual: bool) {
+pub(crate) async fn run_update_check(app: tauri::AppHandle, manual: bool) {
     use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
     use tauri_plugin_updater::UpdaterExt;
 
@@ -1782,7 +1691,7 @@ async fn run_update_check(app: tauri::AppHandle, manual: bool) {
 /// A background check is a silent no-op; the Settings "Check Now" button says
 /// so instead of appearing to do nothing.
 #[cfg(not(windows))]
-async fn run_update_check(app: tauri::AppHandle, manual: bool) {
+pub(crate) async fn run_update_check(app: tauri::AppHandle, manual: bool) {
     use tauri_plugin_dialog::DialogExt;
     if manual {
         app.dialog()
@@ -1803,21 +1712,16 @@ async fn check_for_updates(app: tauri::AppHandle, manual: bool) {
     run_update_check(app, manual).await;
 }
 
-/// Re-applies the tray menu after anything it reflects has changed.
-///
-/// The menu is a snapshot: Tauri hands the OS a built menu rather than asking
-/// us to fill one on open, so "Unpin Note" would stay greyed out after a pin,
-/// and a freshly made template would not appear, unless it is replaced.
+/// Re-applies the bar item after anything it reflects has changed — the menu
+/// ("Unpin Note" greys out, a new template appears) and the eye.
 fn refresh_tray_menu(app: &tauri::AppHandle) {
-    if let (Some(tray), Ok(menu)) = (app.tray_by_id("main"), build_tray_menu(app)) {
-        let _ = tray.set_menu(Some(menu));
-    }
+    tray::refresh(app);
 }
 
 /// Creates a note and pins it to the tray, then shows it — "New Pinned Note"
 /// and its template variants. Returns nothing useful; the popover reads the
 /// pinned id for itself.
-fn create_and_pin(app: &tauri::AppHandle, template_path: Option<&str>) {
+pub(crate) fn create_and_pin(app: &tauri::AppHandle, template_path: Option<&str>) {
     let Some(state) = app.try_state::<AppState>() else { return };
     state.mark_internal_write();
 
@@ -1853,98 +1757,6 @@ fn create_and_pin(app: &tauri::AppHandle, template_path: Option<&str>) {
     show_pinned_window(app);
 }
 
-/// The notification-area icon — Windows' counterpart to the Mac's menu bar
-/// item. Left click toggles the window, exactly as the hotkey does; the menu
-/// is for the things a click can't express.
-fn setup_tray(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
-    TrayIconBuilder::with_id("main")
-        .icon(app.default_window_icon().cloned().ok_or("no window icon")?)
-        .tooltip("Envy")
-        .menu(&build_tray_menu(app)?)
-        // Without this a left click opens the menu instead of reaching the
-        // click handler, and the single most common gesture would be wrong.
-        .show_menu_on_left_click(false)
-        .on_menu_event(|app, event| {
-            let id = event.id.as_ref();
-            // Template entries carry their path in the id, since the menu is
-            // rebuilt each time and closures over a Vec would go stale.
-            if let Some(path) = id.strip_prefix("template:") {
-                create_and_pin(app, Some(path));
-                return;
-            }
-            match id {
-                "new_note" => {
-                    if let Some(w) = app.get_webview_window("main") {
-                        let _ = w.show();
-                        let _ = w.unminimize();
-                        let _ = w.set_focus();
-                        let _ = w.emit("new-note", ());
-                    }
-                }
-                "new_pinned" => create_and_pin(app, None),
-                "unpin" => {
-                    if let Some(state) = app.try_state::<AppState>() {
-                        *state.pinned_note.lock().unwrap() = None;
-                    }
-                    if let Some(w) = app.get_webview_window(PINNED_WINDOW) {
-                        let _ = w.hide();
-                    }
-                    let _ = app.emit("pinned-note-changed", ());
-    refresh_tray_menu(app);
-                }
-                "keep_on_top" => toggle_keep_on_top(app),
-                "settings" => {
-                    if let Some(w) = app.get_webview_window("main") {
-                        let _ = w.show();
-                        let _ = w.unminimize();
-                        let _ = w.set_focus();
-                        let _ = w.emit("open-settings", ());
-                    }
-                }
-                "check_updates" => {
-                    let handle = app.clone();
-                    tauri::async_runtime::spawn(run_update_check(handle, true));
-                }
-                // The frontend owns the enabled flag and the title/body
-                // preferences (they're settings, kept in localStorage), so it
-                // decides between importing and opening Settings.
-                "import_kindle" => {
-                    if let Some(w) = app.get_webview_window("main") {
-                        let _ = w.show();
-                        let _ = w.unminimize();
-                        let _ = w.set_focus();
-                        let _ = w.emit("import-from-kindle", ());
-                    }
-                }
-                "quit" => app.exit(0),
-                _ => {}
-            }
-        })
-        .on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                ..
-            } = event
-            {
-                let app = tray.app_handle();
-                // With a note pinned, a click opens *it* rather than summoning
-                // the app — that substitution is the whole feature. Without
-                // one, the click falls back to showing Envy.
-                let pinned = app
-                    .try_state::<AppState>()
-                    .and_then(|s| s.pinned_note.lock().unwrap().clone());
-                if pinned.is_some() {
-                    toggle_pinned_window(app);
-                } else if let Some(w) = app.get_webview_window("main") {
-                    toggle_window(&w);
-                }
-            }
-        })
-        .build(app)?;
-    Ok(())
-}
-
 /// Show-or-hide, the behaviour the summon hotkey and the tray click share.
 ///
 /// Hiding rather than minimising is deliberate: Envy is meant to be summoned
@@ -1960,7 +1772,7 @@ fn setup_tray(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> 
 /// A minimised window counts as "not on screen" and is restored rather than
 /// hidden, so a window minimised the ordinary way comes back instead of
 /// vanishing further.
-fn toggle_window(window: &WebviewWindow) {
+pub(crate) fn toggle_window(window: &WebviewWindow) {
     let visible = window.is_visible().unwrap_or(false);
     let minimised = window.is_minimized().unwrap_or(false);
     if visible && !minimised {
@@ -1978,7 +1790,7 @@ fn toggle_window(window: &WebviewWindow) {
     }
 }
 
-const PINNED_WINDOW: &str = "pinned";
+pub(crate) const PINNED_WINDOW: &str = "pinned";
 
 #[tauri::command]
 fn pinned_note_id(state: State<AppState>) -> Option<String> {
@@ -2014,7 +1826,7 @@ fn open_in_main_window(id: String, app: tauri::AppHandle) {
 /// Creates the popover on first use rather than at launch. It is a window most
 /// people will never open, and building it eagerly would cost every user a
 /// second webview for a feature they may not use.
-fn show_pinned_window(app: &tauri::AppHandle) {
+pub(crate) fn show_pinned_window(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window(PINNED_WINDOW) {
         let _ = w.show();
         let _ = w.set_focus();
@@ -2036,12 +1848,13 @@ fn show_pinned_window(app: &tauri::AppHandle) {
     .skip_taskbar(true)
     .transparent(true)
     .build();
-    if let Err(e) = built {
-        eprintln!("could not open the pinned-note window: {e}");
+    match built {
+        Ok(w) => tray::follow_window(app, &w),
+        Err(e) => eprintln!("could not open the pinned-note window: {e}"),
     }
 }
 
-fn toggle_pinned_window(app: &tauri::AppHandle) {
+pub(crate) fn toggle_pinned_window(app: &tauri::AppHandle) {
     match app.get_webview_window(PINNED_WINDOW) {
         Some(w) if w.is_visible().unwrap_or(false) => {
             let _ = w.hide();
@@ -2466,7 +2279,7 @@ pub fn run() {
             });
 
             setup_global_hotkey(app.handle())?;
-            setup_tray(app.handle())?;
+            tray::setup(app.handle())?;
             // Re-assert the remembered on-top state now the window exists.
             apply_keep_on_top(app.handle(), persisted_keep_on_top(app.handle()));
             omarchy::spawn_watcher(app.handle().clone());

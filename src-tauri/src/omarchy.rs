@@ -196,6 +196,7 @@ pub fn spawn_watcher(app: AppHandle) {
             }
             last = next.clone();
             let _ = app.emit("omarchy-appearance", next);
+            crate::tray::refresh_icons(&app);
         }
     });
 }

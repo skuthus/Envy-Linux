@@ -32,6 +32,18 @@ monospace font. Changing `omarchy theme set` or `omarchy font set` retints a
 running window. Settings → Appearance can pin Envious light/dark or a custom
 font instead. Surfaces are translucent so Hyprland blur shows through.
 
+**Bar icon.** The Mac's menu bar eye is an Omarchy bar widget here. On first
+launch Envy installs `linux/omarchy-plugin` into
+`~/.config/omarchy/plugins/skuthus.envy/`, enables it, and places it once
+(after a hidden-bar chevron if you use one, else at the start of the right
+section); move it with `omarchy bar move` and it stays put. Open while the
+window is on screen, squinting while only the pinned note is, closed while
+hidden or not running. Left click summons (or launches) Envy, right click
+opens the app menu. Underneath it is a StatusNotifierItem Envy registers
+itself, drawn as a solid `-symbolic` eye in the bar's text colour, so other
+bars (Waybar) show it in their tray; the Omarchy tray widget hides it so it
+isn't shown twice.
+
 **Summon.** Wayland has no app-registered global hotkeys, so summon is a
 Hyprland bind: `linux/hyprland-envy.lua` parks Envy's main window on the
 `special:envy` scratchpad and binds **Ctrl+Alt+Return** to

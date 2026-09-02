@@ -59,11 +59,22 @@ if [ -n "$BASE_HW" ] && [ "$BASE_HW" != "$MACHINE_HW" ]; then
   ENFORCE=0
 fi
 
-python3 - "$BASELINE" "$NOW" "$ENFORCE" <<'PY'
+# A laptop on battery in the power-saver profile runs every benchmark 1.5-2x
+# slower than the plugged-in baseline, search paths nobody touched included.
+# Still a FAIL (the gate can't tell throttling from a regression), but say so,
+# so the reader plugs in and reruns instead of hunting for a slowdown.
+POWER_NOTE=""
+if [ "$(cat /sys/class/power_supply/BAT*/status 2>/dev/null | head -1)" = "Discharging" ] ||
+   [ "$(powerprofilesctl get 2>/dev/null)" = "power-saver" ]; then
+  POWER_NOTE="on battery / power-saver profile"
+fi
+
+python3 - "$BASELINE" "$NOW" "$ENFORCE" "$POWER_NOTE" <<'PY'
 import json, sys
 base = json.load(open(sys.argv[1]))
 now = json.loads(sys.argv[2])
 enforce = sys.argv[3] == "1"
+power_note = sys.argv[4]
 # 1.5x is a real regression; +5 ms absolute keeps a 2 ms metric from failing
 # on a 3 ms hiccup, which is noise, not a slowdown anyone would ever feel.
 LIMIT, FLOOR = 1.5, 5.0
@@ -86,5 +97,7 @@ if bad and not enforce:
     print("perf: reported only (different machine) - " + ", ".join(bad))
 else:
     print(f"perf: {'FAIL - ' + ', '.join(bad) if bad else 'PASS'}")
+if bad and power_note:
+    print(f"perf: machine is {power_note} - a uniform slowdown is the CPU governor, not the code; plug in and rerun before trusting this")
 sys.exit(1 if bad and enforce else 0)
 PY

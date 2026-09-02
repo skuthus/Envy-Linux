@@ -71,3 +71,31 @@ monitor scale (2 on this machine), add the window's `at` offset. Verify a
 click landed by typing a marker with wtype and reading the note file. Widgets
 that need a mouse — pop-out (right-click a note → Pop Out), the pinned window,
 the sort header, table toolbar, URL-pill menu — are all reachable this way.
+
+## Bar icon (StatusNotifierItem + Omarchy bar widget)
+
+Envy registers its own StatusNotifierItem (`src-tauri/src/tray.rs`, via
+`ksni`) and installs a bar widget plugin (`linux/omarchy-plugin`) on first
+launch. Both can be driven without a mouse:
+
+- Bus name: `org.kde.StatusNotifierItem-<pid>-1`, object `/StatusNotifierItem`.
+  `busctl --user get-property <bus> /StatusNotifierItem org.kde.StatusNotifierItem IconName`
+  reads the eye (`envy-open|squint|closed-symbolic`);
+  `... call <bus> /StatusNotifierItem org.kde.StatusNotifierItem Activate ii 0 0`
+  is a left click.
+- Menu: `busctl --user call <bus> /MenuBar com.canonical.dbusmenu GetLayout iias -- 0 -1 0`
+  lists ids (`(ia{sv}av) <id> <n> "label" s "New Pinned Note"`); trigger one
+  with `... Event isvu -- <id> clicked s "" 0`. Focus Envy first
+  (`hl.dsp.focus`) before "New Pinned Note", or the popover hides itself on
+  blur before you can see it.
+- Scratchpad: `hyprctl dispatch 'hl.dsp.window.move({workspace="special:envy", follow=false, window="title:^Envy$"})'`
+  parks the main window (eye closes); `hl.dsp.workspace.toggle_special('envy')`
+  shows/hides it. Move back with `workspace="1"`.
+- The widget lives at `~/.config/omarchy/plugins/skuthus.envy/`; first-run
+  state is the marker `~/.config/app.envynote.linux/omarchy-bar` (delete it and
+  restore `shell.json` to re-test the install). `omarchy-plugin-validate <dir>`
+  checks the manifest. Back up `~/.config/omarchy/shell.json` before a
+  first-run test.
+- ydotool's `/dev/uinput` ACL does not survive the device node being
+  recreated; if `ydotool` says the daemon isn't running, the owner has to
+  re-run `sudo setfacl -m u:skuthus:rw /dev/uinput` and restart the unit.
