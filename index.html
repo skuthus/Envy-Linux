@@ -357,14 +357,6 @@
               <input type="checkbox" id="setting-inbox-in-list" />
               Show fleeting notes in the list
             </label>
-            <label>
-              <input type="checkbox" id="setting-vault-counts" />
-              Show note and folder counts in footer
-            </label>
-            <p class="setting-note">
-              Whole-vault totals, to the right of the word and character
-              counts. The folder count appears only when subfolders are shown.
-            </p>
           </section>
 
           <section>
@@ -412,7 +404,28 @@
           </section>
 
           <section>
-            <h3>Footer clock</h3>
+            <h3>Footer</h3>
+            <label>
+              <input type="checkbox" id="setting-footer-words" />
+              Show word count
+            </label>
+            <label>
+              <input type="checkbox" id="setting-footer-characters" />
+              Show character count
+            </label>
+            <label>
+              <input type="checkbox" id="setting-footer-notes" />
+              Show note count
+            </label>
+            <label>
+              <input type="checkbox" id="setting-footer-folders" />
+              Show folder count
+            </label>
+            <p class="setting-note">
+              Word and character counts are the open note's; note and folder
+              counts are the whole vault's. The folder count appears only when
+              subfolders are shown.
+            </p>
             <label>
               <input type="checkbox" id="setting-clock" />
               Show clock in footer

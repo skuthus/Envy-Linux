@@ -940,6 +940,22 @@ pub fn init(index_path_file: Option<PathBuf>, keep_on_top_file: Option<PathBuf>)
             patch.insert("system".into(), Value::Object(system));
         }
     }
+    // `list.vault_counts` became the two `[footer]` counts. Carry its value
+    // across and drop the old key, so a file written before the split neither
+    // loses the choice nor reports an unknown key.
+    if let Some(old) = current
+        .get("list")
+        .and_then(|t| t.get("vault_counts"))
+        .and_then(|v| v.as_bool())
+    {
+        let mut footer = Map::new();
+        footer.insert("notes".into(), Value::Bool(old));
+        footer.insert("folders".into(), Value::Bool(old));
+        patch.insert("footer".into(), Value::Object(footer));
+        let mut list = Map::new();
+        list.insert("vault_counts".into(), Value::Null);
+        patch.insert("list".into(), Value::Object(list));
+    }
     if !patch.is_empty() {
         let _ = merge(&Value::Object(patch));
     }

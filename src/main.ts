@@ -504,9 +504,16 @@ function renderStats() {
     return
   }
   const text = view.state.doc.toString()
-  const words = countWords(text)
-  const chars = countCharacters(text)
-  statsEl.textContent = `${words.toLocaleString()} word${words === 1 ? '' : 's'} │ ${chars.toLocaleString()} character${chars === 1 ? '' : 's'}`
+  const parts: string[] = []
+  if (settings.footerWords) {
+    const words = countWords(text)
+    parts.push(`${words.toLocaleString()} word${words === 1 ? '' : 's'}`)
+  }
+  if (settings.footerCharacters) {
+    const chars = countCharacters(text)
+    parts.push(`${chars.toLocaleString()} character${chars === 1 ? '' : 's'}`)
+  }
+  statsEl.textContent = parts.join(' │ ')
   renderVaultLabel()
 }
 
@@ -521,16 +528,17 @@ let vaultCounts = { notes: 0, folders: 0 }
 /// Envy, so a count would just be noise (the Mac's rule). The `·` divider rule
 /// appears only when the open note's own counts sit beside it.
 function renderVaultLabel() {
-  if (!settings.showFooterVaultCounts) {
+  const { notes, folders } = vaultCounts
+  const parts: string[] = []
+  if (settings.footerNotes) parts.push(`${notes.toLocaleString()} note${notes === 1 ? '' : 's'}`)
+  if (settings.footerFolders && settings.includeSubfolders) {
+    parts.push(`${folders.toLocaleString()} folder${folders === 1 ? '' : 's'}`)
+  }
+  if (parts.length === 0) {
     vaultStatsEl.classList.add('hidden')
     return
   }
-  const { notes, folders } = vaultCounts
-  let label = `${notes.toLocaleString()} note${notes === 1 ? '' : 's'}`
-  if (settings.includeSubfolders) {
-    label += ` │ ${folders.toLocaleString()} folder${folders === 1 ? '' : 's'}`
-  }
-  vaultStatsEl.textContent = label
+  vaultStatsEl.textContent = parts.join(' │ ')
   vaultStatsEl.classList.remove('hidden')
   vaultStatsEl.classList.toggle('with-divider', statsEl.textContent !== '')
 }
@@ -538,7 +546,7 @@ function renderVaultLabel() {
 /// Re-reads the vault totals from the store, then repaints. Called on each
 /// search, since that's when a note or folder could have appeared or gone.
 async function refreshVaultCounts() {
-  if (!settings.showFooterVaultCounts) {
+  if (!settings.footerNotes && !settings.footerFolders) {
     renderVaultLabel()
     return
   }
@@ -1329,7 +1337,10 @@ const SETTING_KEY = {
   newNotesStartInInbox: ['list', 'new_notes_in_inbox'],
   showInboxInMainList: ['list', 'show_inbox_in_list'],
   showTagsInTitleBar: ['editor', 'show_tags_in_title_bar'],
-  showFooterVaultCounts: ['list', 'vault_counts'],
+  footerWords: ['footer', 'words'],
+  footerCharacters: ['footer', 'characters'],
+  footerNotes: ['footer', 'notes'],
+  footerFolders: ['footer', 'folders'],
   showFolderInTitleBar: ['editor', 'show_folder_in_title_bar'],
   folderListDisplay: ['list', 'folder_display'],
   folderDotTrailing: ['list', 'folder_marker_trailing'],
@@ -1395,7 +1406,10 @@ function readSettings() {
     newNotesStartInInbox: settingBool('newNotesStartInInbox'),
     showInboxInMainList: settingBool('showInboxInMainList'),
     showTagsInTitleBar: settingBool('showTagsInTitleBar'),
-    showFooterVaultCounts: settingBool('showFooterVaultCounts'),
+    footerWords: settingBool('footerWords'),
+    footerCharacters: settingBool('footerCharacters'),
+    footerNotes: settingBool('footerNotes'),
+    footerFolders: settingBool('footerFolders'),
     // The open note's folder as a chip beside its tags. Only ever shows for a
     // note that actually sits in a subfolder.
     showFolderInTitleBar: settingBool('showFolderInTitleBar'),
@@ -5293,7 +5307,10 @@ function syncSettingsControls() {
   checkbox('setting-inbox-new').checked = settings.newNotesStartInInbox
   checkbox('setting-inbox-in-list').checked = settings.showInboxInMainList
   applyInboxDependentToggles()
-  checkbox('setting-vault-counts').checked = settings.showFooterVaultCounts
+  checkbox('setting-footer-words').checked = settings.footerWords
+  checkbox('setting-footer-characters').checked = settings.footerCharacters
+  checkbox('setting-footer-notes').checked = settings.footerNotes
+  checkbox('setting-footer-folders').checked = settings.footerFolders
   checkbox('setting-show-tags').checked = settings.showTagsInTitleBar
   checkbox('setting-show-folder-titlebar').checked = settings.showFolderInTitleBar
   checkbox('setting-folder-trailing').checked = settings.folderDotTrailing
@@ -5450,7 +5467,10 @@ bindToggle('setting-inbox-enabled', 'inboxEnabled', () => {
 })
 bindToggle('setting-inbox-new', 'newNotesStartInInbox')
 bindToggle('setting-inbox-in-list', 'showInboxInMainList', () => void runSearch())
-bindToggle('setting-vault-counts', 'showFooterVaultCounts', () => void refreshVaultCounts())
+bindToggle('setting-footer-words', 'footerWords', renderStats)
+bindToggle('setting-footer-characters', 'footerCharacters', renderStats)
+bindToggle('setting-footer-notes', 'footerNotes', () => void refreshVaultCounts())
+bindToggle('setting-footer-folders', 'footerFolders', () => void refreshVaultCounts())
 bindToggle('setting-show-tags', 'showTagsInTitleBar', () => {
   renderTitleBarTags(openNoteDto?.tags ?? [])
 })
@@ -5898,6 +5918,7 @@ function applyAllSettings({ initial = false } = {}) {
   renderTitleBarFolder(openNoteDto?.subfolder ?? null)
   renderDueBadge(openNoteDto?.due ?? null)
   renderInterlinks()
+  renderStats()
   // Tag colours, domain emojis and the link-pill switch are all read during
   // styling, and none of them is in the document — only a restyle repaints them.
   view.dispatch({ effects: restyle.of(null) })

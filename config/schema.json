@@ -64,7 +64,11 @@
         {
           "key": "empty_unit",
           "type": "enum",
-          "values": ["days", "weeks", "months"],
+          "values": [
+            "days",
+            "weeks",
+            "months"
+          ],
           "default": "days",
           "label": "Unit",
           "doc": "The unit for `empty_every`.",
@@ -103,7 +107,12 @@
         {
           "key": "date_style",
           "type": "enum",
-          "values": ["relative", "smart", "dateTime", "dateOnly"],
+          "values": [
+            "relative",
+            "smart",
+            "dateTime",
+            "dateOnly"
+          ],
           "default": "smart",
           "label": "Date style",
           "doc": "How the modified date is written: relative (\"3 days ago\"), smart (relative when recent, absolute otherwise), dateTime, or dateOnly.",
@@ -112,7 +121,11 @@
         {
           "key": "density",
           "type": "enum",
-          "values": ["compact", "cozy", "comfy"],
+          "values": [
+            "compact",
+            "cozy",
+            "comfy"
+          ],
           "default": "compact",
           "label": "Row density",
           "doc": "Vertical padding of list rows.",
@@ -121,7 +134,11 @@
         {
           "key": "folder_display",
           "type": "enum",
-          "values": ["dot", "name", "off"],
+          "values": [
+            "dot",
+            "name",
+            "off"
+          ],
           "default": "dot",
           "label": "Subfolder marker",
           "doc": "How a note's subfolder shows in its row: a coloured dot, the folder name as a chip, or nothing. Only matters with index.include_subfolders.",
@@ -176,14 +193,6 @@
           "legacy": "showInboxInMainList"
         },
         {
-          "key": "vault_counts",
-          "type": "bool",
-          "default": true,
-          "label": "Show note and folder counts in the footer",
-          "doc": "Whole-vault totals in the footer.",
-          "legacy": "showFooterVaultCounts"
-        },
-        {
           "key": "bold_text",
           "type": "bool",
           "default": false,
@@ -194,7 +203,11 @@
         {
           "key": "sort",
           "type": "enum",
-          "values": ["name", "date", "due"],
+          "values": [
+            "name",
+            "date",
+            "due"
+          ],
           "default": "date",
           "label": "Sort by",
           "doc": "The list's sort field. Clicking a column header changes it too.",
@@ -257,7 +270,10 @@
         {
           "key": "link_preview",
           "type": "enum",
-          "values": ["altClick", "off"],
+          "values": [
+            "altClick",
+            "off"
+          ],
           "default": "altClick",
           "label": "Link preview",
           "doc": "Alt+click a wiki-link to peek at the target without leaving the note, or off.",
@@ -292,6 +308,41 @@
       ]
     },
     {
+      "table": "footer",
+      "title": "Footer",
+      "keys": [
+        {
+          "key": "words",
+          "type": "bool",
+          "default": true,
+          "label": "Word count",
+          "doc": "The open note's word count in the footer."
+        },
+        {
+          "key": "characters",
+          "type": "bool",
+          "default": true,
+          "label": "Character count",
+          "doc": "The open note's character count in the footer."
+        },
+        {
+          "key": "notes",
+          "type": "bool",
+          "default": true,
+          "label": "Note count",
+          "doc": "The whole vault's note total in the footer.",
+          "legacy": "showFooterVaultCounts"
+        },
+        {
+          "key": "folders",
+          "type": "bool",
+          "default": true,
+          "label": "Folder count",
+          "doc": "The whole vault's folder total in the footer. Only shown when index.include_subfolders is on, since folders do not factor into Envy otherwise."
+        }
+      ]
+    },
+    {
       "table": "footer_clock",
       "title": "Footer clock",
       "keys": [
@@ -314,7 +365,12 @@
         {
           "key": "date_format",
           "type": "enum",
-          "values": ["short", "medium", "full", "numeric"],
+          "values": [
+            "short",
+            "medium",
+            "full",
+            "numeric"
+          ],
           "default": "short",
           "label": "Date format",
           "doc": "short (Tue 2 Sep), medium (2 Sep 2026), full (Tuesday, 2 September 2026), numeric (2026-09-02).",
@@ -406,7 +462,12 @@
         {
           "key": "theme",
           "type": "theme",
-          "values": ["omarchy", "system", "dark", "light"],
+          "values": [
+            "omarchy",
+            "system",
+            "dark",
+            "light"
+          ],
           "default": "omarchy",
           "label": "Theme",
           "doc": "omarchy follows the current Omarchy theme; system follows the light/dark preference with the Envious palette; dark and light pin an Envious face. Any other value names a theme file, ~/.config/envy/themes/<value>.md, which overlays the Envious face of its `mode`. In omarchy mode a theme file named after the current Omarchy theme (for example tokyo-night.md) overlays the derived colours automatically.",
@@ -415,7 +476,10 @@
         {
           "key": "font",
           "type": "enum",
-          "values": ["omarchy", "custom"],
+          "values": [
+            "omarchy",
+            "custom"
+          ],
           "default": "omarchy",
           "label": "Font",
           "doc": "omarchy follows the Omarchy monospace font; custom uses `font_family`.",
@@ -432,7 +496,10 @@
         {
           "key": "layout",
           "type": "enum",
-          "values": ["vertical", "horizontal"],
+          "values": [
+            "vertical",
+            "horizontal"
+          ],
           "default": "vertical",
           "label": "Layout",
           "doc": "vertical: list above the note. horizontal: list beside it. Also toggled by the toggleLayout shortcut.",
@@ -441,7 +508,15 @@
         {
           "key": "text_size",
           "type": "number",
-          "values": [0.8, 0.9, 0.95, 1, 1.15, 1.3, 1.5],
+          "values": [
+            0.8,
+            0.9,
+            0.95,
+            1,
+            1.15,
+            1.3,
+            1.5
+          ],
           "default": 1,
           "label": "Interface text size",
           "doc": "Scale for the chrome (list, search box, footer). The Settings menu offers the listed steps; any value in range works from the file.",
@@ -474,7 +549,12 @@
         {
           "key": "title_reference",
           "type": "enum",
-          "values": ["page", "location", "both", "none"],
+          "values": [
+            "page",
+            "location",
+            "both",
+            "none"
+          ],
           "default": "page",
           "label": "Reference in the highlight title",
           "doc": "What each imported highlight's title carries besides the book: the page, the Kindle location, both, or neither.",
@@ -532,33 +612,137 @@
   "theme_tokens": {
     "doc": "Keys of a theme file's toml block, ~/.config/envy/themes/<name>.md. Every colour is optional: a missing one is filled from the base face (the Omarchy-derived theme in omarchy mode, else Envious dark/light by `mode`). Colours are #rrggbb or #rrggbbaa.",
     "meta": [
-      { "key": "mode", "type": "enum", "values": ["dark", "light"], "doc": "Which Envious face this theme overlays and whether the UI treats it as dark." },
-      { "key": "font", "type": "string", "doc": "Optional fontconfig family; omitted means the appearance.font setting applies." },
-      { "key": "font_size", "type": "string", "doc": "Optional CSS size for the editor, for example \"15px\"." }
+      {
+        "key": "mode",
+        "type": "enum",
+        "values": [
+          "dark",
+          "light"
+        ],
+        "doc": "Which Envious face this theme overlays and whether the UI treats it as dark."
+      },
+      {
+        "key": "font",
+        "type": "string",
+        "doc": "Optional fontconfig family; omitted means the appearance.font setting applies."
+      },
+      {
+        "key": "font_size",
+        "type": "string",
+        "doc": "Optional CSS size for the editor, for example \"15px\"."
+      }
     ],
     "colors": [
-      { "key": "text", "envy": "text", "doc": "Body text." },
-      { "key": "background", "envy": "background", "doc": "Editor background." },
-      { "key": "marker", "envy": "marker", "doc": "Markdown syntax marks (#, *, -, backticks)." },
-      { "key": "link", "envy": "link", "doc": "Links and wiki-links." },
-      { "key": "due", "envy": "due", "doc": "A due date that is not close." },
-      { "key": "due_soon", "envy": "dueSoon", "doc": "A due date within a few days." },
-      { "key": "due_overdue", "envy": "dueOverdue", "doc": "A due date in the past." },
-      { "key": "code_background", "envy": "codeBackground", "doc": "Inline code and fenced block background." },
-      { "key": "tag", "envy": "tag", "doc": "Tag text." },
-      { "key": "tag_background", "envy": "tagBackground", "doc": "Tag pill background." },
-      { "key": "highlight", "envy": "highlight", "doc": "==highlighted== text background." },
-      { "key": "highlight_text", "envy": "highlightText", "doc": "Ink on the highlight background." },
-      { "key": "flag", "envy": "flag", "doc": "A vivid accent: the inbox badge." },
-      { "key": "selection", "envy": "selection", "doc": "The note list's selected row." },
-      { "key": "selected_text", "envy": "selectedText", "doc": "The editor's text-selection background." },
-      { "key": "focus_highlight", "envy": "focusHighlight", "doc": "The keyboard focus ring." },
-      { "key": "file_list_background", "envy": "fileListBackground", "doc": "Note list and search box background." },
-      { "key": "blockquote", "envy": "blockquote", "doc": "Blockquote text; also mixed into footer/chrome text." },
-      { "key": "completed_task", "envy": "completedTask", "doc": "A checked task's text." },
-      { "key": "footnote", "envy": "footnote", "doc": "Footnote markers and text." },
-      { "key": "checked_checkbox", "envy": "checkedCheckbox", "doc": "The checked box glyph." },
-      { "key": "title_bar_background", "envy": "titleBarBackground", "doc": "The note title bar." }
+      {
+        "key": "text",
+        "envy": "text",
+        "doc": "Body text."
+      },
+      {
+        "key": "background",
+        "envy": "background",
+        "doc": "Editor background."
+      },
+      {
+        "key": "marker",
+        "envy": "marker",
+        "doc": "Markdown syntax marks (#, *, -, backticks)."
+      },
+      {
+        "key": "link",
+        "envy": "link",
+        "doc": "Links and wiki-links."
+      },
+      {
+        "key": "due",
+        "envy": "due",
+        "doc": "A due date that is not close."
+      },
+      {
+        "key": "due_soon",
+        "envy": "dueSoon",
+        "doc": "A due date within a few days."
+      },
+      {
+        "key": "due_overdue",
+        "envy": "dueOverdue",
+        "doc": "A due date in the past."
+      },
+      {
+        "key": "code_background",
+        "envy": "codeBackground",
+        "doc": "Inline code and fenced block background."
+      },
+      {
+        "key": "tag",
+        "envy": "tag",
+        "doc": "Tag text."
+      },
+      {
+        "key": "tag_background",
+        "envy": "tagBackground",
+        "doc": "Tag pill background."
+      },
+      {
+        "key": "highlight",
+        "envy": "highlight",
+        "doc": "==highlighted== text background."
+      },
+      {
+        "key": "highlight_text",
+        "envy": "highlightText",
+        "doc": "Ink on the highlight background."
+      },
+      {
+        "key": "flag",
+        "envy": "flag",
+        "doc": "A vivid accent: the inbox badge."
+      },
+      {
+        "key": "selection",
+        "envy": "selection",
+        "doc": "The note list's selected row."
+      },
+      {
+        "key": "selected_text",
+        "envy": "selectedText",
+        "doc": "The editor's text-selection background."
+      },
+      {
+        "key": "focus_highlight",
+        "envy": "focusHighlight",
+        "doc": "The keyboard focus ring."
+      },
+      {
+        "key": "file_list_background",
+        "envy": "fileListBackground",
+        "doc": "Note list and search box background."
+      },
+      {
+        "key": "blockquote",
+        "envy": "blockquote",
+        "doc": "Blockquote text; also mixed into footer/chrome text."
+      },
+      {
+        "key": "completed_task",
+        "envy": "completedTask",
+        "doc": "A checked task's text."
+      },
+      {
+        "key": "footnote",
+        "envy": "footnote",
+        "doc": "Footnote markers and text."
+      },
+      {
+        "key": "checked_checkbox",
+        "envy": "checkedCheckbox",
+        "doc": "The checked box glyph."
+      },
+      {
+        "key": "title_bar_background",
+        "envy": "titleBarBackground",
+        "doc": "The note title bar."
+      }
     ]
   }
 }

@@ -51,7 +51,6 @@ belongs under the header named in each section below.
 | `inbox_enabled` | bool | `true` | Whether Inbox/ is a capture queue: the badge, the fleeting marks and the inbox: search operator. Off, it is just a folder. |
 | `new_notes_in_inbox` | bool | `false` | Create new notes in Inbox/ instead of the vault root. |
 | `show_inbox_in_list` | bool | `true` | Off, inbox notes only appear through the inbox: operator. |
-| `vault_counts` | bool | `true` | Whole-vault totals in the footer. |
 | `bold_text` | bool | `false` | Render note titles in the list in bold. |
 | `sort` | one of `"name"`, `"date"`, `"due"` | `"date"` | The list's sort field. Clicking a column header changes it too. |
 | `sort_ascending` | bool | `false` | Sort direction. Names default A→Z, dates newest first, due soonest first. |
@@ -69,6 +68,15 @@ belongs under the header named in each section below.
 | `plain_text` | bool | `false` | Turn live markdown styling off and show the raw text. Also toggled by the togglePlainTextMode shortcut. |
 | `show_interlinks` | bool | `true` | The backlinks panel under the note listing every note that links to it. |
 | `zoom` | number from 0.5 to 3 | `1` | Scale factor for the editor text; Ctrl+= / Ctrl+- / Ctrl+0 change it too. |
+
+## Footer / `[footer]`
+
+| Key | Type | Default | What it does |
+| --- | --- | --- | --- |
+| `words` | bool | `true` | The open note's word count in the footer. |
+| `characters` | bool | `true` | The open note's character count in the footer. |
+| `notes` | bool | `true` | The whole vault's note total in the footer. |
+| `folders` | bool | `true` | The whole vault's folder total in the footer. Only shown when index.include_subfolders is on, since folders do not factor into Envy otherwise. |
 
 ## Footer clock / `[footer_clock]`
 
