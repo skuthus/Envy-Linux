@@ -1,6 +1,6 @@
 ---
 name: ship-check
-description: Run the full pre-ship gate for Envy before shipping a release — one script that covers tests, audits, security invariants, performance against the baseline, the real release build, and the GUI smoke on dev, release and a 19k-note vault. Use before ./build.sh, before calling a change done, or whenever asked to check for a regression.
+description: Run the full pre-ship gate for Envy before shipping a release — one script that covers tests, audits, security invariants, performance against the baseline, the real release build, and the GUI smoke on dev, release and a 19k-note vault. The owner's process is ideate → execute → user test → commit → gauntlet → push: the owner hand-checks during iteration, and this runs only when they say push (green gate, then push) or when they ask for a regression check.
 ---
 
 # The pre-ship gate
