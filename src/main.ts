@@ -1578,10 +1578,15 @@ function renderSortHeader() {
   listHeaderEl.replaceChildren(name, sortGroup)
 }
 
+/// A lone digit padded to two places with a figure space (U+2007, one digit
+/// wide in tabular and monospace fonts). The column is right-aligned, so
+/// without it "Yesterday, 9:50 PM" sits one digit further right than
+/// "Yesterday, 10:41 PM" and the day names zigzag down the list.
+const padLoneDigit = (text: string) => text.replace(/(^|[\s,])(\d)(?=[:,\s]|$)/g, '$1\u2007$2')
 const shortTime = (d: Date) =>
-  d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+  padLoneDigit(d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }))
 const abbrevDate = (d: Date) =>
-  d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+  padLoneDigit(d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }))
 
 /// The four date styles, matching the Mac's picker exactly.
 ///

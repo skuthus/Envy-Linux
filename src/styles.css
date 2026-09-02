@@ -665,8 +665,10 @@ body.bold-file-list .row-date { font-weight: 700; }
 }
 .inbox-dot {
   display: inline-block;
-  width: 6px;
-  height: 6px;
+  /* The same 7px as the folder dot: the two sit on the same rows, leading and
+     trailing, and a size apart read as a mistake rather than a distinction. */
+  width: 7px;
+  height: 7px;
   margin-right: 6px;
   border-radius: 50%;
   /* Same accent as the inbox count badge, so the fleeting marker and its
