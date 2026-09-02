@@ -275,6 +275,17 @@ body.fade-focus #editor-pane:focus-within {
    narrows the results enough to remove the scrollbar, and the columns shift
    out from under their headings as you type. */
 #list { flex: 1; min-height: 0; overflow-y: auto; scrollbar-gutter: stable; will-change: scroll-position; }
+/* The list is focusable (tabindex="-1") so it can answer arrows, j/k, Return
+   and Delete itself. Its own outline is suppressed — the pane already draws the
+   focus border above, and two rings around the same thing reads as an error
+   state. What marks the list as *the* focused area instead is a ring on the
+   highlighted row: the row highlight alone means "this is the note the editor
+   is showing", which is true whether or not the keyboard is here. */
+#list:focus, #list:focus-visible { outline: none; }
+#list-pane:focus-within .row.highlighted {
+  box-shadow: inset 2px 0 0 var(--envy-link),
+    inset 0 0 0 1px var(--envy-focus-highlight);
+}
 
 /* --- Sticky pinned strip ---------------------------------------------------
    "Keep pinned notes visible while scrolling": the leading pinned rows lifted
@@ -1099,6 +1110,19 @@ body.popout-window {
   white-space: nowrap;
 }
 .context-item:hover {
+  background: color-mix(in srgb, var(--envy-link) 22%, transparent);
+  box-shadow: inset 2px 0 0 var(--envy-link);
+}
+/* Keyboard focus reads exactly like hover. The menu is driven by both, and a
+   focused row that looked different from a hovered one would imply they mean
+   different things. The default focus ring is dropped for the same reason the
+   list's is: the row's own fill is the affordance. */
+.context-item:focus,
+.context-item:focus-visible,
+/* And a parent stays lit while the keyboard is down inside its submenu, so the
+   trail back out is visible rather than guessed at. */
+.context-item.has-submenu:focus-within {
+  outline: none;
   background: color-mix(in srgb, var(--envy-link) 22%, transparent);
   box-shadow: inset 2px 0 0 var(--envy-link);
 }

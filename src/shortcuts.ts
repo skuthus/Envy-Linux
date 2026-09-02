@@ -32,6 +32,14 @@ export type ShortcutId =
   | 'keepOnTop'
   | 'insertImage'
   | 'insertTable'
+  | 'followLink'
+  | 'peekLink'
+  | 'toggleCheckbox'
+  | 'popOut'
+  | 'moveToFolder'
+  | 'retireDue'
+  | 'emojiForLink'
+  | 'toggleHelp'
 
 export interface ShortcutSpec {
   id: ShortcutId
@@ -80,6 +88,19 @@ export const SHORTCUT_SPECS: ShortcutSpec[] = [
   { id: 'focusPreviousArea', label: 'Focus Previous Area', default: 'Alt+ArrowUp' },
   { id: 'bold', label: 'Bold', default: 'Ctrl+B', editor: true },
   { id: 'italic', label: 'Italic', default: 'Ctrl+I', editor: true },
+  // --- Editor actions the mouse already had -----------------------------------
+  // Each of these was reachable only by clicking (or hovering) something. A
+  // keyboard-only session could not follow a link, tick a checkbox, retire a
+  // due date or give a URL an emoji at all, so each gets a chord in the same
+  // remappable table as everything else rather than a hardcoded key test.
+  { id: 'followLink', label: 'Follow Link Under Cursor', default: 'Ctrl+Shift+Enter' },
+  { id: 'peekLink', label: 'Peek at Link Under Cursor', default: 'Alt+Enter' },
+  { id: 'toggleCheckbox', label: 'Toggle Checkbox', default: 'Ctrl+Shift+D' },
+  { id: 'retireDue', label: 'Retire/Restore Due Date', default: 'Ctrl+Shift+U' },
+  { id: 'emojiForLink', label: 'Emoji for Link', default: 'Ctrl+Shift+E' },
+  { id: 'popOut', label: 'Pop Out Note', default: 'Ctrl+Shift+O' },
+  { id: 'moveToFolder', label: 'Move to Folder…', default: 'Ctrl+Shift+M' },
+  { id: 'toggleHelp', label: 'Markup Help', default: 'Ctrl+/' },
   { id: 'zoomIn', label: 'Zoom In', default: 'Ctrl+=' },
   { id: 'zoomOut', label: 'Zoom Out', default: 'Ctrl+-' },
   { id: 'actualSize', label: 'Actual Size', default: 'Ctrl+0' },
@@ -161,6 +182,17 @@ export function conflicts(): Map<string, ShortcutId[]> {
   }
   for (const [b, ids] of byBinding) if (ids.length < 2) byBinding.delete(b)
   return byBinding
+}
+
+/// Every binding as it stands *now* — defaults with any remap applied — in the
+/// display form. The reference sheet renders from this rather than from
+/// `SHORTCUT_SPECS.default`, so a remapped chord is what the help says it is.
+export function resolvedShortcuts(): { id: ShortcutId; label: string; chord: string }[] {
+  return SHORTCUT_SPECS.map((spec) => ({
+    id: spec.id,
+    label: spec.label,
+    chord: displayBinding(bindingFor(spec.id)),
+  }))
 }
 
 /// The three global bindings, in the form the Rust side registers them.

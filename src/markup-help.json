@@ -67,7 +67,7 @@
    },
    {
     "syntax": "- [ ] task",
-    "description": "Task list with a clickable checkbox — \"- [x]\" for checked"
+    "description": "Task list with a clickable checkbox — \"- [x]\" for checked. Ctrl+Shift+D ticks or unticks the box on the cursor’s line, so a list can be worked through without reaching for the mouse."
    }
   ]
  },
@@ -76,7 +76,7 @@
   "entries": [
    {
     "syntax": "[[Note Title]]",
-    "description": "Link to another note. Cmd+Click to open it — creates the note if it doesn't exist yet. Option+Click instead to preview it without leaving where you are (Settings → General to change or turn off)."
+    "description": "Link to another note. Cmd+Click to open it — creates the note if it doesn't exist yet. Option+Click instead to preview it without leaving where you are (Settings → General to change or turn off). From the keyboard: Ctrl+Shift+Enter follows the link the cursor is in, Alt+Enter previews it."
    },
    {
     "syntax": "[[Note Title|any words]]",
@@ -88,11 +88,11 @@
    },
    {
     "syntax": "[text](url)",
-    "description": "Link to a web address. Cmd+Click to open in your browser."
+    "description": "Link to a web address. Cmd+Click to open in your browser. Ctrl+Shift+Enter opens it from the keyboard."
    },
    {
     "syntax": "<https://…>",
-    "description": "Autolink — bare URLs are also detected and made clickable automatically"
+    "description": "Autolink — bare URLs are also detected and made clickable automatically. Right-click one — or press Ctrl+Shift+E with the cursor on it — to give that domain an emoji."
    },
    {
     "syntax": "[text](#heading)",
@@ -160,7 +160,7 @@
    },
    {
     "syntax": "click a due date",
-    "description": "Toggles it crossed out — a crossed-out due date no longer shows a pill or matches \"due:\" searches. Click again to restore it. Checking off a task-list box whose text contains a due date does this automatically."
+    "description": "Toggles it crossed out — a crossed-out due date no longer shows a pill or matches \"due:\" searches. Click again to restore it. Checking off a task-list box whose text contains a due date does this automatically. Ctrl+Shift+U does the same to the date on the cursor’s line, or the note’s first due date if the cursor is nowhere near one."
    }
   ]
  },

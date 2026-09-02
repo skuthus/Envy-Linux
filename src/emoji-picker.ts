@@ -60,10 +60,12 @@ export function pickEmoji(opts: EmojiPickerOptions): Promise<string | null> {
 
     const scroll = document.createElement('div')
     scroll.className = 'emoji-picker-scroll'
-    const { grid, draw } = buildEmojiGrid('Use', (emoji) => close(emoji))
-    // Focusable so the arrow keys have somewhere to land; Tab from the search
-    // box reaches the grid before the buttons.
-    grid.tabIndex = 0
+    // The grid brings its own keys (see emoji-grid): focusable so the arrows
+    // have somewhere to land, and Tab from the search box reaches it before the
+    // buttons. Escape is left to the overlay handler below.
+    const { grid, draw, pickFirst } = buildEmojiGrid('Use', (emoji) => close(emoji), {
+      keyboard: true,
+    })
     scroll.append(grid)
     panel.append(scroll)
 
@@ -95,43 +97,19 @@ export function pickEmoji(opts: EmojiPickerOptions): Promise<string | null> {
     panel.append(foot)
 
     // --- Keyboard -----------------------------------------------------------
-    const cells = () => [...grid.querySelectorAll<HTMLElement>('.emoji-cell')]
-    const highlight = (next: number) => {
-      const all = cells()
-      if (all.length === 0) return
-      const at = all.findIndex((c) => c.classList.contains('selected'))
-      const to = Math.max(0, Math.min(all.length - 1, at < 0 ? 0 : at + next))
-      all[at]?.classList.remove('selected')
-      all[to].classList.add('selected')
-      all[to].scrollIntoView({ block: 'nearest' })
-    }
-    grid.addEventListener('keydown', (e) => {
-      const all = cells()
-      // Cells wrap, so a row is however many share the first one's top edge.
-      const cols = all.filter((c) => c.offsetTop === all[0]?.offsetTop).length || 1
-      const step =
-        e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1
-        : e.key === 'ArrowDown' ? cols : e.key === 'ArrowUp' ? -cols : 0
-      if (step !== 0) {
-        e.preventDefault()
-        highlight(step)
-        return
-      }
-      if (e.key === 'Enter') {
-        e.preventDefault()
-        const chosen = all.find((c) => c.classList.contains('selected')) ?? all[0]
-        if (chosen?.dataset.emoji) close(chosen.dataset.emoji)
-      }
-    })
-
     search.oninput = () => draw(search.value)
     search.addEventListener('keydown', (e) => {
       // Enter takes the first match, so filtering to one shortcode and pressing
-      // Enter is the whole interaction.
-      if (e.key !== 'Enter') return
-      e.preventDefault()
-      const first = cells()[0]
-      if (first?.dataset.emoji) close(first.dataset.emoji)
+      // Enter is the whole interaction. Down steps into the grid instead.
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        pickFirst()
+        return
+      }
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        grid.focus()
+      }
     })
     paste.addEventListener('keydown', (e) => {
       if (e.key !== 'Enter') return

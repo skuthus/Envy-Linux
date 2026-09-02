@@ -336,6 +336,27 @@ class CheckboxWidget extends WidgetType {
   }
 }
 
+/// Toggles the `- [ ]` / `- [x]` box on the caret's line — the keyboard twin of
+/// clicking one. It makes the *same* one-character change the widget's
+/// mousedown does (the character between the brackets, never the whole `[x]`),
+/// so an undo steps back over the toggle alone and the file diff matches.
+///
+/// The line is the caret's, or the first line of a selection. False when that
+/// line carries no checkbox, so a caller can let the key mean something else.
+export function toggleTaskAtCursor(view: EditorView): boolean {
+  const line = view.state.doc.lineAt(view.state.selection.main.from)
+  // The styler's own pattern, minus the global flag it needs for scanning a
+  // whole document — one definition, so a change to what counts as a task
+  // cannot leave the key toggling something the checkboxes don't draw.
+  const m = new RegExp(P.taskList.source).exec(line.text)
+  if (!m) return false
+  const toggleFrom = line.from + m[1].length + 1
+  view.dispatch({
+    changes: { from: toggleFrom, to: toggleFrom + 1, insert: m[2][1] === ' ' ? 'x' : ' ' },
+  })
+  return true
+}
+
 /// Every embed currently on screen, so the app can refresh them when the
 /// source changes on disk. Widgets add themselves on mount and drop out on
 /// destroy.
@@ -491,7 +512,7 @@ class ImageEmbedWidget extends WidgetType {
     return true
   }
 
-  toDOM(): HTMLElement {
+  toDOM(view: EditorView): HTMLElement {
     const wrap = document.createElement('div')
     wrap.className = 'envy-image-embed'
     const img = document.createElement('img')
@@ -512,6 +533,31 @@ class ImageEmbedWidget extends WidgetType {
       if (!this.host) return
       e.preventDefault()
       this.host.onImageContextMenu(this.raw, this.spec, e.clientX, e.clientY)
+    })
+    // Keyboard twins of the two mouse gestures above. The embed is a tab stop
+    // so the picture can be reached at all without a mouse: Return opens it
+    // (the double-click), Shift+F10 or the Menu key raises the same size and
+    // rename menu the right-click does, anchored to the picture rather than to
+    // a pointer that isn't there. Escape hands focus back to the document.
+    wrap.tabIndex = 0
+    wrap.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        this.host?.openAttachment(this.name)
+        return
+      }
+      if (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) {
+        if (!this.host) return
+        e.preventDefault()
+        const box = wrap.getBoundingClientRect()
+        this.host.onImageContextMenu(this.raw, this.spec, box.left + 12, box.bottom - 12)
+        return
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        wrap.blur()
+        view.focus()
+      }
     })
     wrap.append(img)
     if (this.spec.caption) {
@@ -1626,6 +1672,24 @@ function focusedCell(wrap: HTMLElement): HTMLElement | null {
   return active && wrap.contains(active) ? cellOf(active) : null
 }
 
+/// Where focus last was inside the grid. `focusedCell` asks the document, which
+/// answers correctly for the mouse (the buttons cancel their own mousedown, so
+/// the cell never lost focus) but not for the keyboard, where reaching a button
+/// means the button *is* the active element. Remembering the cell is what lets
+/// a tabbed-to button still act on the cell you were editing.
+const lastCellPos = new WeakMap<HTMLElement, { row: number; col: number }>()
+
+function cellPos(cell: HTMLElement): { row: number; col: number } {
+  return { row: Number(cell.dataset.row ?? 0), col: Number(cell.dataset.col ?? 0) }
+}
+
+/// The cell every toolbar action is defined against, however the toolbar was
+/// reached.
+function activeCellPos(wrap: HTMLElement): { row: number; col: number } {
+  const cell = focusedCell(wrap)
+  return cell ? cellPos(cell) : (lastCellPos.get(wrap) ?? { row: 0, col: 0 })
+}
+
 /// Caret offsets inside a cell, counted in characters of its text.
 function cellSelection(cell: HTMLElement): { from: number; to: number } | null {
   const sel = cell.ownerDocument.getSelection()
@@ -1801,6 +1865,15 @@ function moveCell(wrap: HTMLElement, row: number, col: number, dir: 1 | -1) {
     return
   }
   if (r < 0) {
+    // Backwards off the first cell lands on the toolbar, which sits above the
+    // grid in the DOM — where Shift+Tab should go, and the only way to reach
+    // the buttons without a mouse. Wrapping to the last cell is the fallback
+    // for a table whose toolbar is not there (a read-only surface).
+    const first = wrap.querySelector<HTMLElement>('.envy-table-btn')
+    if (first) {
+      first.focus()
+      return
+    }
     r = lastRow
     c = cols - 1
   }
@@ -1853,11 +1926,8 @@ function alignTableColumn(wrap: HTMLElement, col: number, align: CellAlign) {
   const parts = tableParts(state.block)
   if (parts.aligns[col] === align) return
   parts.aligns[col] = align
-  const cell = focusedCell(wrap)
-  rewriteTable(wrap, parts, {
-    row: Number(cell?.dataset.row ?? 0),
-    col: Number(cell?.dataset.col ?? col),
-  })
+  const at = activeCellPos(wrap)
+  rewriteTable(wrap, parts, { row: at.row, col: at.col })
 }
 
 /// Tables whose next blur must not re-pad: "Edit as text" leaves the caret
@@ -1871,9 +1941,8 @@ function editTableAsText(wrap: HTMLElement) {
   const state = tableStates.get(wrap)
   if (!state) return
   const { view, block } = state
+  const { row, col } = activeCellPos(wrap)
   const cell = focusedCell(wrap)
-  const row = Number(cell?.dataset.row ?? 0)
-  const col = Number(cell?.dataset.col ?? 0)
   const lineNo = tableRowLines(view.state.doc, block)[row] ?? view.state.doc.lineAt(block.from).number
   const line = view.state.doc.line(lineNo)
   const pipes: number[] = []
@@ -1983,6 +2052,7 @@ function wireTable(wrap: HTMLElement) {
     const cell = cellOf(e.target)
     const state = tableStates.get(wrap)
     if (!cell || !state) return
+    lastCellPos.set(wrap, cellPos(cell))
     wrap.classList.add('editing')
     disarmTableDelete(wrap)
     // Raw markdown while editing. Cells with no markup already read the same
@@ -2088,14 +2158,35 @@ function buildTableToolbar(wrap: HTMLElement): HTMLElement {
     btn.className = 'envy-table-btn' + (cls ? ' ' + cls : '')
     btn.title = title
     btn.textContent = label
+    const activate = () => {
+      if (!btn.classList.contains('armed')) disarmTableDelete(wrap)
+      run()
+    }
     // mousedown, not click, and cancelled: the cell must keep focus, since
     // every action here is defined relative to the cell being edited.
     btn.onmousedown = (e) => {
       e.preventDefault()
       e.stopPropagation()
-      if (!btn.classList.contains('armed')) disarmTableDelete(wrap)
-      run()
+      activate()
     }
+    // Enter and Space are the keyboard's click, and Escape goes back to the
+    // cell. Cancelling the key also cancels the click the browser would
+    // synthesise from it, so an action still runs exactly once per press.
+    btn.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Escape') return
+      e.preventDefault()
+      e.stopPropagation()
+      const at = activeCellPos(wrap)
+      if (e.key !== 'Escape') activate()
+      // Every action that rewrites the table already puts focus back in a cell
+      // (or, for "Edit as text" and Delete, in the document). Focus still on
+      // the button means nothing moved it, so the mouse path's "you are still
+      // in the cell" is restored by hand — unless Delete just armed itself and
+      // is waiting here for the confirming press.
+      if (wrap.ownerDocument.activeElement !== btn) return
+      if (e.key !== 'Escape' && btn.classList.contains('armed')) return
+      focusTableCell(wrap, at.row, at.col)
+    })
     bar.append(btn)
     return btn
   }

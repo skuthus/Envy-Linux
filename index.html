@@ -34,7 +34,11 @@
                however far the list scrolls (opt-in, up to three). They're the
                leading rows of the results; the list below skips them. -->
           <div id="pinned-strip" class="hidden" role="listbox" aria-label="Pinned notes"></div>
-          <div id="list" role="listbox" aria-label="Notes"></div>
+          <!-- `tabindex="-1"` makes the list a real focus stop: not in the Tab
+               order (the divider and the fields own that), but reachable by
+               Alt+Down/Up and by clicking a row, which is what lets it answer
+               arrows, j/k, Return and Delete on its own. -->
+          <div id="list" role="listbox" aria-label="Notes" tabindex="-1"></div>
         </div>
         <div
           id="divider"

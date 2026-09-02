@@ -7,7 +7,7 @@ import { open as openFolderPicker } from '@tauri-apps/plugin-dialog'
 import { getVersion } from '@tauri-apps/api/app'
 import { getAllWindows, getCurrentWindow } from '@tauri-apps/api/window'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
-import { openContextMenu, type MenuItemSpec } from './context-menu'
+import { openContextMenu, type MenuItemSpec, type OpenMenuOptions } from './context-menu'
 import { textPrompt, confirmModal, alertModal, setPromptFocusReturn, isDialogOpen } from './prompt-modal'
 import { openImageMenu, renameAttachmentFlow, insertImageReference } from './image-menu'
 import { openImagePicker } from './image-picker'
@@ -29,6 +29,8 @@ import {
   flashField,
   setFlash,
   restyle,
+  toggleTaskAtCursor,
+  urlDomain,
 } from './styler'
 import {
   autoPairing,
@@ -50,7 +52,7 @@ import {
 import { installSmoothScroll, cancelSmoothScroll } from './smooth-scroll'
 import { applyStoredAppearance, enviousDark, initAppearance } from './theme'
 import { createMiniNoteEditor, type MiniNoteEditor } from './mininote'
-import { renderReference, type ReferenceTab } from './reference'
+import { renderReference, toggleReference, type ReferenceTab } from './reference'
 import { initKindleImport } from './kindle'
 import {
   SHORTCUT_SPECS,
@@ -171,12 +173,39 @@ const editable = new Compartment()
 /// The emphasis bindings live in a compartment because they're remappable, and
 /// a keymap facet can't be changed after the editor is built.
 const emphasisKeys = new Compartment()
+/// The area-switch chords, likewise — see `areaKeymap`.
+const areaKeys = new Compartment()
+
+/// A binding string ("Alt+ArrowUp") in CodeMirror's key notation.
+function toEditorKey(binding: string): string {
+  return binding.split('+').join('-')
+}
+
+/// Swallows the focus-cycling chords inside the editor without acting on them.
+///
+/// The default keymap claims Alt+Up/Down for moveLineUp/moveLineDown, so with
+/// nothing here the editor would move a line *and* the window handler would
+/// move focus — one keystroke doing two unrelated things. These entries take
+/// the chord away from the editor and leave the actual focus change to the one
+/// window-level handler, so there is still exactly one place that decides what
+/// the shortcut does and remapping moves both halves at once.
+function areaKeymap() {
+  return keymap.of(
+    (['focusNextArea', 'focusPreviousArea'] as const)
+      .map((id) => bindingFor(id))
+      .filter((b) => b !== '')
+      .map((b) => ({ key: toEditorKey(b), run: () => true, preventDefault: true })),
+  )
+}
 
 function applyEditorKeymap() {
   view.dispatch({
-    effects: emphasisKeys.reconfigure(
-      keymap.of(emphasisKeymap(bindingFor('bold'), bindingFor('italic'))),
-    ),
+    effects: [
+      emphasisKeys.reconfigure(
+        keymap.of(emphasisKeymap(bindingFor('bold'), bindingFor('italic'))),
+      ),
+      areaKeys.reconfigure(areaKeymap()),
+    ],
   })
 }
 
@@ -199,6 +228,8 @@ const view = new EditorView({
       // for those chords. In a compartment because the bindings are
       // remappable, and a facet can't be changed after the fact.
       emphasisKeys.of(keymap.of(emphasisKeymap(bindingFor('bold'), bindingFor('italic')))),
+      // Ahead of the default keymap, which would otherwise claim Alt+Up/Down.
+      areaKeys.of(areaKeymap()),
       // Enter/Tab/Shift-Tab continue and nest lists (and ordered lists
       // renumber) — Prec.high inside, so this beats the default newline/indent.
       listEditing,
@@ -387,18 +418,6 @@ const view = new EditorView({
           renderStats()
         }
       }),
-      // Alt+Up from the editor goes back to the search box — the keyboard path
-      // between panes the Mac app has on ⌥↑.
-      keymap.of([
-        {
-          key: 'Alt-ArrowUp',
-          run: () => {
-            searchInput.focus()
-            searchInput.select()
-            return true
-          },
-        },
-      ]),
     ],
   }),
   parent: editorEl,
@@ -1109,6 +1128,13 @@ editorEl.addEventListener('contextmenu', (e) => {
   }
   e.preventDefault()
   e.stopPropagation()
+  openContextMenu(e.clientX, e.clientY, domainEmojiMenu(domain))
+})
+
+/// The emoji menu for one link domain. Its own function because the keyboard
+/// raises the same menu (see the `emojiForLink` shortcut) and a second copy
+/// would be a second thing to keep in step.
+function domainEmojiMenu(domain: string): MenuItemSpec[] {
   const current = domainEmojis()[domain]
   // Bare emoji, as the Mac's menu items are — the domain is already named by
   // the pill that was right-clicked, so repeating it on all twelve rows is
@@ -1135,8 +1161,8 @@ editorEl.addEventListener('contextmenu', (e) => {
       run: () => setDomainEmoji(domain, null),
     })
   }
-  openContextMenu(e.clientX, e.clientY, items)
-})
+  return items
+}
 
 // --- Tag colours -------------------------------------------------------------
 // Like a folder's colour, this is a *preference*, not note content. The `#tag`
@@ -4030,7 +4056,9 @@ function renderCurrentList() {
 }
 
 searchInput.addEventListener('keydown', (e) => {
-  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+  // Plain or Shift-modified arrows only: Alt+Up/Down is the area cycle, and
+  // a chord that moves focus must not also move the highlight.
+  if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && !e.altKey && !e.ctrlKey && !e.metaKey) {
     e.preventDefault()
     const dir = e.key === 'ArrowDown' ? 1 : -1
     const shift = e.shiftKey
@@ -4069,6 +4097,8 @@ searchInput.addEventListener('keydown', (e) => {
 window.addEventListener('keydown', (e) => {
   if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
   if (e.defaultPrevented) return
+  // Alt+Up/Down cycles focus areas; it is not a list move.
+  if (e.altKey || e.ctrlKey || e.metaKey) return
   if (view.hasFocus) return
   const active = document.activeElement as HTMLElement | null
   if (active) {
@@ -4085,6 +4115,236 @@ window.addEventListener('keydown', (e) => {
   }
   e.preventDefault()
   void arrowNavigate(e.key === 'ArrowDown' ? 1 : -1, e.shiftKey)
+})
+
+// --- Focus areas -------------------------------------------------------------
+// Search → list → editor, wrapping both ways: the cycle the Mac app has on
+// ⌥↑/⌥↓, and the one Omarchy's own panels use. The list is the piece that had
+// no keyboard identity before — arrows moved its highlight, but focus never
+// actually lived there, so Return, Delete and a context menu had nothing to
+// hang off and the "focused area" was a guess based on what *wasn't* focused.
+
+type FocusArea = 'search' | 'list' | 'editor'
+const FOCUS_ORDER: FocusArea[] = ['search', 'list', 'editor']
+
+function currentArea(): FocusArea {
+  if (view.hasFocus) return 'editor'
+  const active = document.activeElement
+  if (active && listPaneEl.contains(active)) return 'list'
+  // Anything else — the search box, the title field, or nothing at all —
+  // counts as the search end of the cycle, so focus that has ended up
+  // somewhere odd still steps somewhere predictable rather than nowhere.
+  return 'search'
+}
+
+function focusArea(area: FocusArea) {
+  if (area === 'search') {
+    searchInput.focus()
+    searchInput.select()
+  } else if (area === 'list') {
+    // `preventScroll`: the list is its own scroller and focusing it must not
+    // yank the viewport away from the row the highlight is on.
+    listEl.focus({ preventScroll: true })
+  } else {
+    view.focus()
+  }
+}
+
+function cycleArea(delta: 1 | -1) {
+  const at = FOCUS_ORDER.indexOf(currentArea())
+  focusArea(FOCUS_ORDER[(at + delta + FOCUS_ORDER.length) % FOCUS_ORDER.length])
+}
+
+// --- The list's own keyboard --------------------------------------------------
+// Only while the list actually holds focus, which is either after Alt+Down onto
+// it or after clicking a row (a row is a plain div, so the click lands focus on
+// the nearest focusable ancestor — the list itself). Everything here calls
+// `preventDefault`, which is also what stops the body-level arrow fallback
+// above from moving the highlight a second time.
+
+/// A page of rows, minus one of overlap so the row you were reading is still on
+/// screen after the jump. The same measure the list's virtualisation uses.
+function listPageStep(): number {
+  return Math.max(1, Math.floor(listViewport() / rowHeight) - 1)
+}
+
+/// Big enough to clamp to either end of any list, without `Infinity` — the
+/// callee adds it to an index before clamping, and `Infinity` there would make
+/// an arithmetic NaN out of a perfectly ordinary "go to the end".
+const LIST_JUMP = 1e9
+
+listEl.addEventListener('keydown', (e) => {
+  if (e.defaultPrevented) return
+  if (document.activeElement !== listEl) return
+  // Not behind a dialog or the settings panel — they are what the keyboard is
+  // for while they are up.
+  if (!settingsEl.classList.contains('hidden') || isDialogOpen()) return
+  if (!referenceEl.classList.contains('hidden')) return
+  if (e.ctrlKey || e.altKey || e.metaKey) return
+
+  const nav = (delta: number, extend: boolean) => {
+    e.preventDefault()
+    afterPendingSearch(() => void arrowNavigate(delta, extend))
+  }
+
+  switch (e.key) {
+    case 'ArrowDown':
+      return nav(1, e.shiftKey)
+    case 'ArrowUp':
+      return nav(-1, e.shiftKey)
+    // j/k alongside the arrows, the Omarchy convention. Safe here in a way it
+    // would not be anywhere else in the app: the list is not a text field, so
+    // a bare letter has nothing else it could mean.
+    case 'j':
+      return nav(1, false)
+    case 'k':
+      return nav(-1, false)
+    case 'PageDown':
+      return nav(listPageStep(), e.shiftKey)
+    case 'PageUp':
+      return nav(-listPageStep(), e.shiftKey)
+    case 'End':
+      return nav(LIST_JUMP, e.shiftKey)
+    case 'Home':
+      return nav(-LIST_JUMP, e.shiftKey)
+    case 'Enter':
+      e.preventDefault()
+      afterPendingSearch(() => void activateHighlighted())
+      return
+    case 'Escape':
+      // One layer: back to the search box, which is where the list was entered
+      // from. It does not also clear the query — that is the search box's own
+      // Escape, one press further on.
+      e.preventDefault()
+      focusArea('search')
+      return
+    case 'Delete':
+      // Notes only. `deleteSelection` acts on the note results, and the trash,
+      // template and catalog lists are showing something else entirely — a
+      // Delete there would quietly bin whatever happened to sit at the same
+      // index in a list nobody is looking at.
+      if (templateFragment() !== null || trashFragment() !== null || catalogMode() !== null) {
+        return
+      }
+      // Deliberately the same handler the Ctrl+Backspace shortcut runs, not a
+      // second copy of it: whatever confirmation or flush that path grows, the
+      // list's Delete grows with it.
+      e.preventDefault()
+      SHORTCUT_HANDLERS.deleteNote?.()
+      return
+    default:
+      return
+  }
+})
+
+/// Return in the list: opens what the highlight is on, in whichever list is
+/// showing.
+///
+/// Deliberately not `openOrCreate` — that is the *search box's* Return, and its
+/// "no exact match, so make one" half would mint a note out of the query when
+/// all you did was press Return on a row that was already there.
+async function activateHighlighted() {
+  if (templateFragment() !== null) {
+    await openHighlightedTemplate()
+    return
+  }
+  // A trash row has no editor to drop into; its preview is already showing.
+  if (trashFragment() !== null) return
+  const catalog = catalogMode()
+  if (catalog !== null) {
+    // Return on a tag or folder pivots the search to it, exactly as clicking
+    // the row does. Focus stays in the list, which is where the results land.
+    const row = catalogRows[highlighted]
+    if (!row) return
+    searchInput.value = `${catalog}:"${row.name}"`
+    await runSearch()
+    return
+  }
+  // The Mac's list drops into the editor on Return. The note under the
+  // highlight is already open (the editor follows the highlight), so this is a
+  // focus move with a guarantee attached rather than a load.
+  await openHighlighted()
+  focusArea('editor')
+}
+
+// --- The note menu, from the keyboard ----------------------------------------
+
+/// The row the highlight is on, wherever it is drawn — the sticky pinned strip
+/// counts, since a pinned note is highlighted there rather than in the list.
+function highlightedRowEl(): HTMLElement | null {
+  return listPaneEl.querySelector<HTMLElement>('.row.highlighted')
+}
+
+/// The same menu a right-click on the highlighted row would raise, anchored to
+/// the row so it opens where the eye already is.
+function openHighlightedNoteMenu(options: OpenMenuOptions = {}) {
+  // Only the ordinary note list. Trash, templates and the catalogs each have
+  // their own menu over their own rows, and raising a note menu over them
+  // would act on something other than what is highlighted.
+  if (templateFragment() !== null || trashFragment() !== null || catalogMode() !== null) return
+  const note = results[highlighted]
+  if (!note) return
+  const row = highlightedRowEl()
+  const r = (row ?? listEl).getBoundingClientRect()
+  const selection = fullSelection()
+  const items =
+    selection.length > 1 && selection.includes(note.id)
+      ? bulkMenuItems(selection.length)
+      : noteMenuItems(note)
+  openContextMenu(r.left + 12, r.bottom - 2, items, options)
+}
+
+// Shift+F10 and the Menu key: the two chords every desktop toolkit answers with
+// a context menu. Not in the remappable table on purpose — they are the
+// platform's spelling of "menu for this thing", the way Escape is the
+// platform's spelling of "back out".
+window.addEventListener('keydown', (e) => {
+  if (e.defaultPrevented) return
+  if (e.key !== 'ContextMenu' && !(e.key === 'F10' && e.shiftKey)) return
+  if (!settingsEl.classList.contains('hidden') || isDialogOpen()) return
+  if (view.hasFocus) return
+  e.preventDefault()
+  openHighlightedNoteMenu()
+})
+
+// --- Divider ------------------------------------------------------------------
+// The split is draggable, and a drag is not something a keyboard can do. With
+// the divider in the Tab order it needs keys of its own or it is a focus stop
+// that does nothing.
+
+const DIVIDER_STEP_PX = 24
+
+/// Moves the split by `deltaPx`, positive meaning "give the list more room".
+/// Clamped exactly as the drag is, so neither pane can be keyed away entirely.
+function resizeSplit(deltaPx: number) {
+  const box = panesEl.getBoundingClientRect()
+  if (layoutMode === 'vertical') {
+    const current = storedNumber('verticalSplitFraction', DEFAULT_TOP_FRACTION)
+    const fraction = Math.min(0.9, Math.max(0.1, current + deltaPx / Math.max(1, box.height)))
+    localStorage.setItem('verticalSplitFraction', String(fraction))
+  } else {
+    const current = storedNumber('horizontalListWidth', DEFAULT_LIST_WIDTH)
+    const width = Math.min(box.width - 240, Math.max(MIN_LIST_WIDTH, current + deltaPx))
+    localStorage.setItem('horizontalListWidth', String(width))
+  }
+  applyLayout()
+}
+
+dividerEl.addEventListener('keydown', (e) => {
+  // The axis follows the layout, so the key that moves the divider is always
+  // the one that points along it: Up/Down when the list sits above the editor,
+  // Left/Right when it sits beside it.
+  const grow = layoutMode === 'vertical' ? 'ArrowDown' : 'ArrowRight'
+  const shrink = layoutMode === 'vertical' ? 'ArrowUp' : 'ArrowLeft'
+  if (e.key === grow) resizeSplit(DIVIDER_STEP_PX)
+  else if (e.key === shrink) resizeSplit(-DIVIDER_STEP_PX)
+  // Home/End snap to the extremes — the clamp is what makes them extremes
+  // rather than "off screen", so this is the same call with a step nothing can
+  // exceed.
+  else if (e.key === 'Home') resizeSplit(-1e6)
+  else if (e.key === 'End') resizeSplit(1e6)
+  else return
+  e.preventDefault()
 })
 
 async function restoreDeleted() {
@@ -4251,14 +4511,156 @@ const SHORTCUT_HANDLERS: Partial<Record<ShortcutId, () => void>> = {
   insertTable: () => {
     if (openNoteId || openTemplatePath) insertTable(view)
   },
-  focusNextArea: () => {
-    if (document.activeElement === searchInput) view.focus()
-    else searchInput.focus()
+  focusNextArea: () => cycleArea(1),
+  focusPreviousArea: () => cycleArea(-1),
+
+  // --- The editor actions that used to need a mouse ---------------------------
+
+  followLink: () => {
+    if (!view.hasFocus) return
+    followLinkAtCaret()
   },
-  focusPreviousArea: () => {
-    if (document.activeElement === searchInput) view.focus()
-    else searchInput.focus()
+  peekLink: () => {
+    if (!view.hasFocus || settings.linkPreview === 'off') return
+    const head = view.state.selection.main.head
+    const target = wikiLinkTargetAt(view, head)
+    if (!target) return
+    // Anchored under the caret, where Alt-click would have anchored it under
+    // the pointer — the preview should appear next to the link, not at a
+    // corner of the window.
+    const c = view.coordsAtPos(head)
+    void showLinkPreview(target, c?.left ?? 0, c?.bottom ?? 0)
   },
+  toggleCheckbox: () => {
+    if (!openNoteId && !openTemplatePath) return
+    // Returns false when the caret line has no checkbox, which is a no-op
+    // rather than an error — the same as clicking where there is no box.
+    toggleTaskAtCursor(view)
+  },
+  retireDue: () => {
+    if (!openNoteId && !openTemplatePath) return
+    const pos = dueTokenPosForCaret()
+    if (pos !== null) toggleDueToken(view, pos)
+  },
+  emojiForLink: () => {
+    if (!openNoteId && !openTemplatePath) return
+    const found = urlNearCaret(false)
+    const domain = found ? urlDomain(found.url) : null
+    if (!found || !domain) return
+    const c = view.coordsAtPos(found.from)
+    openContextMenu(c?.left ?? 0, (c?.bottom ?? 0) + 4, domainEmojiMenu(domain))
+  },
+  popOut: () => {
+    // The open note first, then the highlight — with the editor focused the
+    // note you mean is the one you are looking at, and the two are the same
+    // note in every case but a list that has moved on without being opened.
+    const id = openNoteId ?? results[highlighted]?.id
+    if (!id) return
+    void invoke('pop_out_note', { id, innerSize: storedPopoutSize() })
+  },
+  moveToFolder: () => {
+    // Filing into a folder the list then hides would look like deleting the
+    // note, which is why the menu item is conditional too.
+    if (!settings.includeSubfolders) return
+    openHighlightedNoteMenu({ submenu: 'Move to' })
+  },
+  toggleHelp: () => toggleReference(),
+}
+
+/// The keyboard half of Ctrl-click, in the same order of preference the click
+/// handler uses: an in-note jump first (a footnote reference, a `#heading`
+/// anchor), then an outbound markdown link, then a wiki-link or attachment,
+/// then a bare URL. No modifier gate — asking for the link *is* the modifier
+/// here, so `requireModifierForLinkClick` has nothing to decide.
+function followLinkAtCaret(): boolean {
+  const pos = view.state.selection.main.head
+  const doc = view.state.doc.toString()
+
+  const footnote = footnoteRefAt(view, pos)
+  if (footnote) {
+    const range = footnoteDefinitionRange(doc, footnote)
+    if (range) {
+      jumpToRange(range)
+      return true
+    }
+  }
+  const mdLink = markdownLinkAt(view, pos)
+  if (mdLink?.url.startsWith('#')) {
+    const range = headingRangeForSlug(doc, mdLink.url.slice(1))
+    if (range) {
+      jumpToRange(range)
+      return true
+    }
+  }
+  if (mdLink && /^https?:\/\//i.test(mdLink.url)) {
+    void invoke('open_external_url', { url: mdLink.url })
+    return true
+  }
+  const target = wikiLinkTargetAt(view, pos)
+  if (target) {
+    // An `![[image.png]]` target is an attachment, not a note — open the file
+    // rather than resolving (and ghost-creating) a note by that name.
+    if (isImageTarget(target)) void invoke('open_attachment', { name: target })
+    else void followLink(target)
+    return true
+  }
+  const bare = urlNearCaret(true)
+  if (bare) {
+    void invoke('open_external_url', { url: bare.url })
+    return true
+  }
+  return false
+}
+
+/// A bare URL — the thing the styler draws as a pill — at the caret, or, when
+/// `insideOnly` is off, the nearest one on the caret's own line.
+///
+/// Line-bounded on purpose: "nearest" across a whole note is a guess, and
+/// silently giving an emoji to a link three paragraphs away is worse than
+/// doing nothing. Reading the document rather than hunting for the pill widget
+/// in the DOM keeps this working for a link scrolled out of the viewport,
+/// where no widget exists to find.
+const BARE_URL_RE = /https?:\/\/[^\s<>()[\]]+/gi
+
+function urlNearCaret(insideOnly: boolean): { url: string; from: number; to: number } | null {
+  const doc = view.state.doc.toString()
+  const head = view.state.selection.main.head
+  const line = view.state.doc.lineAt(head)
+  let best: { url: string; from: number; to: number } | null = null
+  let bestDistance = Infinity
+  BARE_URL_RE.lastIndex = 0
+  for (const m of doc.matchAll(BARE_URL_RE)) {
+    const from = m.index!
+    const to = from + m[0].length
+    if (to < line.from || from > line.to) continue
+    const distance = head < from ? from - head : head > to ? head - to : 0
+    if (insideOnly && distance > 0) continue
+    if (distance < bestDistance) {
+      bestDistance = distance
+      best = { url: m[0], from, to }
+    }
+  }
+  return best
+}
+
+/// Where to apply the due-date toggle: the token the caret is in, else the
+/// first one on the caret's line, else the note's own first due date — which
+/// is what "retire the due date" means when the caret is nowhere near one.
+function dueTokenPosForCaret(): number | null {
+  const doc = view.state.doc.toString()
+  const head = view.state.selection.main.head
+  if (dueTokenAt(doc, head)) return head
+  // Only positions that could start a token are worth asking about; `dueTokenAt`
+  // rescans the whole document per call, so a character-by-character sweep of a
+  // long note would be needless work.
+  const line = view.state.doc.lineAt(head)
+  for (let i = line.from; i < line.to; i++) {
+    if (doc[i] === '@' && dueTokenAt(doc, i + 1)) return i + 1
+  }
+  for (let i = 0; i < doc.length; i++) {
+    if (doc[i] === '@' && dueTokenAt(doc, i + 1)) return i + 1
+  }
+  return null
 }
 
 /// Splits the selection off into a note of its own, leaving a `[[link]]` behind.

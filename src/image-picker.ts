@@ -6,6 +6,7 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import { attachmentUrl, releaseAttachmentUrl } from './styler'
+import { returnFocusFromDialog } from './prompt-modal'
 
 const pickerEl = document.getElementById('image-picker')!
 const filterEl = document.getElementById('image-picker-filter') as HTMLInputElement
@@ -78,6 +79,11 @@ function buildGrid(filter: string) {
     label.textContent = name
     cell.append(thumb, label)
     cell.addEventListener('click', () => pick(name))
+    // Roving tab stop: the grid as a whole is one stop, so Tab goes filter →
+    // grid → out, and the arrows (or j/k) move between thumbnails. A <button>
+    // already answers Return and Space with a click, so choosing needs no key
+    // handling of its own.
+    cell.tabIndex = gridEl.childElementCount === 0 ? 0 : -1
     gridEl.append(cell)
     held.push(name)
     void attachmentUrl(name, (n) =>
@@ -89,6 +95,20 @@ function buildGrid(filter: string) {
       img.src = url
     })
   }
+}
+
+function cells(): HTMLElement[] {
+  return [...gridEl.querySelectorAll<HTMLElement>('.image-picker-cell')]
+}
+
+/// Moves the single tab stop to `to` and focuses it, clamped to the grid.
+function focusCell(to: number) {
+  const all = cells()
+  if (all.length === 0) return
+  const at = Math.max(0, Math.min(all.length - 1, to))
+  for (const c of all) c.tabIndex = c === all[at] ? 0 : -1
+  all[at].focus()
+  all[at].scrollIntoView({ block: 'nearest' })
 }
 
 function pick(name: string) {
@@ -104,11 +124,43 @@ filterEl.addEventListener('keydown', (e) => {
     e.preventDefault()
     const first = matches(filterEl.value)[0]
     if (first) pick(first)
-  } else if (e.key === 'Escape') {
+  } else if (e.key === 'ArrowDown') {
+    // Down steps out of the box and into the pictures.
+    e.preventDefault()
+    focusCell(0)
+  }
+})
+// Escape closes from anywhere in the dialog, in the capture phase: bound only to
+// the filter box it was unreachable the moment focus moved to a thumbnail, and
+// capture also keeps the editor's own Escape from firing underneath.
+pickerEl.addEventListener(
+  'keydown',
+  (e) => {
+    if (e.key !== 'Escape') return
     e.preventDefault()
     e.stopPropagation()
     closeImagePicker()
-  }
+    // Dismissing from a thumbnail would otherwise leave focus on an element
+    // that has just been removed, and the next key would go nowhere.
+    returnFocusFromDialog()
+  },
+  true,
+)
+gridEl.addEventListener('keydown', (e) => {
+  const all = cells()
+  const at = all.indexOf(e.target as HTMLElement)
+  if (at < 0) return
+  // Cells wrap, so a row is however many share the first one's top edge.
+  const cols = all.filter((c) => c.offsetTop === all[0].offsetTop).length || 1
+  const step =
+    e.key === 'ArrowRight' || e.key === 'l' ? 1
+    : e.key === 'ArrowLeft' || e.key === 'h' ? -1
+    : e.key === 'ArrowDown' || e.key === 'j' ? cols
+    : e.key === 'ArrowUp' || e.key === 'k' ? -cols
+    : 0
+  if (step === 0) return
+  e.preventDefault()
+  focusCell(at + step)
 })
 pickerEl.addEventListener('click', (e) => {
   if (e.target === pickerEl) closeImagePicker() // click the backdrop to dismiss

@@ -6,6 +6,7 @@
 
 import markupGroups from './markup-help.json'
 import { buildEmojiGrid } from './emoji-grid'
+import { resolvedShortcuts, type ShortcutId } from './shortcuts'
 // The application icon itself, not a copy or a redrawing of it. About is where
 // someone looks to confirm what they are running, so showing anything other
 // than the real mark is the one place it actually matters.
@@ -33,61 +34,77 @@ function windowsKeys(text: string): string {
     .replace(/⌥/g, 'Alt+')
 }
 
-/// Every shortcut the app binds, as the single source for this sheet.
+/// How the live bindings are grouped for the sheet.
 ///
-/// Listed here rather than derived from the handlers because the handlers are
-/// spread across three files and a keyboard reference that silently drifts
-/// from the bindings is worse than none.
-export const SHORTCUTS: Array<{ group: string; items: Array<[string, string]> }> = [
+/// The bindings themselves come from `resolvedShortcuts()`, so a remap or a new
+/// action shows up here without anyone remembering to edit a second list — the
+/// old hand-written table had already drifted from what the app answered. Only
+/// the *grouping* is an editorial choice, and anything this table has not
+/// placed still appears, under "Other", rather than silently going missing.
+const SHORTCUT_GROUPS: Array<{ title: string; ids: ShortcutId[] }> = [
   {
-    group: 'Anywhere',
-    items: [
-      ['Ctrl+Alt+Enter', 'Show or hide Envy'],
-      ['Ctrl+Alt+Down', 'Show or hide the pinned note'],
-      ['Ctrl+Alt+Shift+P', 'Unpin the note pinned to the tray'],
+    title: 'Anywhere',
+    ids: ['summonApp', 'showPinnedNote', 'unpinFromTray', 'keepOnTop'],
+  },
+  {
+    title: 'Navigation',
+    ids: ['jumpToSearch', 'clearSearch', 'focusNextArea', 'focusPreviousArea', 'toggleHelp'],
+  },
+  {
+    title: 'Notes',
+    ids: [
+      'newFromTemplate',
+      'extractToNote',
+      'deleteNote',
+      'restoreDeletedNote',
+      'togglePin',
+      'pinToTray',
+      'popOut',
+      'moveToFolder',
     ],
   },
   {
-    group: 'Searching',
-    items: [
-      ['Ctrl+L', 'Jump to the search box'],
-      ['Up / Down', 'Move the highlighted note'],
-      ['Shift+Up / Shift+Down', 'Extend the selection'],
-      ['Return', 'Open the top match, or create a note from what you typed'],
-      ['Alt+Backspace', 'Clear the search box'],
-      ['Escape', 'Clear the search box'],
+    title: 'Editor',
+    ids: [
+      'bold',
+      'italic',
+      'insertImage',
+      'insertTable',
+      'toggleCheckbox',
+      'followLink',
+      'peekLink',
+      'retireDue',
+      'emojiForLink',
+      'togglePlainTextMode',
+      'zoomIn',
+      'zoomOut',
+      'actualSize',
     ],
   },
   {
-    group: 'Notes',
-    items: [
-      ['Ctrl+Backspace', 'Move the selection to trash'],
-      ['Ctrl+Shift+Backspace', 'Restore the last deleted note(s)'],
-      ['Ctrl+Alt+P', 'Pin or unpin at the top of the list'],
-      ['Ctrl+Alt+T', 'Pin the highlighted note to the tray'],
-      ['Ctrl-click a [[link]]', 'Open it, creating it if needed'],
-      ['Alt-click a [[link]]', 'Preview it without leaving'],
-      ['Click a due date', 'Retire it, or bring it back'],
-    ],
+    title: 'Window',
+    ids: ['toggleLayout', 'toggleInterlinks', 'centerWindow', 'openSettings'],
   },
-  {
-    group: 'Editing',
-    items: [
-      ['Ctrl+B / Ctrl+I', 'Bold or italicise the selection'],
-      ['Ctrl+= / Ctrl+- / Ctrl+0', 'Zoom the note text in, out, or reset'],
-      ['Ctrl+Shift+P', 'Toggle plain-text mode'],
-      ['Alt+Up', 'Move focus from the editor back to search'],
-    ],
-  },
-  {
-    group: 'Window',
-    items: [
-      ['Ctrl+Shift+L', 'Toggle vertical / horizontal layout'],
-      ['Ctrl+Shift+B', 'Toggle the interlinks panel'],
-      ['Ctrl+Enter', 'Centre the window'],
-      ['Ctrl+,', 'Settings'],
-    ],
-  },
+]
+
+/// The conventions the whole app follows, stated once at the top of the sheet.
+///
+/// These are not bindings in the remappable table — they are what every list,
+/// grid and panel answers to — so they are written here rather than derived.
+const KEYBOARD_CONVENTIONS: Array<[string, string]> = [
+  ['Arrows or j / k', 'Move within a list or a grid'],
+  ['Return', 'Open or choose whatever is highlighted'],
+  ['Escape', 'Back out one step'],
+  ['Tab / Shift+Tab', 'Move between areas — a filter box, a grid, a toolbar'],
+  ['Shift+F10', 'Open the menu for whatever is focused (the Menu key does too)'],
+]
+
+/// The few things that are gestures rather than bindings, so they have no entry
+/// in the shortcut table and cannot be derived from it.
+const MOUSE_GESTURES: Array<[string, string]> = [
+  ['Ctrl-click a [[link]]', 'Open it, creating it if needed'],
+  ['Alt-click a [[link]]', 'Preview it without leaving'],
+  ['Click a due date', 'Retire it, or bring it back'],
 ]
 
 function el(tag: string, className?: string, text?: string): HTMLElement {
@@ -111,17 +128,41 @@ function renderMarkup(): HTMLElement {
   return root
 }
 
+function renderRows(root: HTMLElement, title: string, rows: Array<[string, string]>) {
+  if (rows.length === 0) return
+  root.append(el('h4', 'reference-group', title))
+  const table = el('div', 'reference-table')
+  for (const [keys, what] of rows) {
+    table.append(el('code', 'reference-syntax', keys))
+    table.append(el('div', 'reference-desc', what))
+  }
+  root.append(table)
+}
+
 function renderShortcuts(): HTMLElement {
   const root = el('div', 'reference-body')
-  for (const group of SHORTCUTS) {
-    root.append(el('h4', 'reference-group', group.group))
-    const table = el('div', 'reference-table')
-    for (const [keys, what] of group.items) {
-      table.append(el('code', 'reference-syntax', keys))
-      table.append(el('div', 'reference-desc', what))
+  renderRows(root, 'Keyboard', KEYBOARD_CONVENTIONS)
+
+  const live = resolvedShortcuts()
+  const placed = new Set<string>()
+  for (const group of SHORTCUT_GROUPS) {
+    const rows: Array<[string, string]> = []
+    // Walked in the group's order, not the table's, so the sheet reads the way
+    // it was written rather than the way the bindings happen to be declared.
+    for (const id of group.ids) {
+      const found = live.find((s) => s.id === id)
+      if (!found?.chord) continue
+      placed.add(found.id)
+      rows.push([found.chord, found.label])
     }
-    root.append(table)
+    renderRows(root, group.title, rows)
   }
+  renderRows(
+    root,
+    'Other',
+    live.filter((s) => s.chord && !placed.has(s.id)).map((s): [string, string] => [s.chord, s.label]),
+  )
+  renderRows(root, 'With the mouse', MOUSE_GESTURES)
   return root
 }
 
@@ -140,11 +181,27 @@ function renderEmoji(): HTMLElement {
   search.placeholder = 'Filter shortcodes'
   root.append(search)
 
-  // Clicking copies, since the point of browsing is to then use one.
-  const { grid, draw } = buildEmojiGrid('Copy', (_emoji, code) => {
-    void navigator.clipboard?.writeText(`:${code}:`)
-  })
+  // Clicking copies, since the point of browsing is to then use one — and so
+  // does Return, with the grid keyboard-navigable for the same reason.
+  const { grid, draw, pickFirst, focus } = buildEmojiGrid(
+    'Copy',
+    (_emoji, code) => {
+      void navigator.clipboard?.writeText(`:${code}:`)
+    },
+    { keyboard: true },
+  )
   search.oninput = () => draw(search.value)
+  search.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      pickFirst()
+      return
+    }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      focus()
+    }
+  })
   root.append(grid)
   return root
 }
@@ -219,4 +276,27 @@ export function renderReference(tab: ReferenceTab, version: string): HTMLElement
     default:
       return renderMarkup()
   }
+}
+
+/// Opens the reference sheet if it is closed, closes it if it is open.
+///
+/// The overlay's own open and close live with the window chrome (they render
+/// the tabs and need the app version, neither of which this module has), so
+/// this drives the controls they are already bound to rather than growing a
+/// second idea of what "open" means that could disagree with the first. The
+/// direct class change is the fallback for a surface that never wired them.
+export function toggleReference(): void {
+  const sheet = document.getElementById('reference')
+  if (!sheet) return
+  if (sheet.classList.contains('hidden')) {
+    // Markup first, since that is what the binding is called; the Shortcuts
+    // tab (and every other) is one Tab and an arrow away once the sheet is up.
+    const open =
+      document.getElementById('open-markup') ?? document.getElementById('open-shortcuts')
+    if (open) open.click()
+    else sheet.classList.remove('hidden')
+    return
+  }
+  document.getElementById('reference-close')?.click()
+  sheet.classList.add('hidden')
 }
