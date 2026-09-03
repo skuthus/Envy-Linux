@@ -15,14 +15,17 @@
 # devCsp, and `cargo build --release` alone still points at the Vite URL.
 # Build it with `npm run tauri build -- --no-bundle` (~40 s).
 #
-# --big-vault temporarily repoints ~/.config/app.envynote.linux/index-path at a
-# large vault (default $ENVY_BIG_VAULT, else ~/.cache/envy-bench/vault20k) and
-# runs a paging pass instead of the write test — it never writes into that
-# vault. The original index-path is restored by the EXIT trap either way.
+# The app under test never sees the owner's Index or config: it runs with
+# XDG_CONFIG_HOME pointed at a copy of ~/.config/envy whose `vault` is the
+# test vault ($ENVY_SMOKE_VAULT, else ~/Envy Test Vault; make one with
+# scripts/gen-test-vault.mjs). Every other setting is the owner's, so the run
+# looks like their Envy. --big-vault points that copy at a large vault
+# instead (default $ENVY_BIG_VAULT, else ~/.cache/envy-bench/vault20k) and
+# runs a paging pass instead of the write test — it never writes into it.
 #
 # Needs: hyprctl, grim, wtype, jq (magick/convert optional, for the blank
-# check). It writes into the Index, so it refuses to run unless the Index path
-# contains "Test Vault" or ENVY_SMOKE_ALLOW=1.
+# check). It writes into the test vault, so it refuses to run unless that
+# path contains "Test Vault" or ENVY_SMOKE_ALLOW=1.
 # Not covered (no Wayland click tool): the pinned-note and pop-out windows —
 # check those by hand: right-click a note → Pop Out; Ctrl+Alt+T pins to tray.
 set -euo pipefail
@@ -53,28 +56,37 @@ for t in hyprctl grim wtype jq; do
   command -v "$t" >/dev/null || { echo "need $t"; exit 2; }
 done
 
-CFG="$HOME/.config/app.envynote.linux/index-path"
-VAULT="$(cat "$CFG" 2>/dev/null || true)"
-INDEX_SAVED=""
+# The owner's config, copied so the app under test can be pointed elsewhere
+# without their file ever changing. Only `vault` is rewritten; the file's
+# other settings, and their themes, come along as they are.
+OWNER_CFG="${XDG_CONFIG_HOME:-$HOME/.config}/envy"
+[[ -f "$OWNER_CFG/config.md" ]] || { echo "no Envy config at $OWNER_CFG/config.md - launch Envy once first"; exit 2; }
+XDG="$SHOT/xdg"
+rm -rf "$XDG"
+mkdir -p "$XDG/envy"
+[[ -d "$OWNER_CFG/themes" ]] && cp -r "$OWNER_CFG/themes" "$XDG/envy/"
 
 if (( BIG )); then
   [[ -n "$BIGVAULT" ]] || BIGVAULT="$HOME/.cache/envy-bench/vault20k"
   [[ -d "$BIGVAULT" ]] || { echo "no big vault at '$BIGVAULT' (pass a path or set ENVY_BIG_VAULT)"; exit 2; }
-  [[ -f "$CFG" ]] || { echo "no Index configured ($CFG)"; exit 2; }
-  # Saved before anything else so the EXIT trap can always put it back.
-  INDEX_SAVED="$SHOT/index-path.bak"
-  cp "$CFG" "$INDEX_SAVED"
-  printf '%s' "$BIGVAULT" >"$CFG"
   VAULT="$BIGVAULT"
-  echo "== big-vault mode: Index temporarily pointed at $VAULT ($(ls "$VAULT" | wc -l) entries)"
+  echo "== big-vault mode: the app under test opens $VAULT ($(ls "$VAULT" | wc -l) entries)"
 else
-  [[ -d "$VAULT" ]] || { echo "no Index configured ($CFG)"; exit 2; }
+  VAULT="${ENVY_SMOKE_VAULT:-$HOME/Envy Test Vault}"
+  [[ -d "$VAULT" ]] || { echo "no test vault at '$VAULT' - make one: node scripts/gen-test-vault.mjs"; exit 2; }
   if [[ "$VAULT" != *"Test Vault"* && "${ENVY_SMOKE_ALLOW:-}" != 1 ]]; then
-    echo "Index is '$VAULT', not a test vault. Point Envy at one (scripts/gen-test-vault.mjs)"
-    echo "or set ENVY_SMOKE_ALLOW=1 to run against it anyway."
+    echo "'$VAULT' is not a test vault (its path lacks \"Test Vault\"). Use one from"
+    echo "scripts/gen-test-vault.mjs, or set ENVY_SMOKE_ALLOW=1 to run against it anyway."
     exit 2
   fi
 fi
+# `vault = "..."` is the first line of the TOML block; everything else is kept.
+awk -v v="$VAULT" '
+  /^vault = / && !done { print "vault = \"" v "\""; done = 1; next }
+  { print }
+' "$OWNER_CFG/config.md" >"$XDG/envy/config.md"
+grep -q "^vault = \"$VAULT\"" "$XDG/envy/config.md" || { echo "could not point the copied config at $VAULT"; exit 2; }
+export XDG_CONFIG_HOME="$XDG"
 
 if [[ "$MODE" == "release" ]]; then
   BIN="./target/release/envynote"
@@ -107,8 +119,6 @@ cleanup() {
     [[ -n "$TEMPLATE" && -f "$SHOT/template.bak" ]] && cp "$SHOT/template.bak" "$TEMPLATE"
     rm -f "$NOTE" "$VAULT/.trash/$TITLE.md"
   fi
-  # Always put the owner's Index back, however this run ended.
-  [[ -n "$INDEX_SAVED" && -f "$INDEX_SAVED" ]] && cp "$INDEX_SAVED" "$CFG"
   true
 }
 trap cleanup EXIT

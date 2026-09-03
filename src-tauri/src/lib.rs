@@ -2189,13 +2189,10 @@ mod autostart_rank_tests {
 fn autostart_should_move_here() -> bool {
     let Ok(exe) = std::env::current_exe() else { return false };
     let exe = exe.to_string_lossy();
-    let Some(config) = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
-    else {
-        return false;
-    };
-    let Ok(entry) = std::fs::read_to_string(config.join("autostart").join("Envy.desktop")) else {
+    // The same place the autostart plugin writes: ~/.config, whatever
+    // XDG_CONFIG_HOME says, so the two never disagree about which file.
+    let Some(home) = dirs::home_dir() else { return false };
+    let Ok(entry) = std::fs::read_to_string(home.join(".config/autostart/Envy.desktop")) else {
         return false;
     };
     let Some(target) = entry.lines().find_map(|l| l.strip_prefix("Exec=")) else { return false };
