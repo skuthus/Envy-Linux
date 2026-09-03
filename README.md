@@ -4,7 +4,7 @@ A Linux port of [Envy](https://github.com/skuthus/Envy) — a flat-file,
 frictionless note-taking application. One search box, instant results, and
 notes stored as plain `.md` files.
 
-Open source under the MIT licence. It is the Linux sibling of
+Open source under the MIT license. It is the Linux sibling of
 [Envy-Windows](https://github.com/skuthus/Envy-Windows): the same Rust
 `envy-core`, the same CodeMirror 6 frontend, the same Tauri v2 shell, built
 for WebKitGTK instead of WebView2. It is not a rebuild of the macOS Swift app.
@@ -44,7 +44,7 @@ hidden. While Envy isn't running the eye leaves the bar, unless the menu's
 "Show Eye in Bar When Closed" is on (the widget's `showWhenClosed` setting in
 `shell.json`), which keeps a dim eye there as a launcher. Left click summons
 (or launches) Envy, right click opens the app menu. Underneath it is a StatusNotifierItem Envy registers
-itself, drawn as a solid `-symbolic` eye in the bar's text colour, so other
+itself, drawn as a solid `-symbolic` eye in the bar's text color, so other
 bars (Waybar) show it in their tray; the Omarchy tray widget hides it so it
 isn't shown twice.
 
@@ -118,7 +118,7 @@ newFromTemplate = "Ctrl+N"
 ```
 ````
 
-`~/.config/envy/themes/<name>.md` is one theme. Every colour token is
+`~/.config/envy/themes/<name>.md` is one theme. Every color token is
 optional: what you leave out comes from the face underneath, which is the
 Omarchy-derived palette in `omarchy` mode and the Envious light or dark face
 otherwise. A file named after the current Omarchy theme's slug (the contents
@@ -150,7 +150,7 @@ envynote theme export <name>   # save the theme in use now as themes/<name>.md
 ```
 
 **The agent skill.** `agents/skills/envy/` teaches an agent all of the above:
-the file shapes, every setting key, every re-bindable shortcut, the colour
+the file shapes, every setting key, every re-bindable shortcut, the color
 tokens and the contrast floors. The package installs it to
 `/usr/share/envy/agents/skills/envy`, and Envy links it into
 `~/.claude/skills/envy` and `~/.agents/skills/envy` at launch when those are

@@ -1,6 +1,6 @@
-# Envy Themes and Colours
+# Envy Themes and Colors
 
-Read this before changing any Envy colour.
+Read this before changing any Envy color.
 
 ## How a Theme Is Chosen
 
@@ -8,14 +8,14 @@ One setting decides: `appearance.theme` in `~/.config/envy/config.md`.
 
 | Value | What Envy shows |
 | --- | --- |
-| `omarchy` (default) | Colours derived from the current Omarchy theme's `colors.toml`, retinted whenever `omarchy theme set` runs |
+| `omarchy` (default) | Colors derived from the current Omarchy theme's `colors.toml`, retinted whenever `omarchy theme set` runs |
 | `system` | The Envious palette, dark or light following the desktop preference |
 | `dark` / `light` | The Envious palette, pinned to that face |
 | any other value | The theme file `~/.config/envy/themes/<value>.md`, laid over the Envious face named by its `mode` |
 
 There is one extra rule, and it is the useful one. In `omarchy` mode, if a
 theme file is named after the **current Omarchy theme's slug**, Envy lays it
-over the derived colours automatically. So a file called `tokyo-night.md`
+over the derived colors automatically. So a file called `tokyo-night.md`
 tweaks Envy while Tokyo Night is the Omarchy theme, and stops applying by
 itself when the user switches away. Nothing in `config.md` has to change.
 
@@ -37,10 +37,10 @@ time the themes directory changes, so a file added later takes effect at once.
 dashes and digits. One ` ```toml ` fence, then a body that is an ordinary note.
 The body exists so that opening the file inside Envy previews the theme: give
 it a heading, a list, a task, a link, a tag, some code, a quote, a highlight
-and a footnote, and every token has something on screen to colour.
+and a footnote, and every token has something on screen to color.
 
-**Every colour is optional.** A token you leave out is filled in from the face
-underneath: the Omarchy-derived colours in `omarchy` mode, otherwise Envious
+**Every color is optional.** A token you leave out is filled in from the face
+underneath: the Omarchy-derived colors in `omarchy` mode, otherwise Envious
 dark or light per `mode`. Write only the tokens you mean to change.
 
 ````markdown
@@ -71,9 +71,9 @@ A sample note.
 | `font` | Optional fontconfig family. Left out, the `appearance.font` setting decides. |
 | `font_size` | Optional CSS size for the editor, for example `"15px"`. |
 
-### Colour tokens
+### Color tokens
 
-Colours are `#rrggbb` or `#rrggbbaa`.
+Colors are `#rrggbb` or `#rrggbbaa`.
 
 | Token | What it paints |
 | --- | --- |
@@ -139,11 +139,11 @@ asked for a theme of their own.
 Two files, two `mode` values. `appearance.theme` names one of them at a time;
 there is no automatic pairing.
 
-## Where the Omarchy Colours Come From
+## Where the Omarchy Colors Come From
 
 In `omarchy` mode Envy reads the current theme's `colors.toml` and maps a
 terminal palette onto note roles. Knowing the mapping tells you which Omarchy
-colour to blame when something looks wrong, and which Envy token to override
+color to blame when something looks wrong, and which Envy token to override
 instead of editing the Omarchy theme.
 
 | Omarchy key (first that exists) | Envy tokens |
@@ -154,7 +154,7 @@ instead of editing the Omarchy theme.
 | `foreground`, `fg` | `text` |
 | `bright_foreground`, `bright_fg`, `light_foreground` (else `foreground`) | `due` |
 | `muted`, `dark_foreground`, `dark_fg` | `marker` |
-| `dark_foreground`, `dark_fg` (else the muted colour) | `blockquote`, `completed_task`, `footnote` |
+| `dark_foreground`, `dark_fg` (else the muted color) | `blockquote`, `completed_task`, `footnote` |
 | `accent`, `blue` | `link`, `selection`, `focus_highlight` |
 | `red` | `due_overdue`, `selected_text` |
 | `green` | `tag`, `tag_background`, `checked_checkbox` |
@@ -162,17 +162,17 @@ instead of editing the Omarchy theme.
 | `bright_magenta`, `magenta` (else `yellow`) | `flag` |
 
 `highlight_text` is not taken from a key. Envy picks whichever of the dark
-background and the foreground reads better on the highlight colour, then
+background and the foreground reads better on the highlight color, then
 darkens or lightens it until it is legible.
 
-Two things happen to those colours on the way in.
+Two things happen to those colors on the way in.
 
 **Fills get alpha.** `background`, `file_list_background`,
 `title_bar_background` and `code_background` are made slightly translucent
 (roughly 0.88 to 0.94, and 0.72 to 0.82 for code) so Hyprland's blur shows
-through the window. Tinted fills built from a palette colour, `selection`,
+through the window. Tinted fills built from a palette color, `selection`,
 `tag_background`, `focus_highlight` and `selected_text`, are the theme's own
-colour at a low alpha rather than the colour itself.
+color at a low alpha rather than the color itself.
 
 **Text gets a contrast floor.** See below.
 
@@ -190,17 +190,17 @@ editor background and the note list background:
 - **2.4:1** for `marker`. Syntax marks are meant to recede. They only have to
   be visible.
 
-For an Omarchy-derived colour the floor is applied for you: the hue is kept and
-the colour is nudged toward white or black by the smallest amount that clears
+For an Omarchy-derived color the floor is applied for you: the hue is kept and
+the color is nudged toward white or black by the smallest amount that clears
 the floor, so a theme that already reads well is left untouched.
 
-For a colour **you** write in a theme file it is not. Your colour is used
+For a color **you** write in a theme file it is not. Your color is used
 exactly as written, and if it fails a floor Envy names the token in the footer
-status line instead of quietly changing it. A colour you chose is a decision,
-and a warning is more useful than a colour you did not pick.
+status line instead of quietly changing it. A color you chose is a decision,
+and a warning is more useful than a color you did not pick.
 
-So pick colours that pass. Rules of thumb on a dark background: a mid-tone at
-around 60% lightness usually clears 4.5:1, a colour near the background's
+So pick colors that pass. Rules of thumb on a dark background: a mid-tone at
+around 60% lightness usually clears 4.5:1, a color near the background's
 lightness never does. On a light background, go darker rather than more
 saturated. To be sure, compute it rather than guess:
 
@@ -221,7 +221,7 @@ same file, check the text tokens against the new background, not the old one.
 ## Rules
 
 - Never edit `/usr/share/envy/`, and never edit an Omarchy theme under
-  `/usr/share/omarchy/themes/`. To change Envy's colours, write an Envy theme
+  `/usr/share/omarchy/themes/`. To change Envy's colors, write an Envy theme
   file. To change Omarchy's, see the `omarchy` skill.
 - One ` ```toml ` fence per file. Keep the body, keep any comments.
 - Run `envynote config check` after editing `config.md`. After editing a

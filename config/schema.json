@@ -141,7 +141,7 @@
           ],
           "default": "dot",
           "label": "Subfolder marker",
-          "doc": "How a note's subfolder shows in its row: a coloured dot, the folder name as a chip, or nothing. Only matters with index.include_subfolders.",
+          "doc": "How a note's subfolder shows in its row: a colored dot, the folder name as a chip, or nothing. Only matters with index.include_subfolders.",
           "legacy": "folderListDisplay"
         },
         {
@@ -428,7 +428,7 @@
           "type": "bool",
           "default": false,
           "label": "Bind Ctrl+Alt+Return in Hyprland",
-          "doc": "Adds one line to ~/.config/hypr/bindings.lua that loads Envy's Hyprland file (the Ctrl+Alt+Return summon, the Ctrl+Alt+C centre bind and the floating window rule) and reloads Hyprland; off removes that line again. Only the line Envy added is ever touched: a bind you wrote yourself is left alone, and Envy will not add a second one beside it.",
+          "doc": "Adds one line to ~/.config/hypr/bindings.lua that loads Envy's Hyprland file (the Ctrl+Alt+Return summon, the Ctrl+Alt+C center bind and the floating window rule) and reloads Hyprland; off removes that line again. Only the line Envy added is ever touched: a bind you wrote yourself is left alone, and Envy will not add a second one beside it.",
           "owner": "rust"
         },
         {
@@ -436,7 +436,7 @@
           "type": "bool",
           "default": false,
           "label": "Envy is tiled",
-          "doc": "On Hyprland, tile the main window like any other. Off (the default) it floats as a centred panel. Applied when the window appears and again live when this changes.",
+          "doc": "On Hyprland, tile the main window like any other. Off (the default) it floats as a centered panel. Applied when the window appears and again live when this changes.",
           "owner": "rust"
         },
         {
@@ -464,7 +464,7 @@
           ],
           "default": "omarchy",
           "label": "Theme",
-          "doc": "omarchy follows the current Omarchy theme; system follows the light/dark preference with the Envious palette; dark and light pin an Envious face. Any other value names a theme file, ~/.config/envy/themes/<value>.md, which overlays the Envious face of its `mode`. In omarchy mode a theme file named after the current Omarchy theme (for example tokyo-night.md) overlays the derived colours automatically.",
+          "doc": "omarchy follows the current Omarchy theme; system follows the light/dark preference with the Envious palette; dark and light pin an Envious face. Any other value names a theme file, ~/.config/envy/themes/<value>.md, which overlays the Envious face of its `mode`. In omarchy mode a theme file named after the current Omarchy theme (for example tokyo-night.md) overlays the derived colors automatically.",
           "legacy": "appearanceMode"
         },
         {
@@ -590,14 +590,14 @@
     },
     {
       "table": "tag_colors",
-      "title": "Tag colours",
+      "title": "Tag colors",
       "value_type": "color",
-      "doc": "`tagname = \"#rrggbb\"`. The key is the tag name without its leading #; the value keeps the #. A tag not listed uses the theme's tag colour.",
+      "doc": "`tagname = \"#rrggbb\"`. The key is the tag name without its leading #; the value keeps the #. A tag not listed uses the theme's tag color.",
       "legacy": "tagColors"
     },
     {
       "table": "folder_colors",
-      "title": "Folder colours",
+      "title": "Folder colors",
       "value_type": "color",
       "doc": "`\"Folder/Sub\" = \"#rrggbb\"` for the subfolder dot and chip. Paths are relative to the vault; quote keys that contain / or spaces.",
       "legacy": "folderColors"
@@ -611,7 +611,7 @@
     }
   ],
   "theme_tokens": {
-    "doc": "Keys of a theme file's toml block, ~/.config/envy/themes/<name>.md. Every colour is optional: a missing one is filled from the base face (the Omarchy-derived theme in omarchy mode, else Envious dark/light by `mode`). Colours are #rrggbb or #rrggbbaa.",
+    "doc": "Keys of a theme file's toml block, ~/.config/envy/themes/<name>.md. Every color is optional: a missing one is filled from the base face (the Omarchy-derived theme in omarchy mode, else Envious dark/light by `mode`). Colors are #rrggbb or #rrggbbaa.",
     "meta": [
       {
         "key": "mode",

@@ -17,7 +17,7 @@ shortcuts, emoji), and **Ctrl+,** for Settings.
 - The first line of a note is its title. Rename the file and the title
   follows; rename the title and the file follows.
 - Subfolders are fine. With "include subfolders" on (the default), a note's
-  folder shows as a coloured dot in the list, and **Ctrl+Shift+M** moves the
+  folder shows as a colored dot in the list, and **Ctrl+Shift+M** moves the
   open note somewhere else.
 - A few folders inside The Index have jobs: `Inbox/` holds quick captures,
   `Templates/` holds templates, `Attachments/` holds images, and `.trash/`
@@ -120,7 +120,7 @@ shows the raw text when you want it.
 
 ### Tags and due dates
 
-- `#tag` anywhere in a note tags it. Tags get a colour in Settings, and
+- `#tag` anywhere in a note tags it. Tags get a color in Settings, and
   `tag:` finds them.
 - `@04-16-26` or `@2026-04-16` is a due date. `@today`, `@tomorrow` and
   `@friday` work too, and turn into the real date as you finish typing so
@@ -156,7 +156,7 @@ finding.
 
 - Turn on **Settings → System → Bind Ctrl+Alt+Return in Hyprland**. From
   then on **Ctrl+Alt+Return** shows or hides Envy from any app, and
-  **Ctrl+Alt+C** centres it. It adds one line to
+  **Ctrl+Alt+C** centers it. It adds one line to
   `~/.config/hypr/bindings.lua` and removes it again when turned off.
 - The eye in the Omarchy bar does the same on click. It appears while Envy
   runs; its menu can keep it there as a launcher when Envy is closed.
@@ -184,7 +184,7 @@ editor.
   switches when Omarchy does. `system`, `dark` and `light` use Envy's own
   palette instead.
 - Themes are files too, one per `~/.config/envy/themes/<name>.md`. Export
-  the live theme with `envynote theme export <name>`, adjust a colour, and
+  the live theme with `envynote theme export <name>`, adjust a color, and
   choose it in Settings. A file named after an Omarchy theme overrides just
   that one.
 - The font follows Omarchy's monospace font unless you choose your own.
@@ -239,7 +239,7 @@ remembers what it has imported, so re-importing only adds what is new.
 | Ctrl+= / Ctrl+- / Ctrl+0 | Zoom in / out / reset |
 | Ctrl+Shift+L | Toggle layout |
 | Ctrl+Shift+B | Toggle interlinks |
-| Ctrl+Return | Centre window |
+| Ctrl+Return | Center window |
 | Ctrl+, | Settings |
 | Ctrl+/ | Markup and shortcut reference |
 | Ctrl+Alt+Return | Show / hide Envy (Hyprland bind) |

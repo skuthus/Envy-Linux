@@ -1317,7 +1317,7 @@ function renderTitleBarTags(tags: string[]) {
     const el = document.createElement('span')
     el.className = 'envy-tag title-tag'
     el.textContent = `#${t}`
-    el.title = `Search tag:"${t}" — right-click to colour it`
+    el.title = `Search tag:"${t}" — right-click to color it`
     const tint = colors[t]
     if (tint) {
       // A tinted tag paints its own translucent capsule from its colour, so it

@@ -47,7 +47,7 @@ function tomlValue(v) {
 /// so the generated sentence is a sentence.
 const VALUE_TYPE_PROSE = {
   chord: 'a chord, spelled the way `shortcuts.md` describes',
-  color: 'a colour',
+  color: 'a color',
   emoji: 'an emoji',
 }
 
@@ -116,7 +116,7 @@ function renderSettings(schema) {
 
   out.push('## Themes\n')
   out.push(
-    `Colours are not settings. \`appearance.theme\` picks a theme and a theme file in`,
+    `Colors are not settings. \`appearance.theme\` picks a theme and a theme file in`,
     `${code(schema.themes_dir)} defines one. See \`theming.md\`.\n`,
   )
 
@@ -139,7 +139,7 @@ function renderSettings(schema) {
   out.push('[index]')
   out.push('include_subfolders = true')
   out.push('```\n')
-  out.push('Colour two tags and give a domain an emoji:\n')
+  out.push('Color two tags and give a domain an emoji:\n')
   out.push('```toml')
   out.push('[tag_colors]')
   out.push('work = "#7aa2f7"')

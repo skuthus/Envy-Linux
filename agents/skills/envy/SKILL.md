@@ -5,9 +5,9 @@ description: >
   binary: envynote). Use when editing ~/.config/envy/config.md or
   ~/.config/envy/themes/, or when the request touches Envy's settings, note
   list, editor, vault or notes folder, Inbox, trash sweep, Kindle import,
-  keyboard shortcuts, colours or theme. Triggers: Envy, envynote,
+  keyboard shortcuts, colors or theme. Triggers: Envy, envynote,
   config.md, ~/.config/envy, Envy theme, Envy settings, Envy shortcuts, Envy
-  vault, tag colours, folder colours. Excludes developing Envy itself.
+  vault, tag colors, folder colors. Excludes developing Envy itself.
 ---
 
 # Envy Skill
@@ -16,7 +16,7 @@ Configure [Envy](https://envynote.app), a flat-file note-taking app: one search
 box, instant results, notes as plain `.md` files. This skill is for an
 installed Envy on a user's machine.
 
-Every setting Envy has, and every colour it uses, lives in a file you can read
+Every setting Envy has, and every color it uses, lives in a file you can read
 and edit. The Settings panel writes the same files, so the two never disagree.
 
 ## When This Skill MUST Be Used
@@ -28,7 +28,7 @@ and edit. The Settings panel writes the same files, so the two never disagree.
   (density, preview, dates, sorting), the editor, the Inbox, the footer clock,
   trash sweeping, updates, autostart, keep on top, Kindle import
 - Envy keyboard shortcuts, or re-binding one
-- Envy colours: a theme, a tag colour, a folder colour, making Envy match an
+- Envy colors: a theme, a tag color, a folder color, making Envy match an
   Omarchy theme
 - The `envynote config` and `envynote theme` commands
 
@@ -71,7 +71,7 @@ A key you leave out keeps its default. Tables are `[list]`, `[editor]`,
 
 ### `~/.config/envy/themes/<name>.md`
 
-One theme per file, same shape: a toml fence of colour tokens, then a sample
+One theme per file, same shape: a toml fence of color tokens, then a sample
 note as the body so that opening the file in Envy previews the theme. The
 theme's name is the file stem, lowercase with dashes. See
 [`theming.md`](theming.md).
@@ -140,7 +140,7 @@ Read the matching guide before starting:
   meaning. Generated from the schema, so it is never out of date.
 - [`shortcuts.md`](shortcuts.md) - every re-bindable action, its id, its
   default chord, and how a chord is spelled.
-- [`theming.md`](theming.md) - theme files, every colour token, how a theme
+- [`theming.md`](theming.md) - theme files, every color token, how a theme
   overlays the one underneath it, and how to keep text readable.
 
 ## Worked Examples
@@ -173,7 +173,7 @@ new_notes_in_inbox = true
 work = "#7aa2f7"
 ```
 
-**"Make an Envy theme for my current Omarchy theme with a warmer link colour."**
+**"Make an Envy theme for my current Omarchy theme with a warmer link color."**
 Find the slug, then write a theme file named after it holding only the tokens
 you want to change. Envy derives the rest from the Omarchy palette, so a
 partial file is the point:
@@ -202,7 +202,7 @@ envynote config check
 
 Nothing else changes: `appearance.theme` stays `omarchy`, and the file is
 picked up because its name matches the Omarchy slug. If the user wants a
-starting point with every colour spelled out instead, run
+starting point with every color spelled out instead, run
 `envynote theme export tokyo-night` first and edit what it wrote.
 
 **"Change the summon hotkey."** That one is not Envy's to change on Wayland.

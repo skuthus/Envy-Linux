@@ -91,7 +91,7 @@ Handled by the window, so they fire wherever focus is inside Envy.
 | `toggleLayout` | Toggle Layout | `Ctrl+Shift+L` |
 | `toggleInterlinks` | Toggle Interlinks | `Ctrl+Shift+B` |
 | `togglePlainTextMode` | Toggle Plain-Text Mode | `Ctrl+Shift+P` |
-| `centerWindow` | Centre Window | `Ctrl+Enter` |
+| `centerWindow` | Center Window | `Ctrl+Enter` |
 | `openSettings` | Settings | `Ctrl+,` |
 | `focusNextArea` | Focus Next Area | `Alt+ArrowDown` |
 | `focusPreviousArea` | Focus Previous Area | `Alt+ArrowUp` |

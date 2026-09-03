@@ -301,7 +301,7 @@ export function setMapEntry(table: string, key: string, value: string | null) {
 }
 
 /// The same, for the cases that change several entries at once — assigning
-/// colours to a batch of new folders, or re-keying them after a rename. One
+/// colors to a batch of new folders, or re-keying them after a rename. One
 /// write rather than one per entry, so the file is never briefly half-updated.
 export function setMapEntries(table: string, entries: Record<string, string | null>) {
   if (!MAPS.has(table)) throw new Error(`no such map table: ${table}`)
@@ -367,7 +367,7 @@ function validateMap(table: string, entries: Record<string, unknown>): string[] 
       continue
     }
     if (kind === 'color' && !HEX_COLOR.test(value)) {
-      found.push(`${table}.${key} should be a colour like "#7aa2f7"`)
+      found.push(`${table}.${key} should be a color like "#7aa2f7"`)
     }
   }
   return found
@@ -388,7 +388,7 @@ function fromLegacy(s: KeySpec, raw: string): ConfigValue | null {
   return coerce(s, raw).value
 }
 
-/// Colours were stored with the leading `#`; the schema's examples write them
+/// Colors were stored with the leading `#`; the schema's examples write them
 /// with one too, so keep it and only add it if an older value lost it.
 function normalizeColor(value: string): string | null {
   if (!HEX_COLOR.test(value)) return null

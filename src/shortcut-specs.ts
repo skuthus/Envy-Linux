@@ -86,7 +86,7 @@ export const SHORTCUT_SPECS: ShortcutSpec[] = [
   { id: 'toggleLayout', label: 'Toggle Layout', default: 'Ctrl+Shift+L' },
   { id: 'toggleInterlinks', label: 'Toggle Interlinks', default: 'Ctrl+Shift+B' },
   { id: 'togglePlainTextMode', label: 'Toggle Plain-Text Mode', default: 'Ctrl+Shift+P' },
-  { id: 'centerWindow', label: 'Centre Window', default: 'Ctrl+Enter' },
+  { id: 'centerWindow', label: 'Center Window', default: 'Ctrl+Enter' },
   { id: 'openSettings', label: 'Settings', default: 'Ctrl+,' },
   { id: 'focusNextArea', label: 'Focus Next Area', default: 'Alt+ArrowDown' },
   { id: 'focusPreviousArea', label: 'Focus Previous Area', default: 'Alt+ArrowUp' },

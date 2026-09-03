@@ -44,7 +44,7 @@ belongs under the header named in each section below.
 | `show_date` | bool | `true` | The modified date column in the list. |
 | `date_style` | one of `"relative"`, `"smart"`, `"dateTime"`, `"dateOnly"` | `"smart"` | How the modified date is written: relative ("3 days ago"), smart (relative when recent, absolute otherwise), dateTime, or dateOnly. |
 | `density` | one of `"compact"`, `"cozy"`, `"comfy"` | `"compact"` | Vertical padding of list rows. |
-| `folder_display` | one of `"dot"`, `"name"`, `"off"` | `"dot"` | How a note's subfolder shows in its row: a coloured dot, the folder name as a chip, or nothing. Only matters with index.include_subfolders. |
+| `folder_display` | one of `"dot"`, `"name"`, `"off"` | `"dot"` | How a note's subfolder shows in its row: a colored dot, the folder name as a chip, or nothing. Only matters with index.include_subfolders. |
 | `folder_marker_trailing` | bool | `true` | Put the subfolder marker after the title (true) or before it (false). The Inbox mark always leads. |
 | `show_due` | bool | `true` | The due-date column and the Due sort option. |
 | `keep_pinned_visible` | bool | `false` | Park up to three pinned notes in a strip under the list header so they stay reachable however far the list scrolls. |
@@ -95,15 +95,15 @@ belongs under the header named in each section below.
 | `hide_on_focus_loss` | bool | `false` | Hide the window when another app takes focus, unless Keep on Top is on. |
 | `restore_focus_on_summon` | bool | `true` | Put the cursor back where it was (search box or editor) when the window is shown again. |
 | `keep_on_top` | bool | `false` | Keep the window above others and never hide it on focus loss. On Hyprland this pins the window, which only a floating window can be, so it waits while system.tiled is on. Toggled from the bar icon's menu. Read by Rust at startup, before the window opens. |
-| `hyprland_bind` | bool | `false` | Adds one line to ~/.config/hypr/bindings.lua that loads Envy's Hyprland file (the Ctrl+Alt+Return summon, the Ctrl+Alt+C centre bind and the floating window rule) and reloads Hyprland; off removes that line again. Only the line Envy added is ever touched: a bind you wrote yourself is left alone, and Envy will not add a second one beside it. Read by Rust at startup, before the window opens. |
-| `tiled` | bool | `false` | On Hyprland, tile the main window like any other. Off (the default) it floats as a centred panel. Applied when the window appears and again live when this changes. Read by Rust at startup, before the window opens. |
+| `hyprland_bind` | bool | `false` | Adds one line to ~/.config/hypr/bindings.lua that loads Envy's Hyprland file (the Ctrl+Alt+Return summon, the Ctrl+Alt+C center bind and the floating window rule) and reloads Hyprland; off removes that line again. Only the line Envy added is ever touched: a bind you wrote yourself is left alone, and Envy will not add a second one beside it. Read by Rust at startup, before the window opens. |
+| `tiled` | bool | `false` | On Hyprland, tile the main window like any other. Off (the default) it floats as a centered panel. Applied when the window appears and again live when this changes. Read by Rust at startup, before the window opens. |
 | `popout_tiled` | bool | `false` | On Hyprland, tile the windows that Pop Out and Alt+Shift-click open. Off (the default) they float. Applied to each pop-out as it appears and to open ones live when this changes. Read by Rust at startup, before the window opens. |
 
 ## Appearance / `[appearance]`
 
 | Key | Type | Default | What it does |
 | --- | --- | --- | --- |
-| `theme` | one of `omarchy`, `system`, `dark`, `light`, or a theme file name | `"omarchy"` | omarchy follows the current Omarchy theme; system follows the light/dark preference with the Envious palette; dark and light pin an Envious face. Any other value names a theme file, ~/.config/envy/themes/<value>.md, which overlays the Envious face of its `mode`. In omarchy mode a theme file named after the current Omarchy theme (for example tokyo-night.md) overlays the derived colours automatically. |
+| `theme` | one of `omarchy`, `system`, `dark`, `light`, or a theme file name | `"omarchy"` | omarchy follows the current Omarchy theme; system follows the light/dark preference with the Envious palette; dark and light pin an Envious face. Any other value names a theme file, ~/.config/envy/themes/<value>.md, which overlays the Envious face of its `mode`. In omarchy mode a theme file named after the current Omarchy theme (for example tokyo-night.md) overlays the derived colors automatically. |
 | `font` | one of `"omarchy"`, `"custom"` | `"omarchy"` | omarchy follows the Omarchy monospace font; custom uses `font_family`. |
 | `font_family` | string | `""` | A fontconfig family name, used when `font` is custom. |
 | `font_features` | string | `""` | Comma-separated feature tags applied to all text, for example `ss01`. Empty means automatic: `ss01` for a Cascadia family (its cursive italic letters), nothing for other fonts. |
@@ -128,13 +128,13 @@ These tables hold whatever keys you put in them, not a fixed list.
 
 Each value is a chord, spelled the way `shortcuts.md` describes. Overrides for keyboard shortcuts, `id = "Chord"`. Only ids listed in shortcuts.md are valid; an id that is absent keeps its default. Chords are written as fixed-order modifiers plus a key, for example "Ctrl+Alt+N" or "Ctrl+Shift+ArrowDown". The four global ids need a Hyprland bind on Wayland; see the skill.
 
-### Tag colours / `[tag_colors]`
+### Tag colors / `[tag_colors]`
 
-Each value is a colour. `tagname = "#rrggbb"`. The key is the tag name without its leading #; the value keeps the #. A tag not listed uses the theme's tag colour.
+Each value is a color. `tagname = "#rrggbb"`. The key is the tag name without its leading #; the value keeps the #. A tag not listed uses the theme's tag color.
 
-### Folder colours / `[folder_colors]`
+### Folder colors / `[folder_colors]`
 
-Each value is a colour. `"Folder/Sub" = "#rrggbb"` for the subfolder dot and chip. Paths are relative to the vault; quote keys that contain / or spaces.
+Each value is a color. `"Folder/Sub" = "#rrggbb"` for the subfolder dot and chip. Paths are relative to the vault; quote keys that contain / or spaces.
 
 ### Domain emojis / `[domain_emojis]`
 
@@ -142,7 +142,7 @@ Each value is an emoji. `"github.com" = "🐙"`, shown on link pills for that do
 
 ## Themes
 
-Colours are not settings. `appearance.theme` picks a theme and a theme file in
+Colors are not settings. `appearance.theme` picks a theme and a theme file in
 `~/.config/envy/themes` defines one. See `theming.md`.
 
 ## Worked examples
@@ -170,7 +170,7 @@ vault = "~/Notes"
 include_subfolders = true
 ```
 
-Colour two tags and give a domain an emoji:
+Color two tags and give a domain an emoji:
 
 ```toml
 [tag_colors]

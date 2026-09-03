@@ -235,12 +235,12 @@ const WHATS_NEW: Array<{ title: string; body: string }> = [
     body: 'An update could report success while leaving the old version in place, so Envy would offer you the same update on every launch. It was installing over its own running copy and quietly skipping the file it could not replace. It now steps out of the way first.',
   },
   {
-    title: 'Colour your folders',
-    body: 'Organise by pile, if you like — a second axis alongside tags. Turn on “Show items in subfolders” in Settings, give a folder a colour, and every note inside it shows a dot in that colour. Right-click a note → Move to → to file it, or make a folder on the spot. It is a real file move, so the title does not change and [[links]] still resolve.',
+    title: 'Color your folders',
+    body: 'Organize by pile, if you like — a second axis alongside tags. Turn on “Show items in subfolders” in Settings, give a folder a color, and every note inside it shows a dot in that color. Right-click a note → Move to → to file it, or make a folder on the spot. It is a real file move, so the title does not change and [[links]] still resolve.',
   },
   {
-    title: 'Tags got colour too',
-    body: 'Right-click a tag chip beside a note’s title to colour that tag, and every note carrying it shows the same colour. Like a folder’s colour it is a preference, never written into a note — your #tag on disk is untouched.',
+    title: 'Tags got color too',
+    body: 'Right-click a tag chip beside a note’s title to color that tag, and every note carrying it shows the same color. Like a folder’s color it is a preference, never written into a note — your #tag on disk is untouched.',
   },
   {
     title: 'Split a note in two',
