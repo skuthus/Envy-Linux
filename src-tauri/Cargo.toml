@@ -1,6 +1,6 @@
 [package]
 name = "envy-linux"
-version = "1.8.1-beta"
+version = "1.0.0"
 description = "A flat-file, frictionless note-taking application for Linux"
 authors = ["Skyler Schoos"]
 license = "MIT"

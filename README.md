@@ -76,7 +76,9 @@ and turn on Settings → System → "Bind Ctrl+Alt+Return in Hyprland" (or add
 `pcall(dofile, "/usr/share/envy/hyprland-envy.lua")` to
 `~/.config/hypr/bindings.lua` yourself). Elsewhere, run
 the AppImage from the GitHub release. Cutting a release is `scripts/release.sh`;
-see RELEASING.md. Envy is MIT licensed (LICENSE).
+see RELEASING.md. Envy is MIT licensed (LICENSE). The Linux port numbers its
+own releases (1.0.0 onwards): it follows the Mac app's features, not its
+version.
 
 ## Configuration
 

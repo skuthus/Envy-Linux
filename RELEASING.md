@@ -6,7 +6,8 @@ the assets, and an AUR package that installs from them.
 ## What a release is
 
 - **Tag** `v<version>`, where `<version>` is `src-tauri/tauri.conf.json`'s
-  version (for example `1.8.1-beta`).
+  version (for example `1.0.0`). The Linux port has its own version line: it
+  tracks the Mac app's features, not its number.
 - **Tarball** `envy-linux-<version>-x86_64.tar.gz`: the release binary, the
   desktop entry, icons, the Hyprland bind file and its summon script, the
   `agents/skills/envy` skill, the README and LICENSE. This is what the AUR
