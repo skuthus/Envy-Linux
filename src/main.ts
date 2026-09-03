@@ -1824,23 +1824,23 @@ function hidePinnedStrip() {
   pinnedStripEl.replaceChildren()
 }
 
-/// Sizes the trailing date column to the longest label the current font and
-/// date style can produce. "Yesterday, 12:46 PM" in Omarchy Mono is wider than
-/// the 102px that was measured for the previous face; measuring live means a
-/// smart date is never ellipsized.
+/// Sizes the trailing date column to the widest label the list is actually
+/// showing — every loaded row's date, or the trash/template list's labels —
+/// rather than to the widest label the date style *could* produce. Sized to
+/// "Yesterday, 12:46 PM" while every row read "Today, 2:11 PM", the column
+/// left a band of nothing between the titles' ellipsis and the dates. Now a
+/// list of today's notes gets a tight column, and a longer label widens it
+/// the moment such a row is loaded.
 ///
-/// Seven `getBoundingClientRect` calls is a synchronous layout each, and this
-/// ran from every list render — including both renders of an arrow key press.
-/// The result depends only on the face, the interface scale, the bold-rows flag
-/// and the date style (the probe is `max-width:none`, so the pane's width is not
-/// an input), plus the calendar day, which changes what the sample dates format
-/// to. Key on exactly those and re-measure only when one of them moves. Reading
-/// inline custom properties costs no layout, unlike measuring one. `force` is
-/// for the `document.fonts.ready` callers: a web font can land without any of
-/// these changing and shifts every metric when it does.
+/// Each label costs a synchronous layout to measure, so labels are deduped
+/// (a Kindle import gives hundreds of rows the same minute) and measured
+/// only when the set of labels, the face, the interface scale, the bold-rows
+/// flag, the date style or the calendar day changes. `force` is for the
+/// `document.fonts.ready` callers: a web font can land without any of these
+/// changing and shifts every metric when it does.
 let dateColKey: string | null = null
 
-function dateColumnKey(): string {
+function dateColumnKey(labels: string[]): string {
   const root = document.documentElement.style
   return [
     root.getPropertyValue('--envy-font-family'),
@@ -1849,7 +1849,36 @@ function dateColumnKey(): string {
     document.body.classList.contains('bold-file-list') ? 'b' : '',
     settings.dateDisplayStyle,
     new Date().getDate(),
+    labels.join('\u0001'),
   ].join('|')
+}
+
+/// The text a row's date slot shows — one function, used both to build the
+/// row and to size the column, so the two can never disagree.
+function rowDateLabel(note: NoteDto): string {
+  if (sortField === 'due') {
+    // Left blank when this note has no due date, rather than quietly falling
+    // back to the modified date — a sorted column leaves a row's cell empty
+    // rather than substituting an unrelated value.
+    if (!note.due) return ''
+    const suffix = note.dueCount > 1 ? ` +${note.dueCount - 1}` : ''
+    return formatDue(note.due, settings.dateDisplayStyle) + suffix
+  }
+  return formatModified(note.modifiedMs)
+}
+
+/// Every distinct label the list on screen puts in the date slot.
+function currentDateLabels(): string[] {
+  const labels = new Set<string>()
+  if (templateFragment() !== null) {
+    labels.add('Template')
+  } else if (trashFragment() !== null) {
+    for (const n of trashResults) labels.add(formatModified(n.modifiedMs))
+  } else {
+    for (const n of results) if (n) labels.add(rowDateLabel(n))
+  }
+  labels.delete('')
+  return [...labels].sort()
 }
 
 function syncDateColumnWidth(force = false) {
@@ -1858,7 +1887,8 @@ function syncDateColumnWidth(force = false) {
     listPaneEl.style.removeProperty('--envy-date-col')
     return
   }
-  const key = dateColumnKey()
+  const labels = currentDateLabels()
+  const key = dateColumnKey(labels)
   if (!force && key === dateColKey) return
   dateColKey = key
   const probe = document.createElement('span')
@@ -1867,33 +1897,16 @@ function syncDateColumnWidth(force = false) {
     'position:absolute;visibility:hidden;pointer-events:none;left:0;top:0;width:auto;max-width:none;overflow:visible;white-space:nowrap;'
   listPaneEl.append(probe)
   let max = 0
-  for (const s of dateColumnSamples()) {
+  for (const s of labels) {
     probe.textContent = s
     max = Math.max(max, probe.getBoundingClientRect().width)
   }
   probe.remove()
+  // Never narrower than the sort headings that live in the same column, or
+  // an empty list would fold "Due Date" over itself.
+  const headings = document.querySelector<HTMLElement>('.sort-group')
+  if (headings) max = Math.max(max, headings.scrollWidth)
   listPaneEl.style.setProperty('--envy-date-col', `${Math.ceil(max)}px`)
-}
-
-/// Representative labels for every date style, plus a wide due-suffix and the
-/// template-list marker, so the column does not jump when the list contents
-/// change and never undershoots a smart "Yesterday, HH:MM PM".
-function dateColumnSamples(): string[] {
-  const wide = new Date()
-  wide.setHours(12, 46, 0, 0)
-  const yesterday = new Date(wide)
-  yesterday.setDate(yesterday.getDate() - 1)
-  const older = new Date(wide)
-  older.setDate(older.getDate() - 40)
-  return [
-    formatModified(wide.getTime()),
-    formatModified(yesterday.getTime()),
-    formatModified(older.getTime()),
-    `${abbrevDate(wide)}, ${shortTime(wide)}`,
-    wide.toLocaleDateString(undefined, { weekday: 'long' }),
-    'Wednesday +9',
-    'Template',
-  ]
 }
 
 function renderList() {
@@ -2276,19 +2289,11 @@ function buildRow(note: NoteDto, i: number): HTMLElement {
       if (settings.showDateModified) {
         const date = document.createElement('span')
         date.className = 'row-date'
-        if (sortField === 'due') {
-          // Left blank when this note has no due date, rather than quietly
-          // falling back to the modified date — a sorted column leaves a row's
-          // cell empty rather than substituting an unrelated value.
-          if (note.due) {
-            const suffix = note.dueCount > 1 ? ` +${note.dueCount - 1}` : ''
-            date.textContent = formatDue(note.due, settings.dateDisplayStyle) + suffix
-            // Urgency colour belongs to a due date, not to a timestamp, so it
-            // only applies while the slot is actually showing one.
-            date.classList.add(`envy-due-${dueUrgencyClass(note.due)}`)
-          }
-        } else {
-          date.textContent = formatModified(note.modifiedMs)
+        date.textContent = rowDateLabel(note)
+        // Urgency colour belongs to a due date, not to a timestamp, so it
+        // only applies while the slot is actually showing one.
+        if (sortField === 'due' && note.due) {
+          date.classList.add(`envy-due-${dueUrgencyClass(note.due)}`)
         }
         row.append(date)
       }
@@ -3061,6 +3066,8 @@ async function loadRange(from: number, to: number): Promise<void> {
         if (gen !== searchGeneration) return
         for (let i = 0; i < got.notes.length; i++) results[offset + i] = got.notes[i]
         loadedPages.add(page)
+        // The new rows may carry a wider date than any loaded so far.
+        syncDateColumnWidth()
         // The rows may be on screen already, as blanks.
         renderRowWindow(true)
       })
