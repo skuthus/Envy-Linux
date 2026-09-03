@@ -1,7 +1,9 @@
 # Releasing Envy for Linux
 
 The source is public (MIT). A release is a git tag, a GitHub release with
-the assets, and an AUR package that installs from them.
+the assets, and a pacman repository that installs from them. (The AUR was
+the plan, but it had closed new registrations when 1.0.0 shipped; the
+PKGBUILD is ready for it whenever that changes.)
 
 ## What a release is
 
@@ -10,11 +12,16 @@ the assets, and an AUR package that installs from them.
   tracks the Mac app's features, not its number.
 - **Tarball** `envynote-<version>-x86_64.tar.gz`: the release binary, the
   desktop entry, icons, the Hyprland bind file and its summon script, the
-  `agents/skills/envy` skill, the README and LICENSE. This is what the AUR
+  `agents/skills/envy` skill, the README and LICENSE. This is what the pacman
   package installs; `linux/PKGBUILD` copies exactly that tree into `/usr`, so
   the skill lands at `/usr/share/envy/agents/skills/envy` where Envy links it
   into `~/.claude/skills` and `~/.agents/skills` at launch.
 - **AppImage**, for people not on Arch.
+- **The `repo` release**: a pacman repository holding the newest package
+  and its database (`envynote.db`, `envynote.files`), which is what
+  `Server = https://github.com/skuthus/Envy-Omarchy/releases/download/repo`
+  in a user's `pacman.conf` reads. `scripts/publish-repo.sh` refreshes it
+  from the package `release.sh` built; only the current version is kept.
 
 ## Cutting one
 
@@ -23,20 +30,22 @@ the assets, and an AUR package that installs from them.
 2. `scripts/release.sh --dry-run` — runs the ship gate through `build.sh`,
    builds, assembles the tarball, and proves `linux/PKGBUILD` packages it
    with a local `makepkg`. Read what it prints.
-3. `scripts/release.sh` — the same, then tags, pushes the tag, and creates
-   the GitHub release with `gh`.
-4. Publish the AUR package: in your AUR checkout of `envynote`, update
+3. `scripts/release.sh` — the same, then tags, pushes the tag, creates the
+   GitHub release with `gh`, and refreshes the pacman repository
+   (`scripts/publish-repo.sh`). Omarchy users then get the update through
+   `omarchy update`.
+4. If the AUR is open again: in an AUR checkout of `envynote`, update
    `_tauriver` and paste the sha256 the script printed into `sha256sums`,
    regenerate `.SRCINFO` (`makepkg --printsrcinfo > .SRCINFO`), commit, push.
-   Omarchy users then get the update through `yay -Syu`.
 
 The repo copy of `linux/PKGBUILD` keeps `sha256sums=('SKIP')` on purpose: it
 is the template and the local-test harness, not the published package.
 
 ## Installing
 
-- Omarchy / Arch: `yay -S envynote`, launch it, and turn on Settings →
-  System → "Bind Ctrl+Alt+Return in Hyprland", which adds the
+- Omarchy / Arch: add the `[envynote]` repository from the README to
+  `/etc/pacman.conf`, `sudo pacman -Sy envynote`, launch it, and turn on
+  Settings → System → "Bind Ctrl+Alt+Return in Hyprland", which adds the
   `pcall(dofile, "/usr/share/envy/hyprland-envy.lua")` line to
   `~/.config/hypr/bindings.lua` and reloads Hyprland (or add it by hand).
   The bar widget installs itself on first launch.

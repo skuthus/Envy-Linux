@@ -1818,9 +1818,9 @@ pub(crate) async fn run_update_check(app: tauri::AppHandle, manual: bool) {
 #[cfg(not(windows))]
 fn linux_update_advice(exe: &std::path::Path) -> String {
     if exe.starts_with("/usr") {
-        "Envy updates through your package manager, not from here.\n\n\
-         From the AUR: yay -Syu envynote (or paru -Syu envynote).\n\
-         From the repository: cd linux && makepkg -si."
+        "Envy updates through pacman, not from here.\n\n\
+         With the [envynote] repository in /etc/pacman.conf (see the README): omarchy update, or sudo pacman -Syu elsewhere.\n\
+         From a clone of the repository: cd linux && makepkg -si."
             .to_string()
     } else {
         "This build came from a checkout, so it updates with the code.\n\n\

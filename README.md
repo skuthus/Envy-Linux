@@ -71,11 +71,23 @@ image attachments, subfolders, Inbox, Templates, `.trash`) — default
 `~/Envy Test Vault`. It refuses to write into a folder that already holds
 notes. Do destructive testing there, never in a synced vault.
 
-**Installing a release.** Omarchy / Arch: `yay -S envynote`, launch it,
-and turn on Settings → System → "Bind Ctrl+Alt+Return in Hyprland" (or add
-`pcall(dofile, "/usr/share/envy/hyprland-envy.lua")` to
-`~/.config/hypr/bindings.lua` yourself). Elsewhere, run
-the AppImage from the GitHub release. Cutting a release is `scripts/release.sh`;
+**Installing a release.** Omarchy / Arch: Envy ships from its own pacman
+repository (the AUR closed registrations when 1.0.0 shipped). Add to
+`/etc/pacman.conf` once:
+
+```
+[envynote]
+SigLevel = Optional TrustAll
+Server = https://github.com/skuthus/Envy-Omarchy/releases/download/repo
+```
+
+then `sudo pacman -Sy envynote`. Updates arrive with `omarchy update` (or a
+plain `pacman -Syu` on other Arch systems; Omarchy's hook blocks that form).
+Launch it and turn on Settings → System → "Bind Ctrl+Alt+Return in
+Hyprland" (or add `pcall(dofile, "/usr/share/envy/hyprland-envy.lua")` to
+`~/.config/hypr/bindings.lua` yourself). Prefer building it yourself?
+`cd linux && makepkg -si` from a clone. Elsewhere, run the AppImage from the
+GitHub release. Cutting a release is `scripts/release.sh`;
 see RELEASING.md. Envy is MIT licensed (LICENSE). The Linux port numbers its
 own releases (1.0.0 onwards): it follows the Mac app's features, not its
 version.

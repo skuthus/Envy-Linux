@@ -5,6 +5,9 @@
 #   scripts/release.sh            # everything, ending in `gh release create`
 #   scripts/release.sh --dry-run  # everything except the upload
 #
+# After the versioned release, scripts/publish-repo.sh refreshes the pacman
+# repository (the `repo` release) so `pacman -Syu` picks the version up.
+#
 # The version is Tauri's (src-tauri/tauri.conf.json); the tag is v<version>.
 # Bump the version there and in linux/PKGBUILD (_tauriver) before running.
 # The gate can be skipped with ENVY_SKIP_GATE=1, which build.sh honours.
@@ -93,3 +96,6 @@ git push origin "$TAG"
 gh release create "$TAG" "$TARBALL" "$TARBALL.sha256" ${APPIMAGE:+"$APPIMAGE"} \
   --title "Envy $VERSION" --generate-notes
 echo "published: $(gh release view "$TAG" --json url --jq .url)"
+
+# The pacman repository points at this version from now on.
+scripts/publish-repo.sh
