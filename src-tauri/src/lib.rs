@@ -17,6 +17,7 @@ use tauri_plugin_autostart::ManagerExt as AutostartManagerExt;
 pub mod config;
 mod control;
 mod hyprland;
+mod kindle_mtp;
 mod omarchy;
 pub mod themes;
 mod tray;
@@ -2465,11 +2466,15 @@ struct KindleProgress {
     total: usize,
 }
 
-/// The plugged-in Kindle's `My Clippings.txt`, if one is mounted (see
-/// `envy_core::kindle::detection_roots` for where Linux is searched).
+/// The plugged-in Kindle's `My Clippings.txt`: a path when the Kindle mounts
+/// as a drive (see `envy_core::kindle::detection_roots` for where Linux is
+/// searched), else an `mtp://` URI when the desktop's GIO layer can read it
+/// off an MTP Kindle (see `kindle_mtp`).
 #[tauri::command(async)]
 fn detect_kindle_clippings() -> Option<String> {
-    envy_core::kindle::detect_clippings_file().map(|p| p.to_string_lossy().into_owned())
+    envy_core::kindle::detect_clippings_file()
+        .map(|p| p.to_string_lossy().into_owned())
+        .or_else(kindle_mtp::detect)
 }
 
 /// Imports highlights from `path` — or from the detected Kindle when `None` —
@@ -2491,9 +2496,9 @@ async fn import_kindle_clippings(
 ) -> Result<KindleImportSummary, String> {
     use envy_core::kindle;
 
-    let file = match path {
-        Some(p) => PathBuf::from(p),
-        None => kindle::detect_clippings_file().ok_or_else(|| {
+    let source = match path {
+        Some(p) => p,
+        None => detect_kindle_clippings().ok_or_else(|| {
             "No Kindle detected: plug it in and refresh, or choose the file by hand.".to_string()
         })?,
     };
@@ -2501,14 +2506,18 @@ async fn import_kindle_clippings(
     // holds it in memory twice (the bytes, then the lossy String) — so a wrong
     // pick (a disk image, a video) is refused rather than swallowed.
     const MAX_CLIPPINGS_BYTES: u64 = 64 * 1024 * 1024;
-    let size = std::fs::metadata(&file)
-        .map_err(|e| format!("Couldn't read the Clippings file: {e}"))?
-        .len();
-    if size > MAX_CLIPPINGS_BYTES {
-        return Err("That file is over 64 MB — it isn't a Kindle Clippings file.".to_string());
-    }
-    let bytes = std::fs::read(&file)
-        .map_err(|e| format!("Couldn't read the Clippings file: {e}"))?;
+    let bytes = if kindle_mtp::is_uri(&source) {
+        kindle_mtp::read(&source, MAX_CLIPPINGS_BYTES as usize)?
+    } else {
+        let file = PathBuf::from(&source);
+        let size = std::fs::metadata(&file)
+            .map_err(|e| format!("Couldn't read the Clippings file: {e}"))?
+            .len();
+        if size > MAX_CLIPPINGS_BYTES {
+            return Err("That file is over 64 MB — it isn't a Kindle Clippings file.".to_string());
+        }
+        std::fs::read(&file).map_err(|e| format!("Couldn't read the Clippings file: {e}"))?
+    };
     let raw = String::from_utf8_lossy(&bytes).into_owned();
 
     let index = state.store.lock().unwrap().directory().to_path_buf();

@@ -206,11 +206,13 @@ Notes an agent writes carry a `⎈ created by …` line, which `ai:` finds.
 
 ## Kindle highlights
 
-Enable Kindle import in Settings, plug in a Kindle that mounts as a drive, and
-Import pulls every highlight into the Inbox as one note each, titled by the
-quote's first words, with the book as a `[[link]]`. Newer Kindles do not
-mount; copy their `My Clippings.txt` over and choose the file instead. Envy
-remembers what it has imported, so re-importing only adds what is new.
+Enable Kindle import in Settings, plug in a Kindle, and Import pulls every
+highlight into the Inbox as one note each, titled by the quote's first words,
+with the book as a `[[link]]`. Older Kindles mount as a drive; recent ones
+connect over MTP, which the desktop reads directly, so both are detected. If
+yours still isn't seen, copy its `My Clippings.txt` over and choose the file
+instead. Envy remembers what it has imported, so re-importing only adds what
+is new.
 
 ## Shortcuts at a glance
 
