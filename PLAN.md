@@ -14,8 +14,8 @@ the Mac and Windows apps, on Omarchy (Arch Linux + Hyprland).
 ## 1. What you are building
 
 Envy is a Notational-Velocity-style notes app: one search box, instant
-filter-as-you-type, Return opens the top match or creates a note from the
-query, notes are plain `.md` files in one folder called The Index.
+filter-as-you-type, Return opens the exactly-titled note or creates one from
+the query, notes are plain `.md` files in one folder called The Index.
 
 There are already two implementations:
 

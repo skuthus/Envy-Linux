@@ -134,6 +134,9 @@ const dividerEl = document.getElementById('divider')!
 /// the pane fixed at its CSS height, which reads as a divider that won't drag.
 const listPaneEl = document.getElementById('list-pane')!
 const listEl = document.getElementById('list')!
+// The Mac's "Press ⏎ to create" pill: the promise of what Return does while
+// nothing carries the typed title, so a partial match never surprises anyone.
+const createHintEl = document.getElementById('create-hint')!
 const listHeaderEl = document.getElementById('list-header')!
 /// The sticky pinned rows, between the header and the scrolling list.
 const pinnedStripEl = document.getElementById('pinned-strip')!
@@ -3184,6 +3187,9 @@ function runSearch(): Promise<void> {
 
 async function performSearch() {
   const gen = ++searchGeneration
+  // Hidden until the plain-search branch below knows whether Return would
+  // create. Operator, template, trash and catalog queries never create.
+  createHintEl.classList.add('hidden')
   // A direct run supersedes any keystroke-debounced one still waiting.
   if (searchDebounceTimer !== undefined) {
     clearTimeout(searchDebounceTimer)
@@ -3260,6 +3266,7 @@ async function performSearch() {
   markOrderDirty()
   highlighted = 0
   renderList()
+  renderCreateHint()
 }
 
 /// Focus the editor after opening, unless the setting says to stay in the
@@ -4078,7 +4085,12 @@ function containsSearchOperator(query: string): boolean {
     })
 }
 
-/// Return: open the top match, or create a note from what was typed.
+/// Return: open the note titled exactly what was typed, or create one.
+///
+/// Partial matches in the list do not change that — the Mac's rule. Typing
+/// "welcome to envy is" while "Welcome to Envy" exists makes the new note;
+/// the search box is a title field first and a filter second, and the pill
+/// under the list says which of the two Return is about to do.
 ///
 /// The exceptions matter as much as the rule:
 ///
@@ -4185,12 +4197,14 @@ async function openOrCreate() {
     return
   }
 
-  if (results.length > 0) {
-    await openHighlighted()
-    focusEditorIfWanted()
+  // Nothing typed: Return just moves into whatever is highlighted.
+  if (!query) {
+    if (results.length > 0) {
+      await openHighlighted()
+      focusEditorIfWanted()
+    }
     return
   }
-  if (!query) return
 
   // "New notes start in the Inbox" makes filing a deliberate act. Notes made
   // by following a link, or from a template, are unaffected — both are already
@@ -4205,6 +4219,23 @@ async function openOrCreate() {
   await openNote(created.id)
   renderList()
   focusEditorIfWanted()
+}
+
+/// Shows "Press ⏎ to create …" under the list whenever Return would make a
+/// note: a plain query with no exactly-titled note among the loaded rows.
+/// Reads the same rows openOrCreate does, so the pill and the key agree.
+function renderCreateHint() {
+  const query = searchInput.value.trim()
+  const exact = results.some((n) => n?.title.toLowerCase() === query.toLowerCase())
+  if (!query || containsSearchOperator(query) || exact) {
+    createHintEl.classList.add('hidden')
+    return
+  }
+  const targeted = folderTargetedCreation(query)
+  createHintEl.textContent = targeted
+    ? `Press ⏎ to create “${targeted.title}” in ${targeted.folder}`
+    : `Press ⏎ to create “${query}”`
+  createHintEl.classList.remove('hidden')
 }
 
 async function captureToInbox(title: string) {

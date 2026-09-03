@@ -39,6 +39,9 @@
                Alt+Down/Up and by clicking a row, which is what lets it answer
                arrows, j/k, Return and Delete on its own. -->
           <div id="list" role="listbox" aria-label="Notes" tabindex="-1"></div>
+          <!-- What Return is about to do while the typed title doesn't exist
+               yet. Inert: a click here would only steal focus from the box. -->
+          <div id="create-hint" class="hidden" aria-live="polite"></div>
         </div>
         <div
           id="divider"
@@ -96,8 +99,8 @@
           </div>
           <div id="editor"></div>
           <div id="empty-state">
-            Type to search. Press Return to open the top match, or create a note
-            from what you typed.
+            Type to search. Press Return to open the note with that title, or
+            to create it.
           </div>
           <!-- Trashed notes are shown, never edited: a note in the trash is a
                record of something removed, and letting it be typed into would

@@ -1,9 +1,9 @@
 # Welcome to Envy
 
 Envy is one search box over a folder of plain Markdown files. Type to filter
-your notes, press Return to open the top match, or to create a note from
-whatever you typed when nothing matches. That is the whole idea; everything
-below is detail.
+your notes, then press Return: it opens the note with exactly that title, or
+creates one from whatever you typed. That is the whole idea; everything below
+is detail.
 
 This note is an ordinary note. Edit it, delete it, or keep it as a cheat
 sheet. Press **Ctrl+/** at any time for the built-in reference (markup,
@@ -33,9 +33,11 @@ anywhere, **Alt+Backspace** clears it.
 - Separate alternatives with a comma: `meeting, standup` finds either.
 - Everything else within one query narrows: `project tag:work due:week`.
 - Put `-` in front of a term or an operator to exclude it: `-tag:done`.
-- Return opens the highlighted note. If the search matches nothing, Return
-  creates a note with that title. Type `inbox: some words` and Return to
-  capture a fleeting note in the Inbox without leaving where you are.
+- Return opens the note whose title is exactly what you typed. Otherwise it
+  creates a new note with that title, even when other notes match the words;
+  the pill under the list says which it is about to do. Arrow down to open a
+  partial match instead. Type `inbox: some words` and Return to capture a
+  fleeting note in the Inbox without leaving where you are.
 
 ### Operators
 
