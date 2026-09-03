@@ -31,7 +31,7 @@ must be underlined, "bad" must be plain text, the image must show.
 to load the Vite dev URL, and with no dev server up the navigation guard
 refuses it, so the window comes up blank. Build the real thing with
 `npm run tauri build -- --no-bundle` (about 40 s) and run
-`./target/release/envy-linux`. `./build.sh` is the same plus .deb/AppImage.
+`./target/release/envynote`. `./build.sh` is the same plus .deb/AppImage.
 `./scripts/gui-smoke.sh --release` drives that binary (and refuses if it is
 older than `src/` or `src-tauri/src/`); `--big-vault [path]` points the Index at
 a large vault for a paging pass and always restores it afterwards.
@@ -41,9 +41,9 @@ previews differ from the dev build until you set them there too.
 ## Doing it by hand
 
 - Launch: `nohup npm run tauri dev > dev.log 2>&1 &` — first Rust build takes
-  a few minutes; later ones ~5s. The window class is `envy-linux`.
-- Wait/locate: `hyprctl clients -j | jq '.[]|select(.class=="envy-linux")|{at,size}'`
-- Focus: `hyprctl dispatch 'hl.dsp.focus({window="class:envy-linux"})'` — this
+  a few minutes; later ones ~5s. The window class is `envynote`.
+- Wait/locate: `hyprctl clients -j | jq '.[]|select(.class=="envynote")|{at,size}'`
+- Focus: `hyprctl dispatch 'hl.dsp.focus({window="class:envynote"})'` — this
   Hyprland takes Lua, not the classic `focuswindow class:x` form, and prints a
   warning instead of failing; confirm with `hyprctl activewindow -j | jq .class`.
 - Screenshot: `grim -g "X,Y WxH" shot.png` with the numbers from `at`/`size`,
@@ -59,7 +59,7 @@ previews differ from the dev build until you set them there too.
 - Don't type markdown tables through wtype — the editor auto-inserts pipes and
   the table comes out doubled. Write the `.md` file straight into the vault;
   the watcher reloads it within ~2s.
-- Stop: `pkill -x envy-linux`, then kill the `npm run tauri dev` job (it is the parent of the CLI, vite and cargo).
+- Stop: `pkill -x envynote`, then kill the `npm run tauri dev` job (it is the parent of the CLI, vite and cargo).
 
 ## Testing config edits
 
@@ -70,10 +70,10 @@ window re-apply within a moment; the watcher is debounced at ~150 ms. Same for
 `~/.config/envy/themes/*.md`.
 
 ```bash
-envy-linux config path                       # where the file is
-envy-linux config check                      # parse + validate; exit 1 with the problems
-envy-linux theme list                        # theme files Envy can parse
-envy-linux theme export smoke                # save the live theme as themes/smoke.md
+envynote config path                       # where the file is
+envynote config check                      # parse + validate; exit 1 with the problems
+envynote theme list                        # theme files Envy can parse
+envynote theme export smoke                # save the live theme as themes/smoke.md
 ```
 
 `config check` needs no running instance, so it is also the fastest way to

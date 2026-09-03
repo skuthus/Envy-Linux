@@ -16,7 +16,7 @@ DRY=0
 
 VERSION=$(python3 -c 'import json;print(json.load(open("src-tauri/tauri.conf.json"))["version"])')
 TAG="v$VERSION"
-NAME="envy-linux-$VERSION"
+NAME="envynote-$VERSION"
 OUT="target/release/dist"
 TARBALL="$OUT/$NAME-x86_64.tar.gz"
 
@@ -39,7 +39,7 @@ echo "== build (through the ship gate)"
 echo "== assemble $TARBALL"
 rm -rf "$OUT/$NAME"
 mkdir -p "$OUT/$NAME/icons"
-cp target/release/envy-linux "$OUT/$NAME/"
+cp target/release/envynote "$OUT/$NAME/"
 cp linux/envy.desktop linux/hyprland-envy.lua linux/envy-summon.sh LICENSE README.md "$OUT/$NAME/"
 # The agent skill, as the PKGBUILD installs it: /usr/share/envy/agents/skills/envy.
 mkdir -p "$OUT/$NAME/agents/skills"
@@ -59,11 +59,11 @@ if command -v makepkg >/dev/null; then
   TARBALL_ABS=$(realpath "$TARBALL")
   ( cd "$PKGDIR" && ENVY_LOCAL_TARBALL="$TARBALL_ABS" makepkg -f --skipchecksums --nodeps >/dev/null 2>"$PKGDIR/makepkg.log" ) \
     || { echo "release: makepkg failed - see $PKGDIR/makepkg.log" >&2; exit 1; }
-  PKG=$(ls "$PKGDIR"/envy-linux-*.pkg.tar.* | head -1)
+  PKG=$(ls "$PKGDIR"/envynote-*.pkg.tar.* | head -1)
   # Listed to a file: under pipefail, `tar | grep -q` fails on the broken
   # pipe grep's early exit hands tar, even when the entry is present.
   tar -tf "$PKG" > "$PKGDIR/files.txt"
-  grep -q '^usr/bin/envy-linux$' "$PKGDIR/files.txt" || { echo "release: package lacks usr/bin/envy-linux" >&2; exit 1; }
+  grep -q '^usr/bin/envynote$' "$PKGDIR/files.txt" || { echo "release: package lacks usr/bin/envynote" >&2; exit 1; }
   grep -q '^usr/share/envy/agents/skills/envy/SKILL.md$' "$PKGDIR/files.txt" \
     || { echo "release: package lacks the envy agent skill" >&2; exit 1; }
   echo "   ok: $(basename "$PKG") ($(grep -c '^usr/' "$PKGDIR/files.txt") files under usr/)"

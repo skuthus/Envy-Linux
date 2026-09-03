@@ -98,7 +98,7 @@ Consult in this order when behavior is unclear:
 **Where a setting is born:** `config/schema.json`. It is the single source of
 truth for every user setting, and a key that is not in it does not exist. The
 frontend reads it for defaults and validation, Rust reads it for
-`envy-linux config check` and the handful of keys it needs before the window
+`envynote config check` and the handful of keys it needs before the window
 opens, and `scripts/gen-skill-docs.mjs` turns it into the agent skill's
 reference page. Add the key there first, then wire it up. Settings live in
 `~/.config/envy/config.md`, not in localStorage, which keeps only per-window
@@ -186,9 +186,9 @@ This repo currently contains only `README.md`, `PLAN.md`, `AGENTS.md`, and
    match). Overwrite Windows `README.md` with a Linux README that still points
    at PLAN.md and says this is a port of Envy-Windows.
 4. Rewrite identity strings:
-   - `package.json` name: `envy-linux`
-   - `src-tauri/Cargo.toml` package name: `envy-linux` (lib name
-     `envy_linux_lib` is fine)
+   - `package.json` name: `envynote`
+   - `src-tauri/Cargo.toml` package name: `envynote` (lib name
+     `envynote_lib` is fine)
    - `src-tauri/tauri.conf.json`:
      - `identifier`: `app.envynote.linux`
      - `productName` can stay `Envy`
@@ -576,7 +576,7 @@ they differ, per AGENTS.md. What changed from the text above:
   `hl.dsp.workspace.toggle_special('envy')`). The summon bind lives in
   `linux/hyprland-envy.lua` and is loaded from the owner's `bindings.lua`
   with a guarded `dofile` (owner approved editing it). Window class measured:
-  `envy-linux`; the rule matches class + title `^Envy$` so pop-outs stay
+  `envynote`; the rule matches class + title `^Envy$` so pop-outs stay
   ordinary windows.
 - **Packaging (Phase 6):** `.deb` and AppImage both build; AppImage needs
   `NO_STRIP=true` (set in `build.sh`) because linuxdeploy's bundled `strip`

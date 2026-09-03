@@ -21,7 +21,7 @@ mod omarchy;
 pub mod themes;
 mod tray;
 
-/// `envy-linux --toggle` and friends: see `control`.
+/// `envynote --toggle` and friends: see `control`.
 pub fn control_send(verb: &str) -> bool {
     control::send(verb)
 }
@@ -1819,7 +1819,7 @@ pub(crate) async fn run_update_check(app: tauri::AppHandle, manual: bool) {
 fn linux_update_advice(exe: &std::path::Path) -> String {
     if exe.starts_with("/usr") {
         "Envy updates through your package manager, not from here.\n\n\
-         From the AUR: yay -Syu envy-linux (or paru -Syu envy-linux).\n\
+         From the AUR: yay -Syu envynote (or paru -Syu envynote).\n\
          From the repository: cd linux && makepkg -si."
             .to_string()
     } else {
@@ -2145,12 +2145,35 @@ fn set_autostart(enabled: bool, app: tauri::AppHandle) -> Result<(), String> {
 
 /// Makes the XDG autostart entry match the config, on launch and on every
 /// change to the file. Only touched when it disagrees: the plugin rewrites the
-/// entry on `enable`, and doing that every launch is churn for nothing.
+/// entry on `enable`, and doing that every launch is churn for nothing. An
+/// entry that points at a binary other than this one counts as disagreeing:
+/// the path is baked into the entry, so a checkout build that becomes a
+/// package (or moves) would otherwise keep launching the old file.
 fn apply_autostart(app: &tauri::AppHandle) {
     let wanted = config::autostart();
-    if app.autolaunch().is_enabled().unwrap_or(false) != wanted {
+    let enabled = app.autolaunch().is_enabled().unwrap_or(false);
+    if enabled != wanted || (wanted && !autostart_points_here()) {
         let _ = write_autostart(app, wanted);
     }
+}
+
+/// Whether the XDG autostart entry's `Exec=` names this very binary.
+fn autostart_points_here() -> bool {
+    let Ok(exe) = std::env::current_exe() else { return true };
+    let Some(config) = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
+    else {
+        return true;
+    };
+    let Ok(entry) = std::fs::read_to_string(config.join("autostart").join("Envy.desktop")) else {
+        return true;
+    };
+    entry
+        .lines()
+        .find_map(|l| l.strip_prefix("Exec="))
+        .map(|exec| exec.trim().starts_with(&*exe.to_string_lossy()))
+        .unwrap_or(true)
 }
 
 fn write_autostart(app: &tauri::AppHandle, enabled: bool) -> Result<(), String> {

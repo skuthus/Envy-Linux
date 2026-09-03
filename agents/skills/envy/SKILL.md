@@ -1,11 +1,11 @@
 ---
 name: envy
 description: >
-  REQUIRED for configuring Envy, the flat-file note-taking app (envy-linux,
-  envynote). Use when editing ~/.config/envy/config.md or
+  REQUIRED for configuring Envy, the flat-file note-taking app (package and
+  binary: envynote). Use when editing ~/.config/envy/config.md or
   ~/.config/envy/themes/, or when the request touches Envy's settings, note
   list, editor, vault or notes folder, Inbox, trash sweep, Kindle import,
-  keyboard shortcuts, colours or theme. Triggers: Envy, envynote, envy-linux,
+  keyboard shortcuts, colours or theme. Triggers: Envy, envynote,
   config.md, ~/.config/envy, Envy theme, Envy settings, Envy shortcuts, Envy
   vault, tag colours, folder colours. Excludes developing Envy itself.
 ---
@@ -30,7 +30,7 @@ and edit. The Settings panel writes the same files, so the two never disagree.
 - Envy keyboard shortcuts, or re-binding one
 - Envy colours: a theme, a tag colour, a folder colour, making Envy match an
   Omarchy theme
-- The `envy-linux config` and `envy-linux theme` commands
+- The `envynote config` and `envynote theme` commands
 
 **If you are about to edit a file under `~/.config/envy/`, stop and read this
 skill first.**
@@ -92,14 +92,14 @@ leave everything else alone.
 reported, not fatal, so a typo does not break Envy. It also does nothing,
 silently, until someone runs the check. Check the reference first.
 
-**Always run `envy-linux config check` after editing `config.md`.** It parses
+**Always run `envynote config check` after editing `config.md`.** It parses
 the file, validates it against the schema, prints one problem per line and
 exits non-zero if there are any. It works whether or not Envy is running.
-After editing a theme file, run `envy-linux theme check`: it validates every
+After editing a theme file, run `envynote theme check`: it validates every
 theme file the same way and exits non-zero on a problem.
 
 ```bash
-envy-linux config check
+envynote config check
 ```
 
 **Changes apply live.** Envy watches the config and themes directories. A save
@@ -109,12 +109,12 @@ user to restart Envy.
 ## Commands
 
 ```bash
-envy-linux config check          # validate config.md; exit 1 on problems
-envy-linux config path           # print the config file path
-envy-linux config edit           # open config.md in Envy (needs Envy running)
-envy-linux theme list            # theme file names, one per line, problems indented under each
-envy-linux theme check           # validate every theme file; exit 1 on problems
-envy-linux theme export <name>   # write the theme in use now to themes/<name>.md
+envynote config check          # validate config.md; exit 1 on problems
+envynote config path           # print the config file path
+envynote config edit           # open config.md in Envy (needs Envy running)
+envynote theme list            # theme file names, one per line, problems indented under each
+envynote theme check           # validate every theme file; exit 1 on problems
+envynote theme export <name>   # write the theme in use now to themes/<name>.md
 ```
 
 `theme export` and `config edit` talk to the running app over its control
@@ -156,7 +156,7 @@ show_preview = false
 show_date = false
 ```
 
-Then `envy-linux config check`.
+Then `envynote config check`.
 
 **"Put new notes in the Inbox and show me the count."**
 
@@ -196,14 +196,14 @@ A sample note so this file previews the theme when opened in Envy.
 ````
 
 ```bash
-envy-linux theme list
-envy-linux config check
+envynote theme list
+envynote config check
 ```
 
 Nothing else changes: `appearance.theme` stays `omarchy`, and the file is
 picked up because its name matches the Omarchy slug. If the user wants a
 starting point with every colour spelled out instead, run
-`envy-linux theme export tokyo-night` first and edit what it wrote.
+`envynote theme export tokyo-night` first and edit what it wrote.
 
 **"Change the summon hotkey."** That one is not Envy's to change on Wayland.
 See the global shortcuts section of [`shortcuts.md`](shortcuts.md).

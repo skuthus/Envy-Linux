@@ -88,7 +88,7 @@ function renderSettings(schema) {
   out.push(
     `Every key of the toml fence in ${code(schema.file)}. A key that is not in the`,
     'file keeps its default. An unknown key or a bad value is reported by',
-    '`envy-linux config check` and ignored by the app; it never stops Envy',
+    '`envynote config check` and ignored by the app; it never stops Envy',
     'starting.\n',
   )
   out.push('Top-level keys go above the first `[table]` header. Everything else')
@@ -154,7 +154,7 @@ function renderSettings(schema) {
   out.push('theme = "light"')
   out.push('text_size = 1.15')
   out.push('```\n')
-  out.push('After any edit, run `envy-linux config check`. A running Envy picks the')
+  out.push('After any edit, run `envynote config check`. A running Envy picks the')
   out.push('change up on its own.')
 
   return out.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd() + '\n'
@@ -173,7 +173,7 @@ function renderShortcuts(specs) {
   out.push('jumpToSearch = "Ctrl+K"')
   out.push('```\n')
   out.push('An id you leave out keeps its default. An id that is not in this list is')
-  out.push('reported by `envy-linux config check` and ignored.\n')
+  out.push('reported by `envynote config check` and ignored.\n')
 
   out.push('## Chord grammar\n')
   out.push('A chord is modifiers then one key, joined by `+`, with no spaces. The')
@@ -214,7 +214,7 @@ function renderShortcuts(specs) {
   out.push('These are meant to work from any app. On Wayland no app can register a')
   out.push('global hotkey, so on Omarchy and Hyprland the chord in the config file is')
   out.push('not what fires them: a Hyprland bind is. `linux/hyprland-envy.lua` binds')
-  out.push('`CTRL + ALT + RETURN` to `envy-summon.sh`, which runs `envy-linux --toggle`')
+  out.push('`CTRL + ALT + RETURN` to `envy-summon.sh`, which runs `envynote --toggle`')
   out.push('over the control socket. That file is loaded by one line in')
   out.push('`~/.config/hypr/bindings.lua`, which `system.hyprland_bind = true` in')
   out.push('config.md adds (and `false` removes) — see settings.md. To change the')
@@ -238,7 +238,7 @@ function renderShortcuts(specs) {
   out.push('jumpToSearch = "Ctrl+K"')
   out.push('toggleLayout = "F6"')
   out.push('```\n')
-  out.push('Then `envy-linux config check`. The change applies to the running app.')
+  out.push('Then `envynote config check`. The change applies to the running app.')
 
   return out.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd() + '\n'
 }

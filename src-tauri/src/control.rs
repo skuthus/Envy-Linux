@@ -1,7 +1,7 @@
 //! A control socket, so a compositor keybind can do what the bar icon does.
 //!
 //! Wayland has no app-registered global hotkeys, so "summon" has to be a
-//! Hyprland bind that runs a command. That command is `envy-linux --toggle`:
+//! Hyprland bind that runs a command. That command is `envynote --toggle`:
 //! it hands the verb to the running instance over this socket and exits, or,
 //! with nothing listening, carries on and becomes the instance. The socket
 //! lives in `$XDG_RUNTIME_DIR` (per-user, 0700), and the only things it
@@ -96,13 +96,13 @@ fn handle(app: &AppHandle, stream: UnixStream) {
             on_main(app, |app| toggle_pinned_window(app));
             true
         }
-        // `envy-linux config edit`: the file opens in Envy's own editor, so
+        // `envynote config edit`: the file opens in Envy's own editor, so
         // the window has to be up first.
         "edit-config" => {
             on_main(app, |app| summon_with(app, "edit-config", None));
             true
         }
-        // `envy-linux theme export <name>`: only the running app knows what
+        // `envynote theme export <name>`: only the running app knows what
         // the *resolved* theme is — the Omarchy-derived colours, the Envious
         // face, and any overlay — so it writes the file, not the CLI.
         verb if verb.starts_with("export-theme ") => {

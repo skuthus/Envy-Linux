@@ -50,7 +50,7 @@ isn't shown twice.
 
 **Summon.** Wayland has no app-registered global hotkeys, so summon is a
 Hyprland bind: `linux/hyprland-envy.lua` binds **Ctrl+Alt+Return** to
-`linux/envy-summon.sh`, which runs `envy-linux --toggle`. That hands the verb
+`linux/envy-summon.sh`, which runs `envynote --toggle`. That hands the verb
 to the running instance over its control socket
 (`$XDG_RUNTIME_DIR/envy-control.sock`; verbs `toggle`, `show`, `pinned`) and
 does exactly what the bar icon's click does, or launches Envy when nothing is
@@ -71,7 +71,7 @@ image attachments, subfolders, Inbox, Templates, `.trash`) — default
 `~/Envy Test Vault`. It refuses to write into a folder that already holds
 notes. Do destructive testing there, never in a synced vault.
 
-**Installing a release.** Omarchy / Arch: `yay -S envy-linux`, launch it,
+**Installing a release.** Omarchy / Arch: `yay -S envynote`, launch it,
 and turn on Settings → System → "Bind Ctrl+Alt+Return in Hyprland" (or add
 `pcall(dofile, "/usr/share/envy/hyprland-envy.lua")` to
 `~/.config/hypr/bindings.lua` yourself). Elsewhere, run
@@ -129,12 +129,12 @@ A sample note with a [link](https://envynote.app), a #tag and `code`.
 From the command line:
 
 ```bash
-envy-linux config check          # validate config.md; exit 1 with the problems
-envy-linux config path           # print the config path
-envy-linux config edit           # open config.md in Envy (needs it running)
-envy-linux theme list            # theme file names, with any problems
-envy-linux theme check           # validate every theme file; exit 1 with the problems
-envy-linux theme export <name>   # save the theme in use now as themes/<name>.md
+envynote config check          # validate config.md; exit 1 with the problems
+envynote config path           # print the config path
+envynote config edit           # open config.md in Envy (needs it running)
+envynote theme list            # theme file names, with any problems
+envynote theme check           # validate every theme file; exit 1 with the problems
+envynote theme export <name>   # save the theme in use now as themes/<name>.md
 ```
 
 **The agent skill.** `agents/skills/envy/` teaches an agent all of the above:

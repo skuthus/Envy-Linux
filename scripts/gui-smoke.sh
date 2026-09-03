@@ -8,7 +8,7 @@
 # table/link/image renderer (see the screenshots) and delete-to-trash.
 #
 #   ./scripts/gui-smoke.sh [output-dir]              # dev build (npm run tauri dev)
-#   ./scripts/gui-smoke.sh --release [output-dir]    # ./target/release/envy-linux
+#   ./scripts/gui-smoke.sh --release [output-dir]    # ./target/release/envynote
 #   ./scripts/gui-smoke.sh --release --big-vault [path]   # paging pass, 19k notes
 #
 # --release is the only way to exercise the production CSP: the dev build uses
@@ -77,7 +77,7 @@ else
 fi
 
 if [[ "$MODE" == "release" ]]; then
-  BIN="./target/release/envy-linux"
+  BIN="./target/release/envynote"
   [[ -x "$BIN" ]] || { echo "no release binary at $BIN — build it: npm run tauri build -- --no-bundle"; exit 2; }
   stale="$(find src src-tauri/src -type f -newer "$BIN" -print -quit 2>/dev/null || true)"
   [[ -z "$stale" ]] || {
@@ -102,7 +102,7 @@ cleanup() {
   # The dev server is started in its own session, so its process group holds
   # npm, the tauri CLI, vite, cargo and the app — one signal takes them all.
   [[ -n "$DEVPID" ]] && kill -TERM -- "-$DEVPID" 2>/dev/null || true
-  pkill -x envy-linux 2>/dev/null || true
+  pkill -x envynote 2>/dev/null || true
   if (( ! BIG )); then
     [[ -n "$TEMPLATE" && -f "$SHOT/template.bak" ]] && cp "$SHOT/template.bak" "$TEMPLATE"
     rm -f "$NOTE" "$VAULT/.trash/$TITLE.md"
@@ -113,7 +113,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-pgrep -x envy-linux >/dev/null && { echo "Envy is already running; close it first"; exit 2; }
+pgrep -x envynote >/dev/null && { echo "Envy is already running; close it first"; exit 2; }
 if [[ "$MODE" == "dev" ]] && ss -ltn | grep -q ':1420 '; then
   echo "port 1420 is busy — a stale vite from an earlier run? try: pkill -f node_modules/.bin/vite"; exit 2
 fi
@@ -124,15 +124,15 @@ if [[ "$MODE" == "dev" ]]; then
   setsid npm run tauri dev >"$LOG" 2>&1 &
 else
   echo "== launching release binary (log: $LOG)"
-  setsid ./target/release/envy-linux >"$LOG" 2>&1 &
+  setsid ./target/release/envynote >"$LOG" 2>&1 &
 fi
 DEVPID=$!
 for _ in $(seq 1 90); do
-  hyprctl clients -j | jq -e '.[] | select(.class=="envy-linux")' >/dev/null 2>&1 && break
+  hyprctl clients -j | jq -e '.[] | select(.class=="envynote")' >/dev/null 2>&1 && break
   grep -q 'terminated with a non-zero status\|error\[E' "$LOG" 2>/dev/null && break
   sleep 2
 done
-GEO="$(hyprctl clients -j | jq -r '.[] | select(.class=="envy-linux") | "\(.at[0]),\(.at[1]) \(.size[0])x\(.size[1])"' | head -1)"
+GEO="$(hyprctl clients -j | jq -r '.[] | select(.class=="envynote") | "\(.at[0]),\(.at[1]) \(.size[0])x\(.size[1])"' | head -1)"
 [[ -n "$GEO" ]] || { echo "window never appeared — see $LOG"; exit 1; }
 pass "window up at $GEO"
 
@@ -140,9 +140,9 @@ pass "window up at $GEO"
 # exit code, so focus is confirmed by asking which window is active.
 focus() {
   for _ in 1 2 3 4 5; do
-    hyprctl dispatch 'hl.dsp.focus({window="class:envy-linux"})' >/dev/null 2>&1 || true
+    hyprctl dispatch 'hl.dsp.focus({window="class:envynote"})' >/dev/null 2>&1 || true
     sleep 0.3
-    [[ "$(hyprctl activewindow -j | jq -r .class)" == envy-linux ]] && return 0
+    [[ "$(hyprctl activewindow -j | jq -r .class)" == envynote ]] && return 0
     sleep 0.5
   done
   echo "could not focus the Envy window"; return 1

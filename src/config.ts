@@ -323,7 +323,7 @@ const HEX_COLOR = /^#?[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/
 /// half nonsense still runs, with the nonsense parts on their defaults.
 ///
 /// Rust validates the same schema, and its list is the one
-/// `envy-linux config check` prints — so this only runs when Rust found
+/// `envynote config check` prints — so this only runs when Rust found
 /// nothing, where it is a backstop rather than a second opinion nobody asked
 /// for. Two validators describing one fault in two wordings would just make
 /// the footer twice as long.

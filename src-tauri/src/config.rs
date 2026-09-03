@@ -70,7 +70,7 @@ pub fn expand_tilde(raw: &str) -> PathBuf {
 
 // --- The schema --------------------------------------------------------------
 
-/// The schema is compiled in rather than read from disk: `envy-linux config
+/// The schema is compiled in rather than read from disk: `envynote config
 /// check` has to work from an installed binary, where the repo is not around,
 /// and a schema that could go missing at runtime would need a second answer
 /// for what "valid" means.
@@ -196,7 +196,7 @@ const HEADER: &str = "\
 # Envy settings
 
 Edit here or in Settings; both stay in sync. Keys are documented in the envy
-skill (`settings.md`); `envy-linux config check` validates this file.
+skill (`settings.md`); `envynote config check` validates this file.
 
 ";
 
@@ -226,7 +226,7 @@ fn first_line(s: &str) -> String {
 /// Every remappable shortcut id, from `SHORTCUT_SPECS` in `src/shortcut-specs.ts`.
 ///
 /// Copied rather than shared because the frontend's list is TypeScript and
-/// this has to work in a binary with no frontend loaded — `envy-linux config
+/// this has to work in a binary with no frontend loaded — `envynote config
 /// check` is the whole point. The copy cannot drift: a test below parses
 /// `src/shortcut-specs.ts` and fails if the two lists differ.
 const SHORTCUT_IDS: [&str; 34] = [
@@ -1153,7 +1153,7 @@ pub fn theme_write_text(name: String, content: String, app: AppHandle) -> Result
 
 // --- CLI ---------------------------------------------------------------------
 
-/// `envy-linux config …` / `envy-linux theme …`, handled before anything GTK
+/// `envynote config …` / `envynote theme …`, handled before anything GTK
 /// touches the display: these have to work over ssh and from an agent with no
 /// session at all. Returns the exit code when the arguments were ours.
 pub fn cli(args: &[String]) -> Option<i32> {
@@ -1185,8 +1185,8 @@ pub fn cli(args: &[String]) -> Option<i32> {
         }
         ["config", ..] | ["theme", ..] => {
             eprintln!(
-                "usage: envy-linux config check|path|edit\n       \
-                 envy-linux theme list|check|export <name>"
+                "usage: envynote config check|path|edit\n       \
+                 envynote theme list|check|export <name>"
             );
             Some(2)
         }
@@ -1229,7 +1229,7 @@ fn forward(verb: &str) -> i32 {
     if crate::control::send(verb) {
         0
     } else {
-        eprintln!("envy-linux: Envy is not running");
+        eprintln!("envynote: Envy is not running");
         1
     }
 }

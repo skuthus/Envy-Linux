@@ -11,7 +11,7 @@ jumpToSearch = "Ctrl+K"
 ```
 
 An id you leave out keeps its default. An id that is not in this list is
-reported by `envy-linux config check` and ignored.
+reported by `envynote config check` and ignored.
 
 ## Chord grammar
 
@@ -48,7 +48,7 @@ chord.
 These are meant to work from any app. On Wayland no app can register a
 global hotkey, so on Omarchy and Hyprland the chord in the config file is
 not what fires them: a Hyprland bind is. `linux/hyprland-envy.lua` binds
-`CTRL + ALT + RETURN` to `envy-summon.sh`, which runs `envy-linux --toggle`
+`CTRL + ALT + RETURN` to `envy-summon.sh`, which runs `envynote --toggle`
 over the control socket. That file is loaded by one line in
 `~/.config/hypr/bindings.lua`, which `system.hyprland_bind = true` in
 config.md adds (and `false` removes) — see settings.md. To change the
@@ -117,4 +117,4 @@ jumpToSearch = "Ctrl+K"
 toggleLayout = "F6"
 ```
 
-Then `envy-linux config check`. The change applies to the running app.
+Then `envynote config check`. The change applies to the running app.

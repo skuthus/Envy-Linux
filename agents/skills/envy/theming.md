@@ -110,14 +110,14 @@ other mode name it whatever you like and point `appearance.theme` at it.
 ```bash
 cat ~/.local/state/omarchy/current/theme.name    # tokyo-night
 $EDITOR ~/.config/envy/themes/tokyo-night.md     # mode + the tokens to change
-envy-linux theme check                           # the file parses and every token is valid
-envy-linux config check                          # config.md is still valid
+envynote theme check                           # the file parses and every token is valid
+envynote config check                          # config.md is still valid
 ```
 
 ### Start from what is on screen and edit it
 
 ```bash
-envy-linux theme export midnight     # writes ~/.config/envy/themes/midnight.md
+envynote theme export midnight     # writes ~/.config/envy/themes/midnight.md
 ```
 
 That writes the theme Envy is showing right now, fully resolved: every token,
@@ -224,8 +224,8 @@ same file, check the text tokens against the new background, not the old one.
   `/usr/share/omarchy/themes/`. To change Envy's colours, write an Envy theme
   file. To change Omarchy's, see the `omarchy` skill.
 - One ` ```toml ` fence per file. Keep the body, keep any comments.
-- Run `envy-linux config check` after editing `config.md`. After editing a
-  theme file, `envy-linux theme check` validates it (`theme list` also prints
+- Run `envynote config check` after editing `config.md`. After editing a
+  theme file, `envynote theme check` validates it (`theme list` also prints
   each file's problems under its name), and a token that misses a contrast
   floor is named in Envy's footer status line once the theme is in use.
 - A theme change applies live. Nothing needs restarting.

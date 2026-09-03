@@ -8,7 +8,7 @@
 # work and is incremental, so the gate costs little on top.
 #
 # Produces:
-#   target/release/envy-linux                         <- run this directly
+#   target/release/envynote                         <- run this directly
 #   target/release/bundle/appimage/*.AppImage         <- portable bundle
 #   target/release/bundle/deb/*.deb                   <- Debian package
 set -euo pipefail
@@ -29,4 +29,4 @@ fi
 
 npm run tauri build -- "$@"
 echo
-echo "Done. Standalone app: $(pwd)/target/release/envy-linux"
+echo "Done. Standalone app: $(pwd)/target/release/envynote"

@@ -63,7 +63,7 @@ mkdir -p "$LOGDIR"
 
 # Safe to re-run: this script only ever kills what it started, and it will not
 # start anything on top of an app the owner has open.
-if (( gui )) && pgrep -x envy-linux >/dev/null; then
+if (( gui )) && pgrep -x envynote >/dev/null; then
   echo "Envy is already running — close it first (this script will not kill a window it did not open)."
   exit 2
 fi

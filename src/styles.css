@@ -1433,7 +1433,7 @@ body.popout-window {
   color: var(--envy-blockquote);
   word-break: break-all;
 }
-/* Problems reported by `envy-linux config check` are the one thing in the
+/* Problems reported by `envynote config check` are the one thing in the
    panel that wants to be noticed. */
 #settings-config-problems { color: var(--envy-due-soon); }
 #settings-panel button {

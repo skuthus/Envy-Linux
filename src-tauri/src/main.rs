@@ -2,19 +2,19 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    // `envy-linux config check|path|edit` and `envy-linux theme list|export
+    // `envynote config check|path|edit` and `envynote theme list|export
     // <name>`: answered before any GTK or Tauri initialisation, so the
     // read-only verbs work over ssh, in a build script, or from an agent with
     // no display at all.
     #[cfg(target_os = "linux")]
     {
         let args: Vec<String> = std::env::args().skip(1).collect();
-        if let Some(code) = envy_linux_lib::config::cli(&args) {
+        if let Some(code) = envynote_lib::config::cli(&args) {
             std::process::exit(code);
         }
     }
 
-    // `envy-linux --toggle` (or --show / --pinned) is what a compositor
+    // `envynote --toggle` (or --show / --pinned) is what a compositor
     // keybind runs: hand the verb to the running instance and leave, or, with
     // none running, fall through and become it — the window shows on launch,
     // which is what a summon wants.
@@ -25,7 +25,7 @@ fn main() {
         "--pinned" => Some("pinned"),
         _ => None,
     }) {
-        if envy_linux_lib::control_send(verb) {
+        if envynote_lib::control_send(verb) {
             return;
         }
     }
@@ -33,7 +33,7 @@ fn main() {
     linux_webkit_workarounds();
     #[cfg(target_os = "linux")]
     linux_font_rendering();
-    envy_linux_lib::run()
+    envynote_lib::run()
 }
 
 /// WebKitGTK's DMA-BUF renderer does not get along with the proprietary NVIDIA

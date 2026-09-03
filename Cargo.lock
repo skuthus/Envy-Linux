@@ -1012,7 +1012,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "envy-linux"
+name = "envynote"
 version = "1.0.0"
 dependencies = [
  "chrono",

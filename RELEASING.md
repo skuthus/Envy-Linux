@@ -8,7 +8,7 @@ the assets, and an AUR package that installs from them.
 - **Tag** `v<version>`, where `<version>` is `src-tauri/tauri.conf.json`'s
   version (for example `1.0.0`). The Linux port has its own version line: it
   tracks the Mac app's features, not its number.
-- **Tarball** `envy-linux-<version>-x86_64.tar.gz`: the release binary, the
+- **Tarball** `envynote-<version>-x86_64.tar.gz`: the release binary, the
   desktop entry, icons, the Hyprland bind file and its summon script, the
   `agents/skills/envy` skill, the README and LICENSE. This is what the AUR
   package installs; `linux/PKGBUILD` copies exactly that tree into `/usr`, so
@@ -25,7 +25,7 @@ the assets, and an AUR package that installs from them.
    with a local `makepkg`. Read what it prints.
 3. `scripts/release.sh` — the same, then tags, pushes the tag, and creates
    the GitHub release with `gh`.
-4. Publish the AUR package: in your AUR checkout of `envy-linux`, update
+4. Publish the AUR package: in your AUR checkout of `envynote`, update
    `_tauriver` and paste the sha256 the script printed into `sha256sums`,
    regenerate `.SRCINFO` (`makepkg --printsrcinfo > .SRCINFO`), commit, push.
    Omarchy users then get the update through `yay -Syu`.
@@ -35,7 +35,7 @@ is the template and the local-test harness, not the published package.
 
 ## Installing
 
-- Omarchy / Arch: `yay -S envy-linux`, launch it, and turn on Settings →
+- Omarchy / Arch: `yay -S envynote`, launch it, and turn on Settings →
   System → "Bind Ctrl+Alt+Return in Hyprland", which adds the
   `pcall(dofile, "/usr/share/envy/hyprland-envy.lua")` line to
   `~/.config/hypr/bindings.lua` and reloads Hyprland (or add it by hand).

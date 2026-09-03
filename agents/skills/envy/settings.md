@@ -4,7 +4,7 @@
 
 Every key of the toml fence in `~/.config/envy/config.md`. A key that is not in the
 file keeps its default. An unknown key or a bad value is reported by
-`envy-linux config check` and ignored by the app; it never stops Envy
+`envynote config check` and ignored by the app; it never stops Envy
 starting.
 
 Top-level keys go above the first `[table]` header. Everything else
@@ -194,5 +194,5 @@ theme = "light"
 text_size = 1.15
 ```
 
-After any edit, run `envy-linux config check`. A running Envy picks the
+After any edit, run `envynote config check`. A running Envy picks the
 change up on its own.

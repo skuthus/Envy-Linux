@@ -1,5 +1,5 @@
 {
-  "$comment": "The single source of truth for Envy's user configuration. Read by the frontend (src/config.ts: defaults, validation, Settings bindings), by Rust (src-tauri/src/config.rs: `envy-linux config check`, startup keys), and by scripts/gen-skill-docs.mjs (the agent skill's reference tables). Add a setting here first; nothing else may invent a key.",
+  "$comment": "The single source of truth for Envy's user configuration. Read by the frontend (src/config.ts: defaults, validation, Settings bindings), by Rust (src-tauri/src/config.rs: `envynote config check`, startup keys), and by scripts/gen-skill-docs.mjs (the agent skill's reference tables). Add a setting here first; nothing else may invent a key.",
   "version": 1,
   "file": "~/.config/envy/config.md",
   "themes_dir": "~/.config/envy/themes",

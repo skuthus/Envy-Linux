@@ -6070,14 +6070,14 @@ function applyAllSettings({ initial = false } = {}) {
 }
 
 // A change to config.md this window didn't make: an agent, an editor, the
-// `envy-linux config edit` path, or another window. Everything is re-applied
+// `envynote config edit` path, or another window. Everything is re-applied
 // rather than just the key that changed — the file arrives whole, and working
 // out the difference would be a second model of what a setting does.
 config.onChange((local) => {
   if (!local) applyAllSettings()
 })
 
-// `envy-linux theme export <name>` and `envy-linux config edit`, forwarded by
+// `envynote theme export <name>` and `envynote config edit`, forwarded by
 // Rust from the control socket after showing the window.
 void listen<string>('export-theme', (e) => void exportTheme(e.payload))
 void listen('edit-config', () => void editConfigInEnvy())
