@@ -2015,6 +2015,10 @@ body.popout-window {
    quiet left rule instead of a boxed card. */
 .envy-blockquote {
   color: var(--envy-blockquote);
+}
+/* On the line rather than the text span, so a quote that wraps keeps the
+   rule and the indent down every visual row. */
+.cm-editor .cm-line.envy-blockquote-line {
   border-left: 2px solid color-mix(in srgb, var(--envy-marker) 80%, transparent);
   padding-left: 10px;
 }

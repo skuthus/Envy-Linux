@@ -832,6 +832,11 @@ const styles = {
   tag: mark('envy-tag'),
   blockquote: mark('envy-blockquote'),
   blockquoteText: mark('envy-blockquote-text'),
+  /// The rule and the indent live on the *line*, not on the text span: an
+  /// inline span's left border is drawn once, at its start, so a wrapped
+  /// quote showed the bar beside its first visual line only. A line
+  /// decoration boxes every wrapped row.
+  blockquoteLine: Decoration.line({ class: 'envy-blockquote-line' }),
   footnote: mark('envy-footnote'),
   /// A footnote *reference* `[^1]` — the label rendered as a small raised
   /// superscript in the link colour, with the `[^`/`]` hidden, matching the Mac.
@@ -1112,6 +1117,7 @@ function buildDecorations(view: EditorView): DecorationSet {
       // typed from under the cursor.
       if (m[2].length === 0) continue
       const markerEnd = s + m[1].length
+      marks.push({ from: s, to: s, deco: styles.blockquoteLine })
       marks.push({ from: s, to: end, deco: styles.blockquote })
       // Italic on the content alone, not the marker — the Mac applies the
       // italic font to its contentRange only, the same way every other element
