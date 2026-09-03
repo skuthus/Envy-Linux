@@ -190,9 +190,12 @@ impl ksni::Tray for EnvyTray {
             MenuItem::Separator,
             // Checkmark reflects the current state, same as the Mac's
             // status-menu item.
+            // Hyprland pins floating windows only, so the item is greyed out
+            // while Envy is tiled; the setting itself is kept either way.
             CheckmarkItem {
                 label: "Keep Envy on Top".into(),
                 checked: persisted_keep_on_top(app),
+                enabled: crate::config::floating(),
                 activate: Box::new(|tray: &mut Self| on_main(&tray.app, toggle_keep_on_top)),
                 ..Default::default()
             }
@@ -299,7 +302,7 @@ pub fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
 
     if let Some(w) = app.get_webview_window("main") {
         follow_window(app, &w);
-        crate::hyprland::float_when_mapped(&w, crate::config::floating);
+        crate::hyprland::float_when_mapped(&w, crate::config::floating, Some(crate::config::keep_on_top));
     }
     follow_hyprland(app);
     install_bar_widget(app);

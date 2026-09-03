@@ -453,6 +453,14 @@
             <h3>Shortcuts</h3>
             <div id="shortcut-list"></div>
             <p class="setting-note" id="shortcut-conflicts"></p>
+            <p class="setting-note">
+              Wayland lets no app register a hotkey that works from other apps,
+              so the from-anywhere chords are not listed here. Show/Hide Envy is
+              <strong>Ctrl+Alt+Return</strong> through the Hyprland bind under
+              System; a bind of your own that runs
+              <code>envy-linux --pinned</code> does the same for the pinned
+              note. Keep on Top is in the bar icon's menu.
+            </p>
             <button id="shortcut-reset" type="button">Reset All to Defaults</button>
           </section>
 
@@ -482,14 +490,6 @@
               <input type="checkbox" id="setting-restore-focus" />
               Keep focus where it was when summoned
             </label>
-            <label>
-              <input type="checkbox" id="setting-taskbar" />
-              Show Envy in the taskbar
-            </label>
-            <p class="setting-note">
-              The tray icon is always there, so turning this off still leaves a
-              way back besides the hotkey.
-            </p>
             <label>
               <input type="checkbox" id="setting-tiled" />
               Envy is tiled

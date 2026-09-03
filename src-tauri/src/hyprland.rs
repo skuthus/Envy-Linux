@@ -148,23 +148,44 @@ mod tests {
 // itself, for the main window and for every pop-out, so it lives in config.md
 // and holds with or without the rule.
 
+/// What Hyprland knows about one of this process's windows, found by title.
+struct WindowState {
+    address: String,
+    floating: bool,
+    pinned: bool,
+}
+
 /// Hyprland's address for one of this process's windows, found by title,
-/// and whether it floats right now. Titles are the only handle the two sides
-/// share: Tauri has no view of the compositor's addresses and Hyprland's
-/// selectors take a single criterion.
-fn window_state(title: &str) -> Option<(String, bool)> {
+/// and whether it floats and is pinned right now. Titles are the only handle
+/// the two sides share: Tauri has no view of the compositor's addresses and
+/// Hyprland's selectors take a single criterion.
+fn window_state(title: &str) -> Option<WindowState> {
     let pid = std::process::id() as i64;
     let clients: serde_json::Value = serde_json::from_str(&crate::tray::hypr_query("j/clients")?).ok()?;
     clients.as_array()?.iter().find_map(|c| {
         (c.get("pid").and_then(|v| v.as_i64()) == Some(pid)
             && c.get("title").and_then(|v| v.as_str()) == Some(title))
         .then(|| {
-            let address = c.get("address").and_then(|v| v.as_str())?.to_string();
-            let floating = c.get("floating").and_then(|v| v.as_bool()).unwrap_or(false);
-            Some((address, floating))
+            let flag = |k: &str| c.get(k).and_then(|v| v.as_bool()).unwrap_or(false);
+            Some(WindowState {
+                address: c.get("address").and_then(|v| v.as_str())?.to_string(),
+                floating: flag("floating"),
+                pinned: flag("pinned"),
+            })
         })
         .flatten()
     })
+}
+
+/// Runs one window dispatcher against an address. Failures are Hyprland's to
+/// report; there is nothing to do about one here.
+fn dispatch(verb: &str, address: &str) {
+    let _ = std::process::Command::new("hyprctl")
+        .arg("dispatch")
+        .arg(format!("hl.dsp.window.{verb}({{ action = \"toggle\", window = \"address:{address}\" }})"))
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
 }
 
 /// Floats or tiles the window with this title, if Hyprland is showing it.
@@ -175,25 +196,34 @@ fn window_state(title: &str) -> Option<(String, bool)> {
 /// Returns whether Hyprland knew the window at all, so a caller acting on a
 /// window that is still being registered can try again.
 pub fn set_floating(title: &str, floating: bool) -> bool {
-    let Some((address, now)) = window_state(title) else { return false };
-    if now == floating {
-        return true;
+    let Some(state) = window_state(title) else { return false };
+    if state.floating != floating {
+        dispatch("float", &state.address);
     }
-    let _ = std::process::Command::new("hyprctl")
-        .arg("dispatch")
-        .arg(format!(
-            "hl.dsp.window.float({{ action = \"toggle\", window = \"address:{address}\" }})"
-        ))
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
     true
 }
 
-/// Applies the setting once the window is mapped — the moment Hyprland knows
+/// Pins or unpins the window with this title: Hyprland's pin keeps a window
+/// above the others and on every workspace, which is what "Keep on Top"
+/// means on a compositor where GTK's keep-above is an X11-only hint. Only a
+/// floating window can be pinned, so a tiled one is left alone (the tray
+/// item is greyed out while `system.tiled` is on). Toggles only when the
+/// live state disagrees, like `set_floating`, and returns whether Hyprland
+/// knew the window.
+pub fn set_pinned(title: &str, pinned: bool) -> bool {
+    let Some(state) = window_state(title) else { return false };
+    if state.pinned != pinned && (state.floating || !pinned) {
+        dispatch("pin", &state.address);
+    }
+    true
+}
+
+/// Applies the settings once the window is mapped — the moment Hyprland knows
 /// it — on the next main-loop turn, never inside the GTK signal itself.
-pub fn float_when_mapped(window: &tauri::WebviewWindow, floating: impl Fn() -> bool + Send + Sync + 'static) {
-    let floating: std::sync::Arc<dyn Fn() -> bool + Send + Sync> = std::sync::Arc::new(floating);
+/// `floating` says whether the window should float; `pinned`, if given,
+/// whether it should then be kept on top. Both are read at map time, not
+/// now, so a window hidden and shown again follows the current setting.
+pub fn float_when_mapped(window: &tauri::WebviewWindow, floating: fn() -> bool, pinned: Option<fn() -> bool>) {
     use gtk::prelude::WidgetExt;
     let window = window.clone();
     let app = window.app_handle().clone();
@@ -204,11 +234,18 @@ pub fn float_when_mapped(window: &tauri::WebviewWindow, floating: impl Fn() -> b
         // and how long a moment varies; poll until it is there, then act
         // once. Bounded so a window that never shows up (closed straight
         // away) does not keep a timer alive.
-        let apply = move |title: String, floating: std::sync::Arc<dyn Fn() -> bool + Send + Sync>| {
+        let apply = move |title: String| {
             let attempts = std::cell::Cell::new(0u32);
             gtk::glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
                 attempts.set(attempts.get() + 1);
-                if set_floating(&title, floating()) || attempts.get() >= 30 {
+                if set_floating(&title, floating()) {
+                    // The float dispatch has landed by the time hyprctl
+                    // returns, so the pin sees the window as it now is.
+                    if let Some(pinned) = pinned {
+                        set_pinned(&title, pinned());
+                    }
+                    gtk::glib::ControlFlow::Break
+                } else if attempts.get() >= 30 {
                     gtk::glib::ControlFlow::Break
                 } else {
                     gtk::glib::ControlFlow::Continue
@@ -220,14 +257,16 @@ pub fn float_when_mapped(window: &tauri::WebviewWindow, floating: impl Fn() -> b
         // will not fire again. Act now for that case; the signal covers a
         // window that is hidden and shown again later, like the main one.
         if gtk_window.is_mapped() {
-            apply(title.clone(), floating.clone());
+            apply(title.clone());
         }
-        gtk_window.connect_map(move |_| apply(title.clone(), floating.clone()));
+        gtk_window.connect_map(move |_| apply(title.clone()));
     });
 }
 
 /// Re-applies both settings to every open window: the main one and each
-/// pop-out. Run when the config changes.
+/// pop-out. Run when the config changes. Tiling a pinned window unpins it
+/// and floating it again does not pin it back, so the main window's pin is
+/// re-applied after its float.
 pub fn apply_floating(app: &AppHandle) {
     for (label, window) in app.webview_windows() {
         let floating = if label == "main" {
@@ -238,7 +277,19 @@ pub fn apply_floating(app: &AppHandle) {
             continue;
         };
         if let Ok(title) = window.title() {
-            let _ = set_floating(&title, floating);
+            if set_floating(&title, floating) && label == "main" {
+                set_pinned(&title, crate::config::keep_on_top());
+            }
+        }
+    }
+}
+
+/// Pins or unpins the main window to match `system.keep_on_top`. A tiled
+/// window cannot be pinned; the setting then waits for the window to float.
+pub fn apply_pinned(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        if let Ok(title) = window.title() {
+            set_pinned(&title, crate::config::keep_on_top());
         }
     }
 }

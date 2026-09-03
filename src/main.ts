@@ -1428,7 +1428,6 @@ const SETTING_KEY = {
   listDensity: ['list', 'density'],
   interfaceTextSize: ['appearance', 'text_size'],
   fadeFocusHighlight: ['appearance', 'fade_focus_highlight'],
-  showInTaskbar: ['system', 'show_in_taskbar'],
   showFooterClock: ['footer_clock', 'show'],
   showFooterClockDate: ['footer_clock', 'show_date'],
   showFooterClockOnlyWhenFullScreen: ['footer_clock', 'only_when_fullscreen'],
@@ -1507,7 +1506,6 @@ function readSettings() {
     listDensity: settingText('listDensity'),
     interfaceTextSize: settingNumber('interfaceTextSize'),
     fadeFocusHighlight: settingBool('fadeFocusHighlight'),
-    showInTaskbar: settingBool('showInTaskbar'),
     showFooterClock: settingBool('showFooterClock'),
     showFooterClockDate: settingBool('showFooterClockDate'),
     showFooterClockOnlyWhenFullScreen: settingBool('showFooterClockOnlyWhenFullScreen'),
@@ -5464,7 +5462,6 @@ function syncSettingsControls() {
   dropdown('setting-density').value = settings.listDensity
   dropdown('setting-text-size').value = String(settings.interfaceTextSize)
   checkbox('setting-fade-focus').checked = settings.fadeFocusHighlight
-  checkbox('setting-taskbar').checked = settings.showInTaskbar
   checkbox('setting-bold-list').checked = settings.boldFileListText
   checkbox('setting-clock').checked = settings.showFooterClock
   checkbox('setting-clock-date').checked = settings.showFooterClockDate
@@ -5661,9 +5658,6 @@ dropdown('setting-text-size').onchange = (e) => {
 bindToggle('setting-fade-focus', 'fadeFocusHighlight', () =>
   document.body.classList.toggle('fade-focus', settings.fadeFocusHighlight),
 )
-bindToggle('setting-taskbar', 'showInTaskbar', () =>
-  void invoke('set_show_in_taskbar', { show: settings.showInTaskbar }),
-)
 bindToggle('setting-clock', 'showFooterClock', startClockTick)
 bindToggle('setting-clock-date', 'showFooterClockDate', startClockTick)
 bindToggle('setting-clock-fullscreen', 'showFooterClockOnlyWhenFullScreen', startClockTick)
@@ -5726,8 +5720,11 @@ let recording: ShortcutId | null = null
 function renderShortcutSettings() {
   const clashes = conflicts()
   const list = el('shortcut-list')
+  // The global chords are left out: Wayland gives no app a hotkey that works
+  // from other apps, so a recorder for one would only pretend. The note under
+  // the list says where they went (the Hyprland bind, the bar icon's menu).
   list.replaceChildren(
-    ...SHORTCUT_SPECS.map((spec) => {
+    ...SHORTCUT_SPECS.filter((spec) => !spec.global).map((spec) => {
       const row = document.createElement('div')
       row.className = 'shortcut-row'
       row.append(el2('span', 'shortcut-label', spec.label))
@@ -6067,9 +6064,6 @@ function applyAllSettings({ initial = false } = {}) {
     )
   }
   if (before.inboxEnabled !== settings.inboxEnabled) void pushInboxEnabled()
-  if (before.showInTaskbar !== settings.showInTaskbar) {
-    void invoke('set_show_in_taskbar', { show: settings.showInTaskbar })
-  }
   markOrderDirty()
   void refreshVaultCounts()
   void runSearch()
@@ -6272,7 +6266,6 @@ async function boot() {
   if (settings.includeSubfolders) {
     pushes.push(invoke('set_include_subfolders', { include: true }))
   }
-  if (!settings.showInTaskbar) pushes.push(invoke('set_show_in_taskbar', { show: false }))
   const pushed = Promise.all(pushes)
   await initAppearance(() => {
     applyZoom()

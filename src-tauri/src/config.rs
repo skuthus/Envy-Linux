@@ -959,7 +959,9 @@ pub fn init(index_path_file: Option<PathBuf>, keep_on_top_file: Option<PathBuf>)
     // `system.floating` / `system.popout_floating` lived for one afternoon
     // before becoming `tiled` / `popout_tiled`, inverted. Nothing shipped with
     // them; a file that has them just loses them and takes the defaults.
-    let stale: Vec<&str> = ["floating", "popout_floating"]
+    // `system.show_in_taskbar` went with them: GTK's skip-taskbar hint is
+    // X11-only, so on Wayland it never did anything.
+    let stale: Vec<&str> = ["floating", "popout_floating", "show_in_taskbar"]
         .into_iter()
         .filter(|k| current.get("system").and_then(|t| t.get(*k)).is_some())
         .collect();

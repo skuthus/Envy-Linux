@@ -415,19 +415,11 @@
           "legacy": "restoreFocusOnSummon"
         },
         {
-          "key": "show_in_taskbar",
-          "type": "bool",
-          "default": true,
-          "label": "Show in the taskbar",
-          "doc": "Whether the window appears in taskbars and window switchers.",
-          "legacy": "showInTaskbar"
-        },
-        {
           "key": "keep_on_top",
           "type": "bool",
           "default": false,
           "label": "Keep on top",
-          "doc": "Keep the window above others and never hide it on focus loss. Also toggled by the keepOnTop shortcut and the bar icon menu.",
+          "doc": "Keep the window above others and never hide it on focus loss. On Hyprland this pins the window, which only a floating window can be, so it waits while system.tiled is on. Toggled from the bar icon's menu.",
           "owner": "rust",
           "legacy": "file:keep-on-top"
         },

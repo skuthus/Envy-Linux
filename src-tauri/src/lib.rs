@@ -238,6 +238,10 @@ fn save_keep_on_top(app: &tauri::AppHandle, on: bool) {
 /// `keep-on-top-changed` the frontend would act on for nothing.
 static KEEP_ON_TOP_APPLIED: AtomicBool = AtomicBool::new(false);
 
+/// Whether the main window floated the last time the config was applied;
+/// the tray menu's Keep on Top item depends on it.
+static FLOATING_APPLIED: AtomicBool = AtomicBool::new(true);
+
 /// Raises or lowers the main window's always-on-top flag, and tells the
 /// frontend the new state so it can suppress hide-on-focus-loss while on — a
 /// window pinned on top that vanishes the moment you click away would fight
@@ -245,7 +249,10 @@ static KEEP_ON_TOP_APPLIED: AtomicBool = AtomicBool::new(false);
 fn apply_keep_on_top(app: &tauri::AppHandle, on: bool) {
     KEEP_ON_TOP_APPLIED.store(on, Ordering::Relaxed);
     if let Some(w) = app.get_webview_window("main") {
+        // GTK's keep-above is an X11 hint the Wayland backend ignores, so on
+        // Hyprland the real work is the compositor's pin, done below.
         let _ = w.set_always_on_top(on);
+        hyprland::apply_pinned(app);
         // Windows leaves a de-topmost'd window at the top of the normal stack,
         // so it is restacked by hand there. On Linux the compositor owns
         // z-order: clearing always-on-top is the whole job.
@@ -938,6 +945,12 @@ pub(crate) fn apply_config_owned(app: &tauri::AppHandle) {
     let on = config::keep_on_top();
     if KEEP_ON_TOP_APPLIED.swap(on, Ordering::Relaxed) != on {
         apply_keep_on_top(app, on);
+        refresh_tray_menu(app);
+    }
+    // The tray's Keep on Top item is greyed out while tiled, so a change to
+    // `system.tiled` redraws the menu too.
+    let floating = config::floating();
+    if FLOATING_APPLIED.swap(floating, Ordering::Relaxed) != floating {
         refresh_tray_menu(app);
     }
     register_global_shortcuts(app, config::global_shortcuts());
@@ -1782,21 +1795,37 @@ pub(crate) async fn run_update_check(app: tauri::AppHandle, manual: bool) {
     let _ = app.emit("update-checked", ());
 }
 
-/// Linux builds have no update channel: this repository is private, so there is
-/// no `latest.json` an unauthenticated updater could fetch, and the updater
-/// plugin is not even compiled in (see Cargo.toml). Updating is `./build.sh`.
-/// A background check is a silent no-op; the Settings "Check Now" button says
-/// so instead of appearing to do nothing.
+/// Linux builds have no in-app update channel: there is no `latest.json` for
+/// the updater to fetch, and the plugin is only registered on Windows. Updates
+/// come the way the install did — the package manager for a packaged build,
+/// `./build.sh` for a checkout. A background check is a silent no-op; the
+/// Settings "Check Now" button says which of the two applies instead of
+/// appearing to do nothing.
 #[cfg(not(windows))]
 pub(crate) async fn run_update_check(app: tauri::AppHandle, manual: bool) {
     use tauri_plugin_dialog::DialogExt;
     if manual {
         app.dialog()
-            .message(
-                "This Linux build has no update channel yet.\n\nTo update, pull the repository and run ./build.sh.",
-            )
+            .message(linux_update_advice(&std::env::current_exe().unwrap_or_default()))
             .title("No Update Channel")
             .blocking_show();
+    }
+}
+
+/// The right update instruction for where this binary lives: under `/usr`
+/// it was installed by a package (the PKGBUILD in `linux/`), anywhere else it
+/// is a checkout's own build.
+#[cfg(not(windows))]
+fn linux_update_advice(exe: &std::path::Path) -> String {
+    if exe.starts_with("/usr") {
+        "Envy updates through your package manager, not from here.\n\n\
+         From the AUR: yay -Syu envy-linux (or paru -Syu envy-linux).\n\
+         From the repository: cd linux && makepkg -si."
+            .to_string()
+    } else {
+        "This build came from a checkout, so it updates with the code.\n\n\
+         Pull the repository and run ./build.sh."
+            .to_string()
     }
 }
 
@@ -2067,7 +2096,7 @@ async fn pop_out_note(id: String, inner_size: Option<(f64, f64)>, app: tauri::Ap
                 .build();
                 match built {
                     Ok(window) => {
-                        hyprland::float_when_mapped(&window, config::popout_floating);
+                        hyprland::float_when_mapped(&window, config::popout_floating, None);
                         // Remember where the user drags the edges to, so the
                         // next pop-out this session opens the same size even
                         // when the caller passes none. Logical units, the same
@@ -2100,18 +2129,6 @@ fn popout_note_id(window: tauri::WebviewWindow, state: State<AppState>) -> Optio
 }
 
 /// Whether the app launches at login.
-/// Where Envy appears outside its own window.
-///
-/// The tray icon is never removed, so there is always a way back to the app
-/// besides the global hotkey — the Mac makes the same guarantee with "always
-/// at least one of the two". Only the taskbar entry is optional.
-#[tauri::command]
-fn set_show_in_taskbar(show: bool, app: tauri::AppHandle) {
-    if let Some(w) = app.get_webview_window("main") {
-        let _ = w.set_skip_taskbar(!show);
-    }
-}
-
 #[tauri::command]
 fn autostart_enabled(app: tauri::AppHandle) -> bool {
     app.autolaunch().is_enabled().unwrap_or(false)
@@ -2493,7 +2510,6 @@ pub fn run() {
             autostart_enabled,
             set_autostart,
             set_global_shortcuts,
-            set_show_in_taskbar,
             pinned_note_id,
             set_pinned_note,
             open_in_main_window,
