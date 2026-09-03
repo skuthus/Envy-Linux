@@ -149,7 +149,12 @@ focus() {
 }
 shot()  { grim -g "$GEO" "$SHOT/$1.png"; }
 search() { wtype -M ctrl l -m ctrl; sleep 0.2; wtype -M alt -k BackSpace -m alt; sleep 0.2; wtype "$1"; sleep 0.8; wtype -k Return; sleep 1.2; }
-append_line() { wtype -M ctrl -k End -m ctrl; wtype -k Return; wtype "$1"; sleep 3; }
+# Return here is a newline when the editor has focus, and "open the
+# highlighted row, then focus the editor" when the search box has it (as it
+# does after an arrow press). The second is asynchronous, and the unoptimised
+# dev build over a few thousand notes needs a moment before the text may
+# follow, or it lands in the search box and reaches no file at all.
+append_line() { wtype -M ctrl -k End -m ctrl; wtype -k Return; sleep 1.2; wtype "$1"; sleep 3; }
 
 # Keystroke helpers for the big-vault pass: the app opens a note on every arrow
 # press, so anything faster than ~15 keys/s queues up and the screenshot lags

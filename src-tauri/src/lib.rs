@@ -2145,35 +2145,66 @@ fn set_autostart(enabled: bool, app: tauri::AppHandle) -> Result<(), String> {
 
 /// Makes the XDG autostart entry match the config, on launch and on every
 /// change to the file. Only touched when it disagrees: the plugin rewrites the
-/// entry on `enable`, and doing that every launch is churn for nothing. An
-/// entry that points at a binary other than this one counts as disagreeing:
-/// the path is baked into the entry, so a checkout build that becomes a
-/// package (or moves) would otherwise keep launching the old file.
+/// entry on `enable`, and doing that every launch is churn for nothing. The
+/// path is baked into the entry, so an entry pointing at a binary that no
+/// longer exists (a rename, a moved checkout) counts as disagreeing, and so
+/// does one pointing at a less permanent build than this one: a package
+/// install takes over from a checkout's release build, which takes over from
+/// a debug build. The other way round is left alone, so running a dev build
+/// or the smoke test does not steal the entry from the real install.
 fn apply_autostart(app: &tauri::AppHandle) {
     let wanted = config::autostart();
     let enabled = app.autolaunch().is_enabled().unwrap_or(false);
-    if enabled != wanted || (wanted && !autostart_points_here()) {
+    if enabled != wanted || (wanted && autostart_should_move_here()) {
         let _ = write_autostart(app, wanted);
     }
 }
 
-/// Whether the XDG autostart entry's `Exec=` names this very binary.
-fn autostart_points_here() -> bool {
-    let Ok(exe) = std::env::current_exe() else { return true };
+/// How permanent a binary's home is: a package (0), a checkout's release
+/// build (1), anything else such as a debug build (2).
+fn binary_rank(path: &str) -> u8 {
+    if path.starts_with("/usr/") {
+        0
+    } else if path.contains("/target/release/") {
+        1
+    } else {
+        2
+    }
+}
+
+#[cfg(test)]
+mod autostart_rank_tests {
+    use super::binary_rank;
+
+    #[test]
+    fn package_outranks_release_outranks_debug() {
+        assert!(binary_rank("/usr/bin/envynote") < binary_rank("/home/u/w/target/release/envynote"));
+        assert!(binary_rank("/home/u/w/target/release/envynote") < binary_rank("/home/u/w/target/debug/envynote"));
+        assert_eq!(binary_rank("/tmp/envynote"), binary_rank("/home/u/w/target/debug/envynote"));
+    }
+}
+
+/// Whether the XDG autostart entry should be rewritten to point at this
+/// binary: its `Exec=` target is gone, or ranks below this one.
+fn autostart_should_move_here() -> bool {
+    let Ok(exe) = std::env::current_exe() else { return false };
+    let exe = exe.to_string_lossy();
     let Some(config) = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
     else {
-        return true;
+        return false;
     };
     let Ok(entry) = std::fs::read_to_string(config.join("autostart").join("Envy.desktop")) else {
-        return true;
+        return false;
     };
-    entry
-        .lines()
-        .find_map(|l| l.strip_prefix("Exec="))
-        .map(|exec| exec.trim().starts_with(&*exe.to_string_lossy()))
-        .unwrap_or(true)
+    let Some(target) = entry.lines().find_map(|l| l.strip_prefix("Exec=")) else { return false };
+    // The plugin writes `Exec=<path> <args>`; the path is the first word.
+    let target = target.trim().split(' ').next().unwrap_or("").to_string();
+    if target == exe {
+        return false;
+    }
+    !std::path::Path::new(&target).exists() || binary_rank(&exe) < binary_rank(&target)
 }
 
 fn write_autostart(app: &tauri::AppHandle, enabled: bool) -> Result<(), String> {
