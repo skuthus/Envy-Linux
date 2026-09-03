@@ -134,7 +134,7 @@ const dividerEl = document.getElementById('divider')!
 /// the pane fixed at its CSS height, which reads as a divider that won't drag.
 const listPaneEl = document.getElementById('list-pane')!
 const listEl = document.getElementById('list')!
-// The Mac's "Press ⏎ to create" pill: the promise of what Return does while
+// The Mac's "Press ⏎ to create" hint: the promise of what Return does while
 // nothing carries the typed title, so a partial match never surprises anyone.
 const createHintEl = document.getElementById('create-hint')!
 const listHeaderEl = document.getElementById('list-header')!
@@ -4089,7 +4089,7 @@ function containsSearchOperator(query: string): boolean {
 ///
 /// Partial matches in the list do not change that — the Mac's rule. Typing
 /// "welcome to envy is" while "Welcome to Envy" exists makes the new note;
-/// the search box is a title field first and a filter second, and the pill
+/// the search box is a title field first and a filter second, and the line
 /// under the list says which of the two Return is about to do.
 ///
 /// The exceptions matter as much as the rule:

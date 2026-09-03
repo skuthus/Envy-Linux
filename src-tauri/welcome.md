@@ -35,7 +35,7 @@ anywhere, **Alt+Backspace** clears it.
 - Put `-` in front of a term or an operator to exclude it: `-tag:done`.
 - Return opens the note whose title is exactly what you typed. Otherwise it
   creates a new note with that title, even when other notes match the words;
-  the pill under the list says which it is about to do. Arrow down to open a
+  the line under the list says which it is about to do. Arrow down to open a
   partial match instead. Type `inbox: some words` and Return to capture a
   fleeting note in the Inbox without leaving where you are.
 

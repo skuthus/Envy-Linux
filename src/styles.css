@@ -280,19 +280,15 @@ body.fade-focus #editor-pane:focus-within {
    narrows the results enough to remove the scrollbar, and the columns shift
    out from under their headings as you type. */
 #list { flex: 1; min-height: 0; overflow-y: auto; scrollbar-gutter: stable; will-change: scroll-position; }
-/* "Press ⏎ to create …": a pill across the foot of the list, the Mac's hint.
-   Not part of the list's scroll, so it stays in view as the promise of what
+/* "Press ⏎ to create …": a plain line at the foot of the list, in the same
+   dim marker colour as the rest of the chrome and aligned with the rows. Not
+   part of the list's scroll, so it stays in view as the promise of what
    Return does; ellipsized rather than wrapped, since a long title is still
    one line in the box above. */
 #create-hint {
   flex: none;
-  align-self: center;
-  max-width: calc(100% - 24px);
-  margin: 6px 0 10px;
-  padding: 4px 12px;
-  border-radius: 999px;
-  border: 1px solid var(--envy-marker);
-  background: var(--envy-background);
+  padding: 4px var(--envy-inset) 6px;
+  border-top: 1px solid color-mix(in srgb, var(--envy-marker) 30%, transparent);
   color: var(--envy-marker);
   font-size: calc(var(--envy-font-size) * 0.85);
   white-space: nowrap;
