@@ -1,4 +1,4 @@
-// Envy-Omarchy: legibility floor for theme-driven text colours.
+// Envy-Linux: legibility floor for theme-driven text colours.
 //
 // Omarchy themes are written for terminals and window borders, where a dim
 // `muted` or `dark_foreground` is a design choice. Envy renders paragraphs of

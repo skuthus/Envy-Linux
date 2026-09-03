@@ -28,7 +28,7 @@ chosen path is the `vault` key of `~/.config/envy/config.md` (see
 Configuration below); older installs are migrated from
 `~/.config/app.envynote.linux/index-path` on first launch.
 
-**Omarchy theme.** This Envy-Omarchy variant follows the current Omarchy
+**Omarchy theme.** This Envy-Linux variant follows the current Omarchy
 theme (`~/.local/state/omarchy/current/theme/colors.toml`) and the Omarchy
 monospace font. Changing `omarchy theme set` or `omarchy font set` retints a
 running window. Settings → Appearance can pin Envious light/dark or a custom
@@ -78,7 +78,7 @@ repository (the AUR closed registrations when 1.0.0 shipped). Add to
 ```
 [envynote]
 SigLevel = Optional TrustAll
-Server = https://github.com/skuthus/Envy-Omarchy/releases/download/repo
+Server = https://github.com/skuthus/Envy-Linux/releases/download/repo
 ```
 
 then `sudo pacman -Sy envynote`. Updates arrive with `omarchy update` (or a

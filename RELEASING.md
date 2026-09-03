@@ -19,7 +19,7 @@ PKGBUILD is ready for it whenever that changes.)
 - **AppImage**, for people not on Arch.
 - **The `repo` release**: a pacman repository holding the newest package
   and its database (`envynote.db`, `envynote.files`), which is what
-  `Server = https://github.com/skuthus/Envy-Omarchy/releases/download/repo`
+  `Server = https://github.com/skuthus/Envy-Linux/releases/download/repo`
   in a user's `pacman.conf` reads. `scripts/publish-repo.sh` refreshes it
   from the package `release.sh` built; only the current version is kept.
 

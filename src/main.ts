@@ -994,7 +994,7 @@ function jumpToRange(range: { from: number; to: number }) {
 }
 
 // --- Layout -----------------------------------------------------------------
-// Vertical (list above, note below) is how Envy-Omarchy opens: a stacked
+// Vertical (list above, note below) is how Envy-Linux opens: a stacked
 // Notational Velocity pane, not a sidebar. Horizontal is the other choice, and
 // it is `appearance.layout` in config.md, so it survives a relaunch and can be
 // set from the file. The split position itself stays in localStorage: it is a

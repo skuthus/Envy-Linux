@@ -11,7 +11,7 @@ import {
   themeFile,
 } from './themes'
 
-// Envy-Omarchy: Envy's named color roles, filled either from the current
+// Envy-Linux: Envy's named color roles, filled either from the current
 // Omarchy theme (`colors.toml`) or from the Envious light/dark faces kept as
 // a Settings override.
 //

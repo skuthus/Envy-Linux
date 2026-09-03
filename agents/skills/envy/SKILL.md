@@ -35,7 +35,7 @@ and edit. The Settings panel writes the same files, so the two never disagree.
 **If you are about to edit a file under `~/.config/envy/`, stop and read this
 skill first.**
 
-Do NOT use this skill to develop Envy itself (the `Envy-omarchy` repo, its
+Do NOT use this skill to develop Envy itself (the `Envy-Linux` repo, its
 Rust crates or its TypeScript frontend). That work follows the repo's own
 `PLAN.md` and `AGENTS.md`.
 
