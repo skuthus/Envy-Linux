@@ -2212,7 +2212,14 @@ pub(crate) fn show_pinned_window(app: &tauri::AppHandle) {
     .transparent(true)
     .build();
     match built {
-        Ok(w) => tray::follow_window(app, &w),
+        Ok(w) => {
+            // `always_on_top` and `skip_taskbar` are X11 hints that Wayland
+            // ignores; on Hyprland the panel is floated and pinned instead,
+            // so it hangs above every workspace the way the builder intends,
+            // and lands centred, a short trip from anywhere.
+            hyprland::float_when_mapped(&w, || true, Some(|| true));
+            tray::follow_window(app, &w)
+        }
         Err(e) => eprintln!("could not open the pinned-note window: {e}"),
     }
 }

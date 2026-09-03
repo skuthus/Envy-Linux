@@ -276,11 +276,51 @@ renderKeepOpen()
 
 // Closing on blur is what the pin suppresses. The note is flushed first —
 // losing focus is not a reason to lose an edit.
+//
+// Not on the instant, though. Hyprland's default is focus-follows-mouse, so
+// every window the pointer crosses on its way from the tray to this panel
+// takes focus for a moment, and hiding on the first blur meant the panel
+// vanished before the pointer could reach it. A blur starts a grace period
+// instead; the pointer arriving (which also refocuses the panel under
+// follow-mouse) or focus returning cancels it. Only a blur with the pointer
+// parked elsewhere for the whole period hides the panel — as close to the
+// Mac's "click outside" as a compositor that focuses on hover allows.
+const BLUR_GRACE_MS = 1200
+let blurTimer: number | undefined
+let pointerInside = false
+
+function cancelBlurHide() {
+  if (blurTimer !== undefined) {
+    clearTimeout(blurTimer)
+    blurTimer = undefined
+  }
+}
+
+// `pointermove` as well as `pointerenter`: a pointer already resting over
+// the panel when it maps gets no enter event until it moves.
+for (const type of ['pointerenter', 'pointermove'] as const) {
+  document.documentElement.addEventListener(type, () => {
+    pointerInside = true
+    cancelBlurHide()
+  })
+}
+document.documentElement.addEventListener('pointerleave', () => {
+  pointerInside = false
+})
+
 try {
-  void getCurrentWindow().onFocusChanged(async ({ payload: focused }) => {
-    if (focused || keepOpen) return
-    await flush()
-    await hide()
+  void getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+    if (focused) {
+      cancelBlurHide()
+      return
+    }
+    if (keepOpen || pointerInside) return
+    cancelBlurHide()
+    blurTimer = window.setTimeout(() => {
+      blurTimer = undefined
+      if (keepOpen || pointerInside) return
+      void flush().then(hide)
+    }, BLUR_GRACE_MS)
   })
 } catch {
   // Running outside Tauri.
