@@ -934,6 +934,7 @@ fn open_index(
 pub(crate) fn apply_config_owned(app: &tauri::AppHandle) {
     apply_autostart(app);
     hyprland::apply(config::hyprland_bind());
+    hyprland::apply_floating(app);
     let on = config::keep_on_top();
     if KEEP_ON_TOP_APPLIED.swap(on, Ordering::Relaxed) != on {
         apply_keep_on_top(app, on);
@@ -2025,6 +2026,16 @@ async fn pop_out_note(id: String, inner_size: Option<(f64, f64)>, app: tauri::Ap
         }
         Action::Create(label, step) => {
             let handle = app.clone();
+            let title = {
+                let state = app.state::<AppState>();
+                let store = state.store.lock().unwrap();
+                store
+                    .notes()
+                    .iter()
+                    .find(|n| n.id() == id)
+                    .map(|n| n.title().to_string())
+                    .unwrap_or_else(|| "Note".to_string())
+            };
             let (width, height) = inner_size
                 .and_then(sane)
                 .or_else(|| LAST_POPOUT_SIZE.lock().unwrap().and_then(sane))
@@ -2039,7 +2050,10 @@ async fn pop_out_note(id: String, inner_size: Option<(f64, f64)>, app: tauri::Ap
                 // (`title = "^Envy$"`) does not swallow pop-outs. No OS
                 // chrome: Omarchy windows are dragged with Super, closed
                 // with Super+W or Escape.
-                .title("")
+                // The note's title, so the window reads in the bar and so
+                // Hyprland can be asked to float it; it never equals "Envy",
+                // which is what the main window's rule matches.
+                .title(&title)
                 .inner_size(width, height)
                 .position(140.0 + step, 120.0 + step)
                 .min_inner_size(240.0, 160.0)
@@ -2053,6 +2067,7 @@ async fn pop_out_note(id: String, inner_size: Option<(f64, f64)>, app: tauri::Ap
                 .build();
                 match built {
                     Ok(window) => {
+                        hyprland::float_when_mapped(&window, config::popout_floating);
                         // Remember where the user drags the edges to, so the
                         // next pop-out this session opens the same size even
                         // when the caller passes none. Logical units, the same
@@ -2492,6 +2507,7 @@ pub fn run() {
             config::config_load,
             config::config_set,
             config::config_read_text,
+            hyprland::main_window_fullscreen,
             config::config_write_text,
             config::envy_paths,
             config::themes_list,

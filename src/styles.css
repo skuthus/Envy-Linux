@@ -928,6 +928,10 @@ body.popout-window {
      glyph joined it, only when the window is too narrow and it wraps. */
   line-height: 1.6;
   min-height: calc(1.6em + 2px);
+  /* Never wraps: too narrow and the counts drop out instead (fitFooter). */
+  flex-wrap: nowrap;
+  white-space: nowrap;
+  overflow: hidden;
   font-variant-numeric: tabular-nums;
   color: var(--envy-chrome-text);
   background: color-mix(in srgb, var(--envy-marker) 10%, var(--envy-title-bar-background));

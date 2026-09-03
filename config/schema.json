@@ -438,6 +438,22 @@
           "label": "Bind Ctrl+Alt+Return in Hyprland",
           "doc": "Adds one line to ~/.config/hypr/bindings.lua that loads Envy's Hyprland file (the Ctrl+Alt+Return summon, the Ctrl+Alt+C centre bind and the floating window rule) and reloads Hyprland; off removes that line again. Only the line Envy added is ever touched: a bind you wrote yourself is left alone, and Envy will not add a second one beside it.",
           "owner": "rust"
+        },
+        {
+          "key": "tiled",
+          "type": "bool",
+          "default": false,
+          "label": "Envy is tiled",
+          "doc": "On Hyprland, tile the main window like any other. Off (the default) it floats as a centred panel. Applied when the window appears and again live when this changes.",
+          "owner": "rust"
+        },
+        {
+          "key": "popout_tiled",
+          "type": "bool",
+          "default": false,
+          "label": "Pop-out notes are tiled",
+          "doc": "On Hyprland, tile the windows that Pop Out and Alt+Shift-click open. Off (the default) they float. Applied to each pop-out as it appears and to open ones live when this changes.",
+          "owner": "rust"
         }
       ]
     },

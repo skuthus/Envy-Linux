@@ -517,24 +517,68 @@ function withFooterRules(parts: string[]): Node[] {
   return nodes
 }
 
-function renderStats() {
+// --- Fitting the footer to the window -----------------------------------------
+// The footer never wraps. When the window is too narrow for everything, the
+// counts drop out one at a time, least useful first, until what is left fits;
+// a wider window brings them back. Decided from the real overflow, measured,
+// rather than from a breakpoint, so it holds for any font, zoom or setting.
+type FooterCount = 'characters' | 'words' | 'folders' | 'notes'
+// Dropped in this order, so words outlast characters, which outlast the
+// vault totals; folders go first.
+const FOOTER_COLLAPSE_ORDER: FooterCount[] = ['folders', 'notes', 'characters', 'words']
+const footerCollapsed = new Set<FooterCount>()
+const footerEl = document.getElementById('footer')!
+
+function paintStats() {
   if (!openNoteId && !openExternal) {
     statsEl.textContent = ''
-    renderVaultLabel()
+    paintVaultLabel()
     return
   }
   const text = view.state.doc.toString()
   const parts: string[] = []
-  if (settings.footerWords) {
+  if (settings.footerWords && !footerCollapsed.has('words')) {
     const words = countWords(text)
     parts.push(`${words.toLocaleString()} word${words === 1 ? '' : 's'}`)
   }
-  if (settings.footerCharacters) {
+  if (settings.footerCharacters && !footerCollapsed.has('characters')) {
     const chars = countCharacters(text)
     parts.push(`${chars.toLocaleString()} character${chars === 1 ? '' : 's'}`)
   }
   statsEl.replaceChildren(...withFooterRules(parts))
-  renderVaultLabel()
+  paintVaultLabel()
+}
+
+function footerOverflows(): boolean {
+  return footerEl.scrollWidth > footerEl.clientWidth + 1
+}
+
+/// Paints everything the settings allow, then hides counts in order until the
+/// footer fits. Synchronous layout reads, so it runs once per change rather
+/// than on every keystroke: `renderStats` and `renderVaultLabel` schedule it.
+function fitFooter() {
+  footerCollapsed.clear()
+  paintStats()
+  for (const key of FOOTER_COLLAPSE_ORDER) {
+    if (!footerOverflows()) break
+    footerCollapsed.add(key)
+    paintStats()
+  }
+}
+
+let footerFitFrame = 0
+function scheduleFooterFit() {
+  if (footerFitFrame) return
+  footerFitFrame = requestAnimationFrame(() => {
+    footerFitFrame = 0
+    fitFooter()
+  })
+}
+new ResizeObserver(() => scheduleFooterFit()).observe(footerEl)
+
+function renderStats() {
+  paintStats()
+  scheduleFooterFit()
 }
 
 // Whole-vault totals, cached between the backend reads (which only change when
@@ -548,10 +592,17 @@ let vaultCounts = { notes: 0, folders: 0 }
 /// Envy, so a count would just be noise (the Mac's rule). The `·` divider rule
 /// appears only when the open note's own counts sit beside it.
 function renderVaultLabel() {
+  paintVaultLabel()
+  scheduleFooterFit()
+}
+
+function paintVaultLabel() {
   const { notes, folders } = vaultCounts
   const parts: string[] = []
-  if (settings.footerNotes) parts.push(`${notes.toLocaleString()} note${notes === 1 ? '' : 's'}`)
-  if (settings.footerFolders && settings.includeSubfolders) {
+  if (settings.footerNotes && !footerCollapsed.has('notes')) {
+    parts.push(`${notes.toLocaleString()} note${notes === 1 ? '' : 's'}`)
+  }
+  if (settings.footerFolders && settings.includeSubfolders && !footerCollapsed.has('folders')) {
     parts.push(`${folders.toLocaleString()} folder${folders === 1 ? '' : 's'}`)
   }
   if (parts.length === 0) {
@@ -1370,6 +1421,8 @@ const SETTING_KEY = {
   showBacklinks: ['editor', 'show_interlinks'],
   hideOnFocusLoss: ['system', 'hide_on_focus_loss'],
   hyprlandBind: ['system', 'hyprland_bind'],
+  tiled: ['system', 'tiled'],
+  popoutTiled: ['system', 'popout_tiled'],
   restoreFocusOnSummon: ['system', 'restore_focus_on_summon'],
   linkPreview: ['editor', 'link_preview'],
   listDensity: ['list', 'density'],
@@ -1447,6 +1500,8 @@ function readSettings() {
     showBacklinks: settingBool('showBacklinks'),
     hideOnFocusLoss: settingBool('hideOnFocusLoss'),
     hyprlandBind: settingBool('hyprlandBind'),
+    tiled: settingBool('tiled'),
+    popoutTiled: settingBool('popoutTiled'),
     restoreFocusOnSummon: settingBool('restoreFocusOnSummon'),
     linkPreview: settingText('linkPreview'),
     listDensity: settingText('listDensity'),
@@ -5172,8 +5227,10 @@ function formatClockDate(d: Date): string {
 /// hiding anything. Both calls are read-only and already in `core:window:default`.
 async function isFullScreen(): Promise<boolean> {
   try {
-    const w = getCurrentWindow()
-    return (await w.isFullscreen()) || (await w.isMaximized())
+    // Rust asks the compositor. GTK's own "maximized" answered yes for any
+    // tiled window on Hyprland, and its fullscreen flag only knew about
+    // fullscreen the app requested itself, so the clock never hid.
+    return await invoke<boolean>('main_window_fullscreen')
   } catch {
     // Outside Tauri. Reporting "not full screen" keeps the clock visible rather
     // than hiding it for a reason that cannot be checked.
@@ -5210,6 +5267,11 @@ function startClockTick() {
   // almost a whole one.
   clockTimer = window.setInterval(() => void tick(), 30_000)
 }
+// Entering or leaving full screen resizes the window; re-check then rather
+// than waiting for the next 30-second tick.
+window.addEventListener('resize', () => {
+  if (settings.showFooterClock && settings.showFooterClockOnlyWhenFullScreen) startClockTick()
+})
 
 // --- Footer notices ---------------------------------------------------------
 // One line in the footer for the things the app noticed but shouldn't
@@ -5392,6 +5454,8 @@ function syncSettingsControls() {
   checkbox('setting-show-interlinks').checked = settings.showBacklinks
   checkbox('setting-hide-on-blur').checked = settings.hideOnFocusLoss
   checkbox('setting-hyprland-bind').checked = settings.hyprlandBind
+  checkbox('setting-tiled').checked = settings.tiled
+  checkbox('setting-popout-tiled').checked = settings.popoutTiled
   checkbox('setting-restore-focus').checked = settings.restoreFocusOnSummon
   checkbox('setting-auto-update').checked = settings.checkForUpdatesAutomatically
   renderLastChecked()
@@ -5559,6 +5623,9 @@ bindToggle('setting-hide-on-blur', 'hideOnFocusLoss')
 // Applied by Rust when the config write lands: it edits bindings.lua and
 // reloads Hyprland, which is not the webview's to do.
 bindToggle('setting-hyprland-bind', 'hyprlandBind')
+// Rust asks Hyprland to float or tile the open windows when these land.
+bindToggle('setting-tiled', 'tiled')
+bindToggle('setting-popout-tiled', 'popoutTiled')
 bindToggle('setting-restore-focus', 'restoreFocusOnSummon')
 bindToggle('setting-auto-update', 'checkForUpdatesAutomatically')
 // Always checks, regardless of the auto toggle — that's the point of asking.

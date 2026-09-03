@@ -956,6 +956,23 @@ pub fn init(index_path_file: Option<PathBuf>, keep_on_top_file: Option<PathBuf>)
         list.insert("vault_counts".into(), Value::Null);
         patch.insert("list".into(), Value::Object(list));
     }
+    // `system.floating` / `system.popout_floating` lived for one afternoon
+    // before becoming `tiled` / `popout_tiled`, inverted. Nothing shipped with
+    // them; a file that has them just loses them and takes the defaults.
+    let stale: Vec<&str> = ["floating", "popout_floating"]
+        .into_iter()
+        .filter(|k| current.get("system").and_then(|t| t.get(*k)).is_some())
+        .collect();
+    if !stale.is_empty() {
+        let mut system = patch
+            .remove("system")
+            .and_then(|v| v.as_object().cloned())
+            .unwrap_or_default();
+        for k in stale {
+            system.insert(k.to_string(), Value::Null);
+        }
+        patch.insert("system".into(), Value::Object(system));
+    }
     if !patch.is_empty() {
         let _ = merge(&Value::Object(patch));
     }
@@ -994,6 +1011,20 @@ pub fn include_subfolders() -> bool {
 
 pub fn autostart() -> bool {
     value_of("system", "autostart")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
+
+/// `system.tiled`, inverted: the code thinks in "floating".
+pub fn floating() -> bool {
+    !value_of("system", "tiled")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
+
+/// `system.popout_tiled`, inverted likewise.
+pub fn popout_floating() -> bool {
+    !value_of("system", "popout_tiled")
         .and_then(|v| v.as_bool())
         .unwrap_or(false)
 }

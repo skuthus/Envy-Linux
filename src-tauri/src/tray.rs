@@ -299,6 +299,7 @@ pub fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
 
     if let Some(w) = app.get_webview_window("main") {
         follow_window(app, &w);
+        crate::hyprland::float_when_mapped(&w, crate::config::floating);
     }
     follow_hyprland(app);
     install_bar_widget(app);
@@ -400,7 +401,7 @@ fn hypr_socket(name: &str) -> Option<PathBuf> {
     Some(PathBuf::from(runtime).join("hypr").join(signature).join(name))
 }
 
-fn hypr_query(command: &str) -> Option<String> {
+pub(crate) fn hypr_query(command: &str) -> Option<String> {
     use std::io::{Read, Write};
     let mut stream = std::os::unix::net::UnixStream::connect(hypr_socket(".socket.sock")?).ok()?;
     stream.write_all(command.as_bytes()).ok()?;
