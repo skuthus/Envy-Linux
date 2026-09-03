@@ -1135,7 +1135,6 @@ function buildDecorations(view: EditorView): DecorationSet {
 
     for (const m of text.matchAll(P.taskList)) {
       const s = base + m.index!
-      const lineEnd = s + m[0].length
       const boxFrom = s + m[1].length
       if (insideCode(s, boxFrom + 3)) continue
       const checked = m[2][1] !== ' '
@@ -1147,7 +1146,16 @@ function buildDecorations(view: EditorView): DecorationSet {
         })
       }
       if (checked) {
-        marks.push({ from: boxFrom + 3, to: lineEnd, deco: styles.completedTask })
+        // The strike covers the words alone. m[3] starts with the whitespace
+        // between "]" and the text, and may end with trailing whitespace; a
+        // line drawn across either reaches back to the box or past the last
+        // letter, and the Mac stops it at the text.
+        const rest = m[3]
+        const textFrom = boxFrom + 3 + (rest.length - rest.trimStart().length)
+        const textTo = boxFrom + 3 + rest.trimEnd().length
+        if (textTo > textFrom) {
+          marks.push({ from: textFrom, to: textTo, deco: styles.completedTask })
+        }
       }
     }
 

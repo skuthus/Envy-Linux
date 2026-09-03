@@ -2046,7 +2046,9 @@ body.popout-window {
   flex: none;
   width: 1.15em;
   height: 1.15em;
-  margin-right: 0.45em;
+  /* The space after "]" survives in the text beside the box, so the box
+     itself adds almost nothing: a margin on top of it read as a gap. */
+  margin-right: 0.1em;
   /* Centre the box on the text rather than letting it ride high above the
      line. `middle` lines its centre up with the middle of the lowercase text. */
   vertical-align: middle;
