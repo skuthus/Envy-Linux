@@ -898,11 +898,14 @@ void getCurrentWebview().onDragDropEvent(async (event) => {
   if (!openNoteId && !openExternal) return
   const imagePath = event.payload.paths.find((p) => isImageTarget(p))
   if (!imagePath) return
-  // The reported position is in physical pixels; posAtCoords wants CSS pixels.
-  const dpr = window.devicePixelRatio || 1
+  // The position is labelled physical, but on Linux it is GTK's own logical
+  // widget coordinate handed straight through (wry's webkitgtk drag_drop
+  // passes the drag-drop signal's x/y untouched), so it is already in CSS
+  // pixels. Dividing by devicePixelRatio, as the Windows port does for a real
+  // physical position, put the caret at half the distance on a 2× display.
   const pos = view.posAtCoords({
-    x: event.payload.position.x / dpr,
-    y: event.payload.position.y / dpr,
+    x: event.payload.position.x,
+    y: event.payload.position.y,
   })
   try {
     const name = await invoke<string>('copy_attachment', { path: imagePath })
