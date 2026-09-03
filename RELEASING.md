@@ -26,7 +26,12 @@ PKGBUILD is ready for it whenever that changes.)
 ## Cutting one
 
 1. Bump the version in `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`
-   and `_tauriver` in `linux/PKGBUILD`. Commit.
+   and `_tauriver` in `linux/PKGBUILD`. Write the notes three times over, in
+   the same words: `linux/release-notes/<version>.md` (the GitHub release
+   body), `WHATS_NEW` in `src/reference.ts` (the in-app What's New, shown
+   once on the first launch of a new version), and the Omarchy section of
+   the website's changelog. Update the version on the website's Omarchy
+   page and the Linux badge on its front page. Commit.
 2. `scripts/release.sh --dry-run` — runs the ship gate through `build.sh`,
    builds, assembles the tarball, and proves `linux/PKGBUILD` packages it
    with a local `makepkg`. Read what it prints.
@@ -53,8 +58,11 @@ is the template and the local-test harness, not the published package.
 
 ## Updater
 
-The in-app "Check for Updates" is still a no-op on Linux: the Tauri updater
-needs a signing key and a `latest.json` next to the release assets. With the
-repo public that is now possible; it is a separate piece of work (Windows'
-`RELEASING.md` has the key procedure). The private signing key must never be
-committed here.
+There is no in-app installer on Linux and no automatic check. Check Now (and
+the tray's "Check for Updates…") asks GitHub's `releases/latest` for the
+newest tag, compares it with the running version, and offers to open a
+terminal with the update command — `sudo pacman -Sy envynote` for a package
+install, a pull and `./build.sh` for a checkout. So every version must be a
+real `vX.Y.Z` GitHub release (the `repo` release is published with
+`--latest=false` so it is never mistaken for one), and the pacman repository
+must be refreshed in the same step, which `release.sh` does.

@@ -226,33 +226,34 @@ function renderAbout(version: string): HTMLElement {
 
 /// What changed in this build.
 ///
-/// The Windows port's own history rather than a copy of the Mac's changelog —
-/// the two apps have different pasts, and showing macOS release notes to a
-/// Windows user would be describing changes they never experienced.
+/// The Linux port's own history, not the Mac's or Windows' — the ports have
+/// different pasts, and release notes for changes a user never experienced
+/// are noise. Kept in step with `linux/release-notes/<version>.md`, which
+/// the GitHub release and the website carry.
 const WHATS_NEW: Array<{ title: string; body: string }> = [
   {
-    title: 'Updates actually apply now',
-    body: 'An update could report success while leaving the old version in place, so Envy would offer you the same update on every launch. It was installing over its own running copy and quietly skipping the file it could not replace. It now steps out of the way first.',
+    title: 'Return creates unless the title exists',
+    body: 'Return in the search box opens the note titled exactly what you typed, and otherwise creates one — even when other notes match the words, the Mac’s rule. A “Press ⏎ to create …” line under the list says which it is about to do. Arrow down to open a partial match instead.',
   },
   {
-    title: 'Color your folders',
-    body: 'Organize by pile, if you like — a second axis alongside tags. Turn on “Show items in subfolders” in Settings, give a folder a color, and every note inside it shows a dot in that color. Right-click a note → Move to → to file it, or make a folder on the spot. It is a real file move, so the title does not change and [[links]] still resolve.',
+    title: 'Escape jumps to search',
+    body: 'From anywhere, Escape closes whatever is open one layer at a time and then lands in the search box. Ctrl+L is still there as a remap in Settings → Shortcuts.',
   },
   {
-    title: 'Tags got color too',
-    body: 'Right-click a tag chip beside a note’s title to color that tag, and every note carrying it shows the same color. Like a folder’s color it is a preference, never written into a note — your #tag on disk is untouched.',
+    title: 'Check for Updates means it',
+    body: 'Settings → Updates → Check Now, and the bar icon’s menu, ask GitHub for the newest release. If it is newer, a dialog offers to open a terminal with the update command. Envy never checks on its own.',
   },
   {
-    title: 'Split a note in two',
-    body: 'When a note has quietly grown to hold two ideas, select the part that wants to stand alone and press Ctrl+Alt+N. It becomes its own note, with a [[link]] left in its place and the title taken from the selection’s first line.',
+    title: 'Fonts you can actually pick',
+    body: 'Font family is a dropdown of every installed family, monospace first. A new OpenType features setting takes tags like ss01 for any font, and Cascadia’s cursive italics switch on by themselves.',
   },
   {
-    title: 'Highlighting, and a stale: search',
-    body: '==highlight== marks text with a background. And stale: is the flip side of date: — notes you have not touched. Bare stale: means the last six months; stale:week, stale:month, stale:year or stale:90 narrow it. Pair it with orphan: to surface notes that are both disconnected and forgotten.',
+    title: 'Kindles that don’t mount',
+    body: 'Kindles that connect over MTP — every recent Paperwhite — are detected and read directly. No more copying My Clippings.txt by hand.',
   },
   {
-    title: 'Cleaner links',
-    body: 'A bare URL collapses to a tidy pill showing just its domain, and right-clicking one lets you give that site an emoji. Click into it and the full address comes back so you can edit it.',
+    title: 'Fixes',
+    body: 'A task’s checkbox sits one space from its text and the strike covers the words alone. A wrapped quote keeps its rule down every row. A dropped image lands at the caret on a scaled display. Renaming an image selects the name, not the extension. The date column fits the dates on screen. Insets and paddings scale with the zoom, up to 160%. American spelling throughout.',
   },
 ]
 

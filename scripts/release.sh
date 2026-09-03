@@ -94,8 +94,16 @@ fi
 echo "== publish"
 git tag -a "$TAG" -m "Envy $VERSION" 2>/dev/null || echo "   tag $TAG already exists"
 git push origin "$TAG"
-gh release create "$TAG" "$TARBALL" "$TARBALL.sha256" ${APPIMAGE:+"$APPIMAGE"} \
-  --title "Envy $VERSION" --generate-notes
+# Hand-written notes when linux/release-notes/<version>.md exists (the same
+# text the in-app What's New and the website carry), else GitHub's commit list.
+NOTES="linux/release-notes/$VERSION.md"
+if [ -f "$NOTES" ]; then
+  gh release create "$TAG" "$TARBALL" "$TARBALL.sha256" ${APPIMAGE:+"$APPIMAGE"} \
+    --title "Envy $VERSION" --notes-file "$NOTES"
+else
+  gh release create "$TAG" "$TARBALL" "$TARBALL.sha256" ${APPIMAGE:+"$APPIMAGE"} \
+    --title "Envy $VERSION" --generate-notes
+fi
 echo "published: $(gh release view "$TAG" --json url --jq .url)"
 
 # The pacman repository points at this version from now on.
