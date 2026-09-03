@@ -52,6 +52,7 @@ function openDialog(
   initial: string | null,
   okLabel: string,
   cancelLabel: string | null,
+  selectEnd?: number,
 ): Promise<string | null> {
   // A dialog already open is resolved as cancelled before opening the next, so
   // a stray double-trigger can never leave two fighting over one input.
@@ -68,6 +69,10 @@ function openDialog(
   if (withInput) {
     promptInputEl.focus()
     promptInputEl.select()
+    // A file name is offered with only its stem selected, so typing replaces
+    // the name and leaves the extension standing, the way a file manager's
+    // rename does.
+    if (selectEnd !== undefined) promptInputEl.setSelectionRange(0, selectEnd)
   } else {
     promptOkEl.focus()
   }
@@ -76,8 +81,14 @@ function openDialog(
   })
 }
 
-export function textPrompt(message: string, initial = ''): Promise<string | null> {
-  return openDialog(message, initial, 'OK', 'Cancel')
+/// `selectEnd` limits the initial selection to the first N characters; the
+/// whole value is selected when it is omitted.
+export function textPrompt(
+  message: string,
+  initial = '',
+  selectEnd?: number,
+): Promise<string | null> {
+  return openDialog(message, initial, 'OK', 'Cancel', selectEnd)
 }
 
 /// A yes/no confirm. Resolves true only when OK is chosen; Cancel, Escape and a

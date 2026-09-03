@@ -108,7 +108,10 @@ export async function renameAttachmentFlow(
   oldName: string,
   hooks: { flush: () => Promise<void>; reload: () => Promise<void> },
 ) {
-  const input = await textPrompt('Rename image to:', oldName)
+  // Only the stem is selected: the extension is kept for them below anyway,
+  // and selecting it invites deleting it.
+  const stem = oldName.lastIndexOf('.')
+  const input = await textPrompt('Rename image to:', oldName, stem > 0 ? stem : undefined)
   if (input === null) return
   let next = input.trim()
   if (!next || next === oldName) return
