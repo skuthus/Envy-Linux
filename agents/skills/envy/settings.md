@@ -99,12 +99,6 @@ belongs under the header named in each section below.
 | `tiled` | bool | `false` | On Hyprland, tile the main window like any other. Off (the default) it floats as a centred panel. Applied when the window appears and again live when this changes. Read by Rust at startup, before the window opens. |
 | `popout_tiled` | bool | `false` | On Hyprland, tile the windows that Pop Out and Alt+Shift-click open. Off (the default) they float. Applied to each pop-out as it appears and to open ones live when this changes. Read by Rust at startup, before the window opens. |
 
-## Updates / `[updates]`
-
-| Key | Type | Default | What it does |
-| --- | --- | --- | --- |
-| `check_automatically` | bool | `true` | Gates the check at launch; Check Now ignores it. |
-
 ## Appearance / `[appearance]`
 
 | Key | Type | Default | What it does |
@@ -112,6 +106,7 @@ belongs under the header named in each section below.
 | `theme` | one of `omarchy`, `system`, `dark`, `light`, or a theme file name | `"omarchy"` | omarchy follows the current Omarchy theme; system follows the light/dark preference with the Envious palette; dark and light pin an Envious face. Any other value names a theme file, ~/.config/envy/themes/<value>.md, which overlays the Envious face of its `mode`. In omarchy mode a theme file named after the current Omarchy theme (for example tokyo-night.md) overlays the derived colours automatically. |
 | `font` | one of `"omarchy"`, `"custom"` | `"omarchy"` | omarchy follows the Omarchy monospace font; custom uses `font_family`. |
 | `font_family` | string | `""` | A fontconfig family name, used when `font` is custom. |
+| `font_features` | string | `""` | Comma-separated feature tags applied to all text, for example `ss01`. Empty means automatic: `ss01` for a Cascadia family (its cursive italic letters), nothing for other fonts. |
 | `layout` | one of `"vertical"`, `"horizontal"` | `"vertical"` | vertical: list above the note. horizontal: list beside it. Also toggled by the toggleLayout shortcut. |
 | `text_size` | number, any value from 0.5 to 2; Settings offers `0.8`, `0.9`, `0.95`, `1`, `1.15`, `1.3`, `1.5` | `1` | Scale for the chrome (list, search box, footer). The Settings menu offers the listed steps; any value in range works from the file. |
 | `fade_focus_highlight` | bool | `false` | Dim the list selection when the list does not have focus. |

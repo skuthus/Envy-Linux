@@ -20,6 +20,7 @@
   --envy-focus-thickness: 1px;
   --envy-font-family: ui-monospace, monospace;
   --envy-mono-family: ui-monospace, monospace;
+  --envy-font-features: normal;
   /* Regular weight, matching the terminal — no synthetic emboldening. */
   --envy-font-weight: 400;
   --envy-font-embolden: 0;
@@ -92,6 +93,9 @@ html, body {
   text-rendering: optimizeLegibility;
   font-synthesis: none;
   font-kerning: none;
+  /* Stylistic sets and the like, from the font_features setting; Cascadia's
+     cursive italic letters live behind ss01 and are set here automatically. */
+  font-feature-settings: var(--envy-font-features);
   -webkit-text-stroke: var(--envy-font-embolden) currentColor;
 }
 

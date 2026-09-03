@@ -79,7 +79,7 @@ Handled by the window, so they fire wherever focus is inside Envy.
 
 | Id | What it does | Default chord |
 | --- | --- | --- |
-| `jumpToSearch` | Jump to Search | `Ctrl+L` |
+| `jumpToSearch` | Jump to Search | `Escape` |
 | `clearSearch` | Clear Search | `Alt+Backspace` |
 | `newFromTemplate` | New Note from Template | `Ctrl+Shift+N` |
 | `insertImage` | Insert Image | `Ctrl+Alt+I` |

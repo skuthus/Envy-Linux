@@ -1302,6 +1302,44 @@ fn reveal_index(state: State<AppState>) -> Result<(), String> {
     open_directory(&dir)
 }
 
+/// One installed font family, for the Settings picker.
+#[derive(serde::Serialize)]
+struct FontFamily {
+    name: String,
+    mono: bool,
+}
+
+/// Every font family fontconfig knows, monospace ones flagged so the picker
+/// can put them first — Envy is a monospace app by default, and they are what
+/// most people are choosing between. Through `fc-list`, which is part of
+/// fontconfig itself and so on every machine that can render text at all;
+/// its `%{family[0]}` is the family's first name, the one CSS wants.
+#[tauri::command]
+fn font_families() -> Result<Vec<FontFamily>, String> {
+    let out = std::process::Command::new("fc-list")
+        .args(["--format", "%{family[0]}\t%{spacing}\n"])
+        .output()
+        .map_err(|e| format!("fc-list could not run: {e}"))?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut seen = std::collections::BTreeMap::<String, bool>::new();
+    for line in text.lines() {
+        let (name, spacing) = line.split_once('\t').unwrap_or((line, ""));
+        let name = name.trim();
+        if name.is_empty() {
+            continue;
+        }
+        // fontconfig: 100 is mono, 110 charcell; 90 (dual) is not fixed-pitch
+        // in the way an editor wants. A family with any monospace face counts.
+        let mono = matches!(spacing.trim(), "100" | "110");
+        let entry = seen.entry(name.to_string()).or_insert(false);
+        *entry = *entry || mono;
+    }
+    Ok(seen
+        .into_iter()
+        .map(|(name, mono)| FontFamily { name, mono })
+        .collect())
+}
+
 /// Opens a folder in the user's file manager. Explorer on Windows; on Linux
 /// `xdg-open`, which hands the directory to whatever the desktop has
 /// registered for `inode/directory` — deliberately not nautilus / thunar /
@@ -1795,37 +1833,235 @@ pub(crate) async fn run_update_check(app: tauri::AppHandle, manual: bool) {
     let _ = app.emit("update-checked", ());
 }
 
-/// Linux builds have no in-app update channel: there is no `latest.json` for
-/// the updater to fetch, and the plugin is only registered on Windows. Updates
-/// come the way the install did — the package manager for a packaged build,
-/// `./build.sh` for a checkout. A background check is a silent no-op; the
-/// Settings "Check Now" button says which of the two applies instead of
-/// appearing to do nothing.
+/// Linux builds have no in-app updater: a release is a GitHub tag plus the
+/// pacman repository built from it. A check asks GitHub for the newest release
+/// tag, compares it with this build, and hands the update command to a
+/// terminal — `sudo` needs one, and the transcript belongs there anyway.
+/// There is no automatic check on Linux; `manual == false` is a no-op, so
+/// nothing runs at launch and nothing phones home unasked.
 #[cfg(not(windows))]
 pub(crate) async fn run_update_check(app: tauri::AppHandle, manual: bool) {
-    use tauri_plugin_dialog::DialogExt;
-    if manual {
-        app.dialog()
-            .message(linux_update_advice(&std::env::current_exe().unwrap_or_default()))
-            .title("No Update Channel")
-            .blocking_show();
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+    if !manual {
+        return;
+    }
+    let current = env!("CARGO_PKG_VERSION");
+    let latest = tauri::async_runtime::spawn_blocking(latest_release_version)
+        .await
+        .unwrap_or_else(|e| Err(e.to_string()));
+    match latest {
+        Ok(latest) if version_newer(&latest, current) => {
+            let exe = std::env::current_exe().unwrap_or_default();
+            match update_command(&exe) {
+                Some(cmd) => {
+                    let (tx, rx) = std::sync::mpsc::channel();
+                    app.dialog()
+                        .message(format!(
+                            "Envy {latest} is available (this is {current}).\n\n\
+                             Open a terminal and run:\n\n    {cmd}"
+                        ))
+                        .title("Update Available")
+                        .buttons(MessageDialogButtons::OkCancelCustom(
+                            "Open Terminal".into(),
+                            "Later".into(),
+                        ))
+                        .show(move |go| {
+                            let _ = tx.send(go);
+                        });
+                    // Same shape as the Windows path: the dialog answers on
+                    // another thread, and this only ever runs in a spawned task.
+                    if rx.recv().unwrap_or(false) {
+                        if let Err(e) = open_terminal_with(&cmd) {
+                            app.dialog()
+                                .message(format!("Could not open a terminal.\n\n{e}\n\nRun it yourself:\n\n    {cmd}"))
+                                .kind(MessageDialogKind::Error)
+                                .title("No Terminal")
+                                .blocking_show();
+                        }
+                    }
+                }
+                None => {
+                    app.dialog()
+                        .message(format!(
+                            "Envy {latest} is available (this is {current}).\n\n{}",
+                            linux_update_advice(&exe)
+                        ))
+                        .title("Update Available")
+                        .blocking_show();
+                }
+            }
+        }
+        Ok(latest) => {
+            let note = if version_newer(current, &latest) {
+                format!("Envy {current} is newer than the latest release, {latest}.")
+            } else {
+                format!("Envy {current} is the latest release.")
+            };
+            app.dialog().message(note).title("No Updates").blocking_show();
+        }
+        Err(e) => {
+            app.dialog()
+                .message(format!("Could not check GitHub for updates.\n\n{e}"))
+                .kind(MessageDialogKind::Error)
+                .title("Update Check Failed")
+                .blocking_show();
+        }
+    }
+    // Stamps "last checked" in Settings, whichever way it went.
+    let _ = app.emit("update-checked", ());
+}
+
+#[cfg(not(windows))]
+const RELEASES_API: &str = "https://api.github.com/repos/skuthus/Envy-Linux/releases/latest";
+
+/// The newest release tag on GitHub, without its `v`. `releases/latest`
+/// skips drafts, pre-releases and the `repo` release that carries the pacman
+/// database (published with `--latest=false`), so it is exactly the version
+/// the pacman repository serves. Through curl rather than an HTTP crate: it
+/// is on every Arch install, and this is one request a person asked for.
+#[cfg(not(windows))]
+fn latest_release_version() -> Result<String, String> {
+    let out = std::process::Command::new("curl")
+        .args([
+            "-fsSL",
+            "--max-time",
+            "15",
+            "-H",
+            "Accept: application/vnd.github+json",
+            "-H",
+            concat!("User-Agent: envynote/", env!("CARGO_PKG_VERSION")),
+            RELEASES_API,
+        ])
+        .output()
+        .map_err(|e| format!("curl could not run: {e}"))?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        return Err(if err.is_empty() {
+            "GitHub did not answer.".to_string()
+        } else {
+            err
+        });
+    }
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout)
+        .map_err(|e| format!("unexpected answer from GitHub: {e}"))?;
+    let tag = json
+        .get("tag_name")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "GitHub's answer named no release.".to_string())?;
+    Ok(tag.trim_start_matches('v').to_string())
+}
+
+/// `1.0.1` against `1.0.0`, numerically per component. A pre-release suffix
+/// (`1.1.0-beta`) counts as its numbers — enough for a version line that
+/// only ever moves forward in whole releases.
+#[cfg(not(windows))]
+fn version_parts(v: &str) -> Vec<u64> {
+    v.split(['.', '-'])
+        .map_while(|p| p.parse::<u64>().ok())
+        .collect()
+}
+
+#[cfg(not(windows))]
+fn version_newer(candidate: &str, current: &str) -> bool {
+    version_parts(candidate) > version_parts(current)
+}
+
+/// The update command for where this binary lives. Under `/usr` it came from
+/// the package, and `pacman -Sy envynote` upgrades that one package — the form
+/// Omarchy's guard allows, since it refuses only a full `-Syu`. Inside a
+/// checkout's `target/release` it is the checkout's own build, which updates
+/// with the code. Anywhere else there is no command to give.
+#[cfg(not(windows))]
+fn update_command(exe: &Path) -> Option<String> {
+    if exe.starts_with("/usr") {
+        return Some("sudo pacman -Sy envynote".to_string());
+    }
+    let checkout = exe.ancestors().nth(3)?;
+    if exe.to_string_lossy().contains("/target/release/") && checkout.join("build.sh").is_file() {
+        Some(format!(
+            "cd {} && git pull && ./build.sh",
+            shell_quote(&checkout.to_string_lossy())
+        ))
+    } else {
+        None
     }
 }
 
-/// The right update instruction for where this binary lives: under `/usr`
-/// it was installed by a package (the PKGBUILD in `linux/`), anywhere else it
-/// is a checkout's own build.
+/// Runs the command in a terminal window that stays open when it is done.
+/// Omarchy's floating-terminal launcher when it is there (logo, the command,
+/// a "press any key" — the same frame `omarchy update` itself uses), else
+/// the desktop's default terminal with a plain "press Return" at the end.
 #[cfg(not(windows))]
-fn linux_update_advice(exe: &std::path::Path) -> String {
-    if exe.starts_with("/usr") {
-        "Envy updates through pacman, not from here.\n\n\
-         With the [envynote] repository in /etc/pacman.conf (see the README): omarchy update, or sudo pacman -Syu elsewhere.\n\
-         From a clone of the repository: cd linux && makepkg -si."
-            .to_string()
+fn open_terminal_with(cmd: &str) -> Result<(), String> {
+    if which("omarchy-launch-floating-terminal-with-presentation").is_some() {
+        std::process::Command::new("omarchy-launch-floating-terminal-with-presentation")
+            .arg(cmd)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| e.to_string())
     } else {
-        "This build came from a checkout, so it updates with the code.\n\n\
-         Pull the repository and run ./build.sh."
+        let script = format!("{cmd}; echo; read -rp 'Press Return to close'");
+        let terminal = std::env::var("TERMINAL").unwrap_or_else(|_| "xdg-terminal-exec".to_string());
+        std::process::Command::new("setsid")
+            .args(["-f", &terminal, "-e", "bash", "-c", &script])
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| format!("{terminal}: {e}"))
+    }
+}
+
+#[cfg(not(windows))]
+fn which(program: &str) -> Option<PathBuf> {
+    std::env::var_os("PATH").and_then(|paths| {
+        std::env::split_paths(&paths)
+            .map(|p| p.join(program))
+            .find(|p| p.is_file())
+    })
+}
+
+#[cfg(not(windows))]
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// The instruction for a binary that has no command to offer: not from the
+/// package and not a checkout's release build.
+#[cfg(not(windows))]
+fn linux_update_advice(exe: &Path) -> String {
+    if exe.starts_with("/usr") {
+        "Update it with: sudo pacman -Sy envynote".to_string()
+    } else {
+        "This build came from a checkout, so it updates with the code: pull the repository and run ./build.sh."
             .to_string()
+    }
+}
+
+#[cfg(all(test, not(windows)))]
+mod update_check_tests {
+    use super::*;
+
+    #[test]
+    fn versions_compare_numerically() {
+        assert!(version_newer("1.0.1", "1.0.0"));
+        assert!(version_newer("1.10.0", "1.9.9"));
+        assert!(!version_newer("1.0.0", "1.0.0"));
+        assert!(!version_newer("0.9.0", "1.0.0"));
+        assert!(version_newer("1.1.0-beta", "1.0.0"));
+    }
+
+    #[test]
+    fn the_command_follows_where_the_binary_lives() {
+        assert_eq!(
+            update_command(Path::new("/usr/bin/envynote")).as_deref(),
+            Some("sudo pacman -Sy envynote")
+        );
+        assert_eq!(update_command(Path::new("/home/x/Downloads/envynote")), None);
+        let here = env!("CARGO_MANIFEST_DIR");
+        let checkout = Path::new(here).parent().unwrap();
+        let exe = checkout.join("target/release/envynote");
+        let cmd = update_command(&exe).expect("a checkout build has a command");
+        assert!(cmd.starts_with("cd '"), "{cmd}");
+        assert!(cmd.ends_with("&& git pull && ./build.sh"), "{cmd}");
     }
 }
 
@@ -2444,11 +2680,8 @@ pub fn run() {
             }
             seed_sample_templates_if_needed(app.handle(), &dir);
 
-            // The launch check is driven by the frontend now (main.ts, gated on
-            // the "Check for updates automatically" setting), so it isn't spawned
-            // here. That keeps one owner for the toggle — the frontend, which is
-            // where the setting lives — rather than splitting it across a file
-            // the Rust side would also have to read.
+            // No launch update check on Linux: releases come through pacman,
+            // and `run_update_check` only ever runs from Check Now or the tray.
 
             let suppress_until = Arc::new(Mutex::new(Instant::now()));
 
@@ -2556,6 +2789,7 @@ pub fn run() {
             submit_from_inbox,
             set_include_subfolders,
             reveal_index,
+            font_families,
             reveal_note,
             convert_to_template,
             autostart_enabled,

@@ -450,20 +450,6 @@
       ]
     },
     {
-      "table": "updates",
-      "title": "Updates",
-      "keys": [
-        {
-          "key": "check_automatically",
-          "type": "bool",
-          "default": true,
-          "label": "Check for updates automatically",
-          "doc": "Gates the check at launch; Check Now ignores it.",
-          "legacy": "checkForUpdatesAutomatically"
-        }
-      ]
-    },
-    {
       "table": "appearance",
       "title": "Appearance",
       "keys": [
@@ -500,6 +486,13 @@
           "label": "Font family",
           "doc": "A fontconfig family name, used when `font` is custom.",
           "legacy": "uiFontCustom"
+        },
+        {
+          "key": "font_features",
+          "type": "string",
+          "default": "",
+          "label": "OpenType features",
+          "doc": "Comma-separated feature tags applied to all text, for example `ss01`. Empty means automatic: `ss01` for a Cascadia family (its cursive italic letters), nothing for other fonts."
         },
         {
           "key": "layout",

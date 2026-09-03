@@ -7,7 +7,7 @@ import { open as openFolderPicker } from '@tauri-apps/plugin-dialog'
 import { getVersion } from '@tauri-apps/api/app'
 import { getAllWindows, getCurrentWindow } from '@tauri-apps/api/window'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
-import { openContextMenu, type MenuItemSpec, type OpenMenuOptions } from './context-menu'
+import { openContextMenu, contextMenuOpen, type MenuItemSpec, type OpenMenuOptions } from './context-menu'
 import { textPrompt, confirmModal, alertModal, setPromptFocusReturn, isDialogOpen } from './prompt-modal'
 import { openImageMenu, renameAttachmentFlow, insertImageReference } from './image-menu'
 import { openImagePicker } from './image-picker'
@@ -1404,6 +1404,7 @@ const SETTING_KEY = {
   theme: ['appearance', 'theme'],
   fontSource: ['appearance', 'font'],
   fontCustom: ['appearance', 'font_family'],
+  fontFeatures: ['appearance', 'font_features'],
   moveFocusToEditorOnEnter: ['list', 'focus_editor_on_enter'],
   dateDisplayStyle: ['list', 'date_style'],
   inboxEnabled: ['list', 'inbox_enabled'],
@@ -1439,7 +1440,6 @@ const SETTING_KEY = {
   templateDateFormat: ['templates', 'date_format'],
   trashEmptyIntervalValue: ['trash', 'empty_every'],
   trashEmptyIntervalUnit: ['trash', 'empty_unit'],
-  checkForUpdatesAutomatically: ['updates', 'check_automatically'],
   // Live variables rather than fields of `settings`, because a shortcut flips
   // each of them too — but they persist the same way.
   layout: ['appearance', 'layout'],
@@ -1468,6 +1468,7 @@ function readSettings() {
     theme: settingText('theme'),
     fontSource: settingText('fontSource'),
     fontCustom: settingText('fontCustom'),
+    fontFeatures: settingText('fontFeatures'),
     moveFocusToEditorOnEnter: settingBool('moveFocusToEditorOnEnter'),
     dateDisplayStyle: settingText('dateDisplayStyle'),
     // Whether the Inbox exists at all. Off, there is no capture queue: no
@@ -1520,8 +1521,6 @@ function readSettings() {
     // schedule.
     trashEmptyIntervalValue: settingNumber('trashEmptyIntervalValue'),
     trashEmptyIntervalUnit: settingText('trashEmptyIntervalUnit'),
-    // Gates the automatic check at launch (the "Check Now" button ignores it).
-    checkForUpdatesAutomatically: settingBool('checkForUpdatesAutomatically'),
   }
 }
 
@@ -5064,7 +5063,24 @@ async function extractSelectionToNote() {
   await runSearch()
 }
 
+/// Escape is a layer-peeler before it is a shortcut. Whatever sits closest to
+/// the keyboard owns the press — an overlay, a dialog, a menu, a field that
+/// already handled it (the list, the title, a completion in the editor) — and
+/// only when nothing does is Escape free to be a binding, by default Jump to
+/// Search. Without this, closing Settings would also yank focus to the box.
+function escapeIsTaken(e: KeyboardEvent): boolean {
+  return (
+    e.defaultPrevented ||
+    !settingsEl.classList.contains('hidden') ||
+    !referenceEl.classList.contains('hidden') ||
+    !linkPreviewEl.classList.contains('hidden') ||
+    isDialogOpen() ||
+    contextMenuOpen()
+  )
+}
+
 window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && escapeIsTaken(e)) return
   for (const [id, run] of Object.entries(SHORTCUT_HANDLERS)) {
     if (!matchesShortcut(id as ShortcutId, e)) continue
     e.preventDefault()
@@ -5211,6 +5227,56 @@ function syncTheme() {
 function syncFontSettingsRow() {
   const custom = settings.fontSource === 'custom'
   el('setting-font-custom-row').classList.toggle('hidden', !custom)
+}
+
+// --- Font family picker ------------------------------------------------------
+// A list rather than a field to type a name into: nobody knows what fontconfig
+// calls the fonts on their machine, and a typo silently falls back to the
+// browser default. Fetched each time the panel opens — fc-list is quick, and
+// a font installed while Envy runs should show up.
+
+interface FontFamily {
+  name: string
+  mono: boolean
+}
+let fontFamilies: FontFamily[] = []
+
+async function refreshFontFamilies() {
+  try {
+    fontFamilies = await invoke<FontFamily[]>('font_families')
+  } catch (err) {
+    console.error('could not list font families', err)
+    fontFamilies = []
+  }
+  syncFontFamilyOptions()
+}
+
+/// Rebuilds the picker: monospace families, then everything else, with the
+/// configured name selected. A name fontconfig doesn't list (a font since
+/// removed, or one typed into config.md) stays selectable as its own entry so
+/// opening Settings never changes what the file says.
+function syncFontFamilyOptions() {
+  const select = dropdown('setting-font-custom')
+  const current = settings.fontCustom
+  select.replaceChildren()
+  const add = (parent: HTMLElement, value: string, label = value) => {
+    const option = document.createElement('option')
+    option.value = value
+    option.textContent = label
+    parent.append(option)
+  }
+  if (!current) add(select, '', 'Choose a family…')
+  else if (!fontFamilies.some((f) => f.name === current)) add(select, current, `${current} (not installed)`)
+  const group = (label: string, families: FontFamily[]) => {
+    if (families.length === 0) return
+    const g = document.createElement('optgroup')
+    g.label = label
+    for (const f of families) add(g, f.name)
+    select.append(g)
+  }
+  group('Monospace', fontFamilies.filter((f) => f.mono))
+  group('Other', fontFamilies.filter((f) => !f.mono))
+  select.value = current
 }
 darkQuery.addEventListener('change', syncTheme)
 
@@ -5436,13 +5502,14 @@ function openSettings() {
   })
   recording = null
   syncSettingsControls()
+  void refreshFontFamilies()
   settingsEl.classList.remove('hidden')
 }
 
 /// Assigns to a text field only when the cursor isn't in it. The panel is
 /// re-synced whenever config.md changes, and an agent writing an unrelated key
-/// while somebody is halfway through typing a font name should not take the
-/// half-typed name away.
+/// while somebody is halfway through typing a date format should not take the
+/// half-typed format away.
 function setField(id: string, value: string) {
   const field = el<HTMLInputElement>(id)
   if (document.activeElement !== field) field.value = value
@@ -5486,7 +5553,6 @@ function syncSettingsControls() {
   checkbox('setting-tiled').checked = settings.tiled
   checkbox('setting-popout-tiled').checked = settings.popoutTiled
   checkbox('setting-restore-focus').checked = settings.restoreFocusOnSummon
-  checkbox('setting-auto-update').checked = settings.checkForUpdatesAutomatically
   renderLastChecked()
   dropdown('setting-date-style').value = settings.dateDisplayStyle
   dropdown('setting-link-preview').value = settings.linkPreview
@@ -5506,7 +5572,8 @@ function syncSettingsControls() {
   dropdown('setting-layout').value = layoutMode
   renderThemeOptions()
   dropdown('setting-font').value = settings.fontSource
-  setField('setting-font-custom', settings.fontCustom)
+  syncFontFamilyOptions()
+  setField('setting-font-features', settings.fontFeatures)
   syncFontSettingsRow()
   syncKindleSettings()
   renderConfigSection()
@@ -5655,10 +5722,9 @@ bindToggle('setting-hyprland-bind', 'hyprlandBind')
 bindToggle('setting-tiled', 'tiled')
 bindToggle('setting-popout-tiled', 'popoutTiled')
 bindToggle('setting-restore-focus', 'restoreFocusOnSummon')
-bindToggle('setting-auto-update', 'checkForUpdatesAutomatically')
-// Always checks, regardless of the auto toggle — that's the point of asking.
-// `manual: true` gets the "you're up to date" reassurance a background check
-// stays silent about. The update-checked event stamps the last-checked line.
+// The only update check there is: Linux has no background one. `manual: true`
+// is what the Rust side acts on. The update-checked event stamps the
+// last-checked line.
 el('setting-check-updates').onclick = () =>
   void invoke('check_for_updates', { manual: true })
 
@@ -5890,9 +5956,15 @@ el<HTMLSelectElement>('setting-font').onchange = (e) => {
   syncFontSettingsRow()
   syncTheme()
 }
-el<HTMLInputElement>('setting-font-custom').oninput = (e) => {
-  settings.fontCustom = (e.target as HTMLInputElement).value
+dropdown('setting-font-custom').onchange = (e) => {
+  settings.fontCustom = (e.target as HTMLSelectElement).value
   saveSetting('fontCustom', settings.fontCustom)
+  syncFontFamilyOptions()
+  syncTheme()
+}
+el<HTMLInputElement>('setting-font-features').oninput = (e) => {
+  settings.fontFeatures = (e.target as HTMLInputElement).value
+  saveSetting('fontFeatures', settings.fontFeatures)
   syncTheme()
 }
 el('settings-open-folder').onclick = () => void invoke('reveal_index')
@@ -6318,12 +6390,6 @@ async function boot() {
   // days" schedule honest. Cheap on the ticks it isn't due — just a date compare.
   void emptyTrashIfDue()
   window.setInterval(() => void emptyTrashIfDue(), 60 * 60 * 1000)
-  // The launch update check, matching Sparkle's startingUpdater on the Mac.
-  // Fire-and-forget so a slow or unreachable endpoint delays nothing; a dialog
-  // appears later only if there's an update. Silent when it finds nothing.
-  if (settings.checkForUpdatesAutomatically) {
-    void invoke('check_for_updates', { manual: false })
-  }
   await runSearch()
   searchInput.focus()
   initKindleImport(openSettings)

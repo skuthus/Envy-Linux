@@ -975,6 +975,12 @@ pub fn init(index_path_file: Option<PathBuf>, keep_on_top_file: Option<PathBuf>)
         }
         patch.insert("system".into(), Value::Object(system));
     }
+    // `[updates] check_automatically` gated a launch check that, on Linux,
+    // never had anywhere to look. The table goes so an old file neither keeps
+    // a dead switch nor reports an unknown table.
+    if current.get("updates").is_some() {
+        patch.insert("updates".into(), Value::Null);
+    }
     if !patch.is_empty() {
         let _ = merge(&Value::Object(patch));
     }

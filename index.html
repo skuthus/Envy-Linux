@@ -520,10 +520,11 @@
 
           <section>
             <h3>Updates</h3>
-            <label>
-              <input type="checkbox" id="setting-auto-update" />
-              Check for updates automatically
-            </label>
+            <p class="setting-note">
+              Envy never checks on its own. Check Now looks up the latest
+              release on GitHub and, if it is newer, opens a terminal with the
+              update command.
+            </p>
             <div class="setting-row update-check-row">
               <span id="setting-update-last-checked" class="setting-note"
                 >Last checked: never</span
@@ -579,7 +580,20 @@
             </label>
             <label id="setting-font-custom-row" class="hidden">
               Font family
-              <input type="text" id="setting-font-custom" placeholder="Family name" />
+              <!-- Filled from fontconfig when the panel opens: monospace
+                   families first, then the rest. A name in config.md that
+                   fontconfig doesn't know is kept as its own entry rather
+                   than silently replaced. -->
+              <select id="setting-font-custom"></select>
+            </label>
+            <label>
+              OpenType features
+              <input
+                type="text"
+                id="setting-font-features"
+                placeholder="automatic"
+                title="Comma-separated feature tags, e.g. ss01. Empty is automatic: Cascadia's cursive italics (ss01), nothing for other fonts."
+              />
             </label>
           </section>
 

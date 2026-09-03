@@ -61,7 +61,11 @@ export const SHORTCUT_SPECS: ShortcutSpec[] = [
   // The Mac binds Keep on Top to ⌥⌘T, but the port already gave Ctrl+Alt+T to
   // "Pin to Tray", so this takes the free Shift variant by default (remappable).
   { id: 'keepOnTop', label: 'Keep Envy on Top (works from any app)', default: 'Ctrl+Alt+Shift+T', global: true },
-  { id: 'jumpToSearch', label: 'Jump to Search', default: 'Ctrl+L' },
+  // Escape rather than the Mac's ⌘L: on a keyboard-first Linux desktop "back
+  // to the box" is the same gesture as "back out", and Escape already peels
+  // every overlay one layer at a time, so the search box is simply the last
+  // layer. Remappable to Ctrl+L for anyone who wants the browser habit.
+  { id: 'jumpToSearch', label: 'Jump to Search', default: 'Escape' },
   { id: 'clearSearch', label: 'Clear Search', default: 'Alt+Backspace' },
   { id: 'newFromTemplate', label: 'New Note from Template', default: 'Ctrl+Shift+N' },
   // The Mac's ⌥⌘N. It makes a note, so it sits beside the other "new"

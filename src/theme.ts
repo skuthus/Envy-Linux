@@ -435,9 +435,31 @@ export function themeNotices(): string[] {
   return applied.notices
 }
 
+/// OpenType features for all text, as a `font-feature-settings` value.
+/// `appearance.font_features` verbatim when set. Otherwise automatic: `ss01`
+/// for a Cascadia family, whose script-style italic letters (the cursive r,
+/// s, f and l) sit behind that set and are off by default, and nothing for
+/// any other font — a set number means something different in every face.
+export function fontFeatures(fontStack: string): string {
+  const custom = getString('appearance', 'font_features').trim()
+  const chosen = custom || (/cas(cadia|kaydia)/i.test(fontStack) ? 'ss01' : '')
+  const value = chosen
+    .split(',')
+    .map((f) => f.trim().replaceAll('"', ''))
+    .filter(Boolean)
+    .map((f) => `"${f}"`)
+    .join(', ')
+  if (!value) return 'normal'
+  return CSS.supports('font-feature-settings', value) ? value : 'normal'
+}
+
 export function applyStoredAppearance() {
   applied = resolveAppearance()
   applyTheme(applied.theme, applied.dark)
+  document.documentElement.style.setProperty(
+    '--envy-font-features',
+    fontFeatures(applied.theme.fontFamily),
+  )
   document.documentElement.style.colorScheme = applied.dark ? 'dark' : 'light'
   document.documentElement.classList.toggle('theme-light', !applied.dark)
   document.documentElement.classList.toggle('theme-dark', applied.dark)

@@ -158,7 +158,7 @@ focus() {
   echo "could not focus the Envy window"; return 1
 }
 shot()  { grim -g "$GEO" "$SHOT/$1.png"; }
-search() { wtype -M ctrl l -m ctrl; sleep 0.2; wtype -M alt -k BackSpace -m alt; sleep 0.2; wtype "$1"; sleep 0.8; wtype -k Return; sleep 1.2; }
+search() { wtype -k Escape; sleep 0.2; wtype -M alt -k BackSpace -m alt; sleep 0.2; wtype "$1"; sleep 0.8; wtype -k Return; sleep 1.2; }
 # Return here is a newline when the editor has focus, and "open the
 # highlighted row, then focus the editor" when the search box has it (as it
 # does after an arrow press). The second is asynchronous, and the unoptimised
@@ -180,7 +180,7 @@ focus; shot 1-launch
 
 if (( BIG )); then
   echo "== paging pass: 400 arrow-downs through $VAULT"
-  wtype -M ctrl l -m ctrl; sleep 0.3
+  wtype -k Escape; sleep 0.3
   wtype -M alt -k BackSpace -m alt; sleep 0.5
   for _ in $(seq 1 400); do tap Down; done
   # The highlight keeps moving after the last key, so wait for the window to
@@ -215,10 +215,10 @@ if (( BIG )); then
   fi
 
   echo "== search still works after paging"
-  wtype -M ctrl l -m ctrl; sleep 0.5
+  wtype -k Escape; sleep 0.5
   type_slow "note"; sleep 1.5; shot 3-search
   wtype -M alt -k BackSpace -m alt; sleep 1.0; shot 4-cleared
-  pass "Ctrl+L / type / Alt+Backspace survived (see 3-search.png, 4-cleared.png)"
+  pass "Escape / type / Alt+Backspace survived (see 3-search.png, 4-cleared.png)"
 else
   echo "== note written on disk is picked up by the watcher and renders"
   {
@@ -245,7 +245,7 @@ else
   NOTE2="$VAULT/$TITLE 2.md"
   printf '# %s 2\n\nSecond note for the arrow check.\n' "$TITLE" >"$NOTE2"
   sleep 3; focus; search "$TITLE"
-  wtype -M ctrl l -m ctrl; sleep 0.3; tap Down; sleep 1.5; shot 2b-arrow-down
+  wtype -k Escape; sleep 0.3; tap Down; sleep 1.5; shot 2b-arrow-down
   append_line "$MARK-arrow"
   if grep -q "$MARK-arrow" "$NOTE" && ! grep -q "$MARK-arrow" "$NOTE2"; then
     pass "Down opened the second row and the edit landed there"

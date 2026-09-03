@@ -25,8 +25,9 @@ shortcuts, emoji), and **Ctrl+,** for Settings.
 
 ## Search, then Return
 
-The search box is where everything starts. **Ctrl+L** jumps to it from
-anywhere, **Alt+Backspace** clears it.
+The search box is where everything starts. **Escape** jumps back to it from
+anywhere (closing whatever is open first, one layer per press), and
+**Alt+Backspace** clears it.
 
 - Words match anywhere in a note. `"a phrase"` in quotes matches those words
   together.
@@ -187,8 +188,13 @@ editor.
   choose it in Settings. A file named after an Omarchy theme overrides just
   that one.
 - The font follows Omarchy's monospace font unless you choose your own.
+  Cascadia's cursive italics switch on by themselves; other OpenType
+  features go in **Settings → Appearance → OpenType features**.
 - `envynote config check` validates the file and prints any problem; the
   footer shows the same notice while a key is wrong.
+- Envy never checks for updates on its own. **Settings → Updates → Check
+  Now** looks up the latest release on GitHub and, if it is newer, opens a
+  terminal with the update command.
 
 ### Let an agent do it
 
@@ -210,7 +216,7 @@ remembers what it has imported, so re-importing only adds what is new.
 
 | Keys | Does |
 | --- | --- |
-| Ctrl+L | Jump to search |
+| Escape | Jump to search |
 | Alt+Backspace | Clear search |
 | Alt+Down / Alt+Up | Next / previous area |
 | Ctrl+Shift+N | New note from template |
