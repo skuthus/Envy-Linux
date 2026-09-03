@@ -165,12 +165,20 @@ export function applyTheme(theme: EnvyTheme, dark = true) {
 /// window reads. Shared by the main window and the pop-outs so a note looks
 /// the same size wherever it is opened. Whole pixels: a 15×1.15 = 17.25px
 /// face is the usual WebKit softness.
+/// Spacing follows the zoom, up to a point: insets, paddings and the footer
+/// grow with the text so a zoomed-in window doesn't read as crowded, but
+/// they stop at 160% — past that, whitespace is wasting room the bigger
+/// text needs — and never shrink below the 100% layout when zoomed out.
+const SPACING_ZOOM_CAP = 1.6
+
 export function applyEditorZoom(zoom: number) {
   const base = Number.parseFloat(enviousDark.fontSize)
   const px = Math.max(9, Math.round(base * zoom))
   const root = document.documentElement.style
   root.setProperty('--envy-font-size', `${px}px`)
   root.setProperty('--envy-line-height', `${Math.round(px * 1.6)}px`)
+  const spacing = Math.min(SPACING_ZOOM_CAP, Math.max(1, zoom))
+  root.setProperty('--envy-zoom-space', spacing.toFixed(3))
 }
 
 export function cssFontStack(family: string): string {

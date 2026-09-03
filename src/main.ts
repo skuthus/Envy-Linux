@@ -1844,6 +1844,7 @@ function dateColumnKey(): string {
   const root = document.documentElement.style
   return [
     root.getPropertyValue('--envy-font-family'),
+    root.getPropertyValue('--envy-font-size'),
     root.getPropertyValue('--envy-ui-scale'),
     document.body.classList.contains('bold-file-list') ? 'b' : '',
     settings.dateDisplayStyle,
@@ -2508,6 +2509,12 @@ let editorZoom = settingNumber('editorZoom')
 function applyZoom() {
   applyEditorZoom(editorZoom)
   view.requestMeasure()
+  // The list reads the same font size, so its row height and date column
+  // are stale the moment the zoom moves — the same re-measure a font change
+  // gets, or rows drift apart from their slots at larger sizes.
+  markRowHeightDirty()
+  syncDateColumnWidth(true)
+  renderRowWindow(true)
 }
 
 function setZoom(next: number) {

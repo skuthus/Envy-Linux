@@ -10,6 +10,10 @@
      prose, and the Mac keeps them apart for the same reason. */
   --envy-ui-scale: 1;
   --envy-row-padding: 1px;
+  /* How far the chrome's spacing has grown with the editor zoom: 1 at 100%
+     and below, the zoom itself up to 1.6. Set by applyEditorZoom; every inset
+     and padding that would otherwise crowd bigger text multiplies by it. */
+  --envy-zoom-space: 1;
   /* Matches the ::-webkit-scrollbar width below. The scrolling panes reserve a
      stable gutter of this width and subtract it from their trailing padding, so
      their content ends the same distance from the pane edge as the leading
@@ -27,7 +31,7 @@
   /* The inset shared by the list, the title bar, the editor and the footer, so
      text starts in the same column down the whole window and the left and right
      margins match. */
-  --envy-inset: 12px;
+  --envy-inset: calc(12px * var(--envy-zoom-space));
   /* Ink for the status bar. Secondary text is pitched for a paragraph at note
      size; at the footer's 11px, and on a theme whose body text is near-white
      on black, the same colour reads as faint. Halfway to body text keeps it
@@ -116,10 +120,10 @@ body.popout-window {
 #search-bar {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: calc(8px * var(--envy-zoom-space));
   /* One rule, on the bar, between the field and the sort header. The field
      itself carries none, so the space above the list reads as all field. */
-  padding: 6px var(--envy-inset) 2px;
+  padding: calc(6px * var(--envy-zoom-space)) var(--envy-inset) calc(2px * var(--envy-zoom-space));
   background: var(--envy-title-bar-background);
   border-bottom: 1px solid color-mix(in srgb, var(--envy-marker) 40%, transparent);
   /* No OS title bar on this variant; the search chrome is the drag handle.
@@ -291,7 +295,7 @@ body.fade-focus #editor-pane:focus-within {
    one line in the box above. */
 #create-hint {
   flex: none;
-  padding: 4px var(--envy-inset) 6px;
+  padding: calc(4px * var(--envy-zoom-space)) var(--envy-inset) calc(6px * var(--envy-zoom-space));
   border-top: 1px solid color-mix(in srgb, var(--envy-marker) 30%, transparent);
   color: var(--envy-marker);
   font-size: calc(var(--envy-font-size) * 0.85);
@@ -387,7 +391,7 @@ body.fade-focus #editor-pane:focus-within {
 
 #list-header {
   align-items: center;
-  padding: 2px var(--envy-inset) 4px;
+  padding: calc(2px * var(--envy-zoom-space)) var(--envy-inset) calc(4px * var(--envy-zoom-space));
   /* The header sits *outside* the scrolling element, so it pays no gutter: a
      plain inset on the trailing side lands its content the same distance from
      the pane edge as the rows (which reserve the gutter and subtract it), so
@@ -472,8 +476,9 @@ body.fade-focus #editor-pane:focus-within {
      this problem: its scrollbars overlay the content rather than taking width
      from it. Subtracting the gutter puts the trailing edge back at the Mac's
      12px, without giving up the stability the reserved gutter buys. */
-  padding: var(--envy-row-padding) calc(var(--envy-inset) - var(--envy-scrollbar-width))
-    var(--envy-row-padding) var(--envy-inset);
+  padding: calc(var(--envy-row-padding) * var(--envy-zoom-space))
+    calc(var(--envy-inset) - var(--envy-scrollbar-width))
+    calc(var(--envy-row-padding) * var(--envy-zoom-space)) var(--envy-inset);
   cursor: default;
 }
 .row.highlighted {
@@ -757,7 +762,7 @@ body.bold-file-list .row-date { font-weight: 700; }
   gap: 6px 12px;
   /* Thin: the bar plus the field's own padding comes to the same height as
      the pop-out's title bar, so a note reads the same in both. */
-  padding: 1px var(--envy-inset);
+  padding: calc(2px * var(--envy-zoom-space) - 1px) var(--envy-inset);
   font-weight: 600;
   background: var(--envy-title-bar-background);
   border-bottom: 1px solid color-mix(in srgb, var(--envy-marker) 30%, transparent);
@@ -914,7 +919,7 @@ body.popout-window {
   font-weight: 600;
   font-size: var(--envy-font-size);
   margin: 0;
-  padding: 3px var(--envy-inset);
+  padding: calc(3px * var(--envy-zoom-space)) var(--envy-inset);
   border: none;
   border-bottom: 1px solid color-mix(in srgb, var(--envy-marker) 30%, transparent);
   border-radius: 0;
@@ -942,9 +947,9 @@ body.popout-window {
   align-items: center;
   gap: 0.75em;
   flex: none;
-  padding: 1px var(--envy-inset);
+  padding: calc(2px * var(--envy-zoom-space) - 1px) var(--envy-inset);
   /* A touch smaller than the note/list text — the status bar is chrome. */
-  font-size: 11px;
+  font-size: calc(11px * var(--envy-zoom-space));
   /* One fixed line: the bar must not grow because a button or a box-drawing
      glyph joined it, only when the window is too narrow and it wraps. */
   line-height: 1.6;
@@ -1897,7 +1902,8 @@ body.popout-window {
      reserves the scrollbar gutter (stable, so it is there whether or not a note
      is long enough to scroll) and subtracts it, landing the text the same
      distance from the pane edge as the list and the title bar. */
-  padding: 12px calc(var(--envy-inset) - var(--envy-scrollbar-width)) 24px var(--envy-inset);
+  padding: calc(12px * var(--envy-zoom-space)) calc(var(--envy-inset) - var(--envy-scrollbar-width))
+    calc(24px * var(--envy-zoom-space)) var(--envy-inset);
   scrollbar-gutter: stable;
   /* Long fenced lines scroll inside their panel, not the whole note. */
   overflow-x: hidden;
