@@ -44,6 +44,7 @@ rm -rf "$OUT/$NAME"
 mkdir -p "$OUT/$NAME/icons"
 cp target/release/envynote "$OUT/$NAME/"
 cp linux/envy.desktop linux/hyprland-envy.lua linux/envy-summon.sh LICENSE README.md "$OUT/$NAME/"
+cp src-tauri/welcome.md "$OUT/$NAME/Welcome to Envy.md"
 # The agent skill, as the PKGBUILD installs it: /usr/share/envy/agents/skills/envy.
 mkdir -p "$OUT/$NAME/agents/skills"
 cp -r agents/skills/envy "$OUT/$NAME/agents/skills/"

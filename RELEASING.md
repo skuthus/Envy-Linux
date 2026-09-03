@@ -12,7 +12,7 @@ PKGBUILD is ready for it whenever that changes.)
   tracks the Mac app's features, not its number.
 - **Tarball** `envynote-<version>-x86_64.tar.gz`: the release binary, the
   desktop entry, icons, the Hyprland bind file and its summon script, the
-  `agents/skills/envy` skill, the README and LICENSE. This is what the pacman
+  `agents/skills/envy` skill, the welcome guide, the README and LICENSE. This is what the pacman
   package installs; `linux/PKGBUILD` copies exactly that tree into `/usr`, so
   the skill lands at `/usr/share/envy/agents/skills/envy` where Envy links it
   into `~/.claude/skills` and `~/.agents/skills` at launch.

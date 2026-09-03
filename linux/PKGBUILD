@@ -55,5 +55,7 @@ package() {
       "$pkgdir/usr/share/envy/agents/skills/envy/${_skillfile#agents/skills/envy/}"
   done < <(find agents/skills/envy -type f -print0)
   install -Dm644 README.md "$pkgdir/usr/share/doc/envy/README.md"
+  # The guide every new Index starts with, readable without opening Envy.
+  install -Dm644 "Welcome to Envy.md" "$pkgdir/usr/share/doc/envy/Welcome to Envy.md"
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }

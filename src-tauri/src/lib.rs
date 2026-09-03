@@ -2641,35 +2641,10 @@ fn seed_sample_templates_if_needed(app: &tauri::AppHandle, dir: &Path) {
     }
 }
 
-const WELCOME_NOTE: &str = r#"# Welcome to Envy
-
-Envy is one search box. Type to filter, press Return to open the top match —
-or to create a new note from whatever you typed if nothing matches.
-
-Every note is a plain `.md` file in one folder called The Index. No database,
-no proprietary format. Open them in anything.
-
-## Try it
-
-- **Bold**, *italic*, ~~struck through~~, and `code` all render as you type.
-- ==highlight== marks text with a background, like ==this==.
-- Link notes with [[Another Note]] — following a link creates it if it doesn't
-  exist yet.
-- Tag anything with #hashtags and search `tag:name` to find it again.
-- Write a due date anywhere: @today, @friday, or @12-31-26.
-- Task lists work too:
-
-- [ ] Try creating a note
-- [ ] Link to it from here
-- [x] Read this far
-
-## Search operators
-
-`tag:` `due:` `date:` `link:` `todo:` `orphan:` `linked:` `ai:` `inbox:`
-
-Put a `-` in front of any of them to exclude instead. Separate terms with a
-comma to search for either rather than both.
-"#;
+/// The note a brand-new Index starts with: a guide to the whole app, kept as
+/// its own Markdown file so it can be read and edited as one, and shipped
+/// beside the binary as documentation (`/usr/share/doc/envy`).
+const WELCOME_NOTE: &str = include_str!("../welcome.md");
 
 
 #[cfg(test)]
