@@ -8,9 +8,10 @@
 //! its own audio/network/battery glyphs — the same job `isTemplate` does for
 //! the Mac's status item.
 //!
-//! The icon is the Mac's hand-drawn eye, traced in one colour: open while the
-//! main window shows, squinting while only the pinned note shows, closed while
-//! both are hidden. Every icon file is written at launch (and rewritten when
+//! The icon is the Mac's hand-drawn eye in one colour, filled solid with the
+//! iris punched out to the bar behind it: open while the main window shows,
+//! squinting while only the pinned note shows, a lid line while both are
+//! hidden. Every icon file is written at launch (and rewritten when
 //! the theme changes) into a private icon-theme directory, in the bar's own
 //! text colour, so bars that don't recolour symbolic icons still get a solid
 //! eye that matches.
@@ -22,7 +23,7 @@ use std::sync::OnceLock;
 use ksni::blocking::{Handle, TrayMethods};
 use ksni::menu::{CheckmarkItem, MenuItem, StandardItem, SubMenu};
 use tauri::{AppHandle, Emitter, Manager};
-use tiny_skia::{FillRule, LineCap, LineJoin, Mask, Paint, PathBuilder, Pixmap, Stroke, Transform};
+use tiny_skia::{BlendMode, FillRule, LineCap, LineJoin, Paint, PathBuilder, Pixmap, Stroke, Transform};
 
 use crate::{
     create_and_pin, persisted_keep_on_top, run_update_check, toggle_keep_on_top,
@@ -540,8 +541,23 @@ const UPPER_L: (f32, f32) = (6.0, 4.3);
 const UPPER_R: (f32, f32) = (12.0, 4.3);
 const SQUINT_L: (f32, f32) = (6.0, 8.4);
 const SQUINT_R: (f32, f32) = (12.0, 8.4);
-const IRIS: (f32, f32, f32) = (9.0, 9.2, 2.5);
+const IRIS: (f32, f32, f32) = (9.0, 9.2, 2.375);
 const LINE: f32 = 2.0;
+/// The Mac's canvas leaves menu-bar margins around the eye; the bar's own
+/// glyphs fill more of their box, so the eye is enlarged about the canvas
+/// centre to sit at their size (the owner's eye: 1.2 read slightly big).
+const ZOOM: f32 = 1.14;
+
+/// Where a canvas point lands after the zoom.
+fn zoomed(p: f32) -> f32 {
+    (p - CANVAS / 2.0) * ZOOM + CANVAS / 2.0
+}
+
+/// Three decimals: enough for an 18-unit canvas, and it keeps float noise
+/// like `1.5000005` out of the SVG files, which are committed.
+fn tidy(v: f32) -> f32 {
+    (v * 1000.0).round() / 1000.0
+}
 
 fn lens_path(eye: Eye) -> Option<tiny_skia::Path> {
     let mut pb = PathBuilder::new();
@@ -561,23 +577,28 @@ fn lens_path(eye: Eye) -> Option<tiny_skia::Path> {
     pb.finish()
 }
 
-/// Rasterises one eye at `size` pixels square in a single colour: the rim as
-/// a stroke, the iris as a disc clipped to the lens (so the squint shows the
-/// same iris partway hidden, not a smaller one).
+/// Rasterises one eye at `size` pixels square in a single colour: the lens
+/// filled solid with the iris cleared out of it (a hole, so the bar shows
+/// through), then the rim stroked on top so the lid stays whole where it
+/// crosses the iris in a squint — the same iris partway hidden, not a
+/// smaller one. A closed eye is only its lower lid.
 fn render_eye(eye: Eye, size: u32, colour: [u8; 3]) -> Option<Pixmap> {
     let mut pixmap = Pixmap::new(size, size)?;
     let scale = size as f32 / CANVAS;
-    let transform = Transform::from_scale(scale, scale);
+    let shift = scale * zoomed(0.0);
+    let transform = Transform::from_row(scale * ZOOM, 0.0, 0.0, scale * ZOOM, shift, shift);
     let mut paint = Paint::default();
     paint.set_color_rgba8(colour[0], colour[1], colour[2], 255);
     paint.anti_alias = true;
 
     let lens = lens_path(eye)?;
     if eye != Eye::Closed {
-        let mut mask = Mask::new(size, size)?;
-        mask.fill_path(&lens, FillRule::Winding, true, transform);
+        pixmap.fill_path(&lens, &paint, FillRule::Winding, transform, None);
         let iris = PathBuilder::from_circle(IRIS.0, IRIS.1, IRIS.2)?;
-        pixmap.fill_path(&iris, &paint, FillRule::Winding, transform, Some(&mask));
+        let mut clear = Paint::default();
+        clear.blend_mode = BlendMode::Clear;
+        clear.anti_alias = true;
+        pixmap.fill_path(&iris, &clear, FillRule::Winding, transform, None);
     }
     let stroke = Stroke {
         width: LINE,
@@ -589,6 +610,12 @@ fn render_eye(eye: Eye, size: u32, colour: [u8; 3]) -> Option<Pixmap> {
     Some(pixmap)
 }
 
+/// The same eye as an SVG, the zoom done by the viewBox. Kept to what Qt's SVG renderer (the bar widget)
+/// draws reliably: no masks or clip paths, just an even-odd fill of the lens
+/// with the iris as an inner subpath, and the rim stroked over it. In a
+/// squint the iris subpath is only the part of the disc below the lid
+/// (cut on a chord that the lid's stroke then covers), so nothing of the
+/// iris shows above the lid.
 fn eye_svg(eye: Eye, colour: [u8; 3]) -> String {
     let hex = format!("#{:02x}{:02x}{:02x}", colour[0], colour[1], colour[2]);
     let rim = format!(
@@ -607,16 +634,31 @@ fn eye_svg(eye: Eye, colour: [u8; 3]) -> String {
         ),
         None => rim,
     };
-    let iris = if upper.is_some() {
-        format!(
-            r#"<defs><clipPath id="l"><path d="{lens}"/></clipPath></defs><circle cx="{}" cy="{}" r="{}" fill="{hex}" clip-path="url(#l)"/>"#,
-            IRIS.0, IRIS.1, IRIS.2
-        )
-    } else {
-        String::new()
+    let (cx, cy, r) = IRIS;
+    let iris = match eye {
+        Eye::Closed => String::new(),
+        Eye::Open => format!(
+            "M{} {} A{r} {r} 0 1 0 {} {}A{r} {r} 0 1 0 {} {}Z",
+            cx - r, cy, cx + r, cy, cx - r, cy
+        ),
+        Eye::Squint => {
+            // The lid runs level with its control points across the iris;
+            // the chord sits there, under the stroke.
+            let chord = SQUINT_L.1 + (CORNER_L.1 - SQUINT_L.1) * 0.25;
+            let half = (r * r - (chord - cy) * (chord - cy)).sqrt();
+            let chord = tidy(chord);
+            format!("M{} {chord} A{r} {r} 0 1 0 {} {chord}Z", tidy(cx - half), tidy(cx + half))
+        }
     };
+    let fill = if iris.is_empty() {
+        String::new()
+    } else {
+        format!(r#"<path d="{lens} {iris}" fill="{hex}" fill-rule="evenodd"/>"#)
+    };
+    let origin = tidy(CANVAS / 2.0 - CANVAS / 2.0 / ZOOM);
+    let side = tidy(CANVAS / ZOOM);
     format!(
-        r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {CANVAS} {CANVAS}" width="{CANVAS}" height="{CANVAS}">{iris}<path d="{lens}" fill="none" stroke="{hex}" stroke-width="{LINE}" stroke-linecap="round" stroke-linejoin="round"/></svg>"#
+        r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="{origin} {origin} {side} {side}" width="{side}" height="{side}">{fill}<path d="{lens}" fill="none" stroke="{hex}" stroke-width="{LINE}" stroke-linecap="round" stroke-linejoin="round"/></svg>"#
     )
 }
 
@@ -1027,8 +1069,40 @@ mod tests {
 
     #[test]
     fn svg_has_the_iris_only_when_the_eye_is_open() {
-        assert!(eye_svg(Eye::Open, [0, 0, 0]).contains("<circle"));
-        assert!(eye_svg(Eye::Squint, [0, 0, 0]).contains("<circle"));
-        assert!(!eye_svg(Eye::Closed, [0, 0, 0]).contains("<circle"));
+        assert!(eye_svg(Eye::Open, [0, 0, 0]).contains("evenodd"));
+        assert!(eye_svg(Eye::Squint, [0, 0, 0]).contains("evenodd"));
+        assert!(!eye_svg(Eye::Closed, [0, 0, 0]).contains("evenodd"));
+    }
+
+    #[test]
+    fn the_iris_is_a_hole_in_a_solid_eye() {
+        // Canvas coordinates to pixels of a 36px render (two per unit).
+        let px_of = |p: f32| (zoomed(p) * 2.0) as u32;
+        let px = render_eye(Eye::Open, 36, [255, 255, 255]).unwrap();
+        let at = |x: f32, y: f32| px.pixel(px_of(x), px_of(y)).unwrap().alpha();
+        assert_eq!(at(IRIS.0, IRIS.1), 0, "the iris centre shows the bar");
+        assert_eq!(at(IRIS.0, IRIS.1 - IRIS.2 - 1.0), 255, "solid between iris and lid");
+        assert_eq!(at(4.5, 9.0), 255, "solid towards the corner");
+        assert_eq!(at(CORNER_L.0, CORNER_L.1), 255, "the rim's corner is painted");
+        // Squinting, the lid crosses the iris and stays whole.
+        let squint = render_eye(Eye::Squint, 36, [255, 255, 255]).unwrap();
+        let lid = squint.pixel(px_of(IRIS.0), px_of(SQUINT_L.1)).unwrap().alpha();
+        assert_eq!(lid, 255, "the squinting lid is unbroken over the iris");
+    }
+
+    #[test]
+    fn bar_widget_svgs_are_the_tray_eyes_in_white() {
+        for (eye, file) in [
+            (Eye::Open, "eye-open.svg"),
+            (Eye::Squint, "eye-squint.svg"),
+            (Eye::Closed, "eye-closed.svg"),
+        ] {
+            let shipped = PLUGIN_FILES.iter().find(|(n, _)| *n == file).unwrap().1;
+            assert_eq!(
+                std::str::from_utf8(shipped).unwrap().trim(),
+                eye_svg(eye, [255, 255, 255]),
+                "{file} is out of date: regenerate it from eye_svg"
+            );
+        }
     }
 }
