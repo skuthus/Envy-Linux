@@ -834,7 +834,44 @@ body.bold-file-list .row-date { font-weight: 700; }
 
 /* `hidden`, not `auto`: CodeMirror's own .cm-scroller already scrolls, so a
    second scrolling container here produces two nested scrollbars. */
-#editor { flex: 1; min-height: 0; overflow: hidden; }
+#editor {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+/* Two panes sit side by side under a wide editor (list above), stacked
+   beside a tall one (list to the left). */
+#editor.side-by-side { flex-direction: row; }
+.note-pane {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.pane-editor { flex: 1; min-height: 0; overflow: hidden; }
+/* The title bar lives in the active pane. The other pane gets a strip of the
+   same height (the bar's padding plus the field's own padding and border)
+   with its title in the muted colour, which is the one cue for which pane
+   the list opens into. */
+.pane-caption { display: none; }
+#editor.split .note-pane:not(.active) > .pane-caption {
+  display: block;
+  flex: none;
+  padding: calc(2px * var(--envy-zoom-space) + 2px) var(--envy-inset);
+  font-size: var(--envy-font-size);
+  font-weight: 600;
+  color: var(--envy-blockquote);
+  background: var(--envy-title-bar-background);
+  border-bottom: 1px solid color-mix(in srgb, var(--envy-marker) 30%, transparent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#editor.split.side-by-side > .note-pane + .note-pane { border-left: 1px solid var(--envy-marker); }
+#editor.split:not(.side-by-side) > .note-pane + .note-pane { border-top: 1px solid var(--envy-marker); }
 
 /* --- Pinned-note popover ----------------------------------------------------
    Its own window, undecorated and always on top, so it reads as a panel

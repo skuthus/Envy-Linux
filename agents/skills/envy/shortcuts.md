@@ -101,6 +101,9 @@ Handled by the window, so they fire wherever focus is inside Envy.
 | `retireDue` | Retire/Restore Due Date | `Ctrl+Shift+U` |
 | `emojiForLink` | Emoji for Link | `Ctrl+Shift+E` |
 | `popOut` | Pop Out Note | `Ctrl+Shift+O` |
+| `toggleSplit` | Split Editor / Close Split | `Ctrl+\` |
+| `switchPane` | Switch Editor Pane | `Alt+\` |
+| `flipSplit` | Flip Split Direction | `Ctrl+Alt+\` |
 | `moveToFolder` | Move to Folder… | `Ctrl+Shift+M` |
 | `toggleHelp` | Markup Help | `Ctrl+/` |
 | `zoomIn` | Zoom In | `Ctrl+=` |

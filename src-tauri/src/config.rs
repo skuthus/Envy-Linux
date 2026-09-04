@@ -229,7 +229,7 @@ fn first_line(s: &str) -> String {
 /// this has to work in a binary with no frontend loaded — `envynote config
 /// check` is the whole point. The copy cannot drift: a test below parses
 /// `src/shortcut-specs.ts` and fails if the two lists differ.
-const SHORTCUT_IDS: [&str; 34] = [
+const SHORTCUT_IDS: [&str; 37] = [
     "summonApp",
     "showPinnedNote",
     "unpinFromTray",
@@ -259,6 +259,9 @@ const SHORTCUT_IDS: [&str; 34] = [
     "retireDue",
     "emojiForLink",
     "popOut",
+    "toggleSplit",
+    "switchPane",
+    "flipSplit",
     "moveToFolder",
     "toggleHelp",
     "zoomIn",

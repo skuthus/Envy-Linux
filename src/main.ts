@@ -1,5 +1,5 @@
-import { EditorView, keymap, drawSelection, rectangularSelection } from '@codemirror/view'
-import { EditorState, Compartment } from '@codemirror/state'
+import { EditorView, keymap, drawSelection, rectangularSelection, type ViewUpdate } from '@codemirror/view'
+import { Annotation, EditorState, Compartment } from '@codemirror/state'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
@@ -141,10 +141,13 @@ const listHeaderEl = document.getElementById('list-header')!
 /// The sticky pinned rows, between the header and the scrolling list.
 const pinnedStripEl = document.getElementById('pinned-strip')!
 const titleEl = document.getElementById('note-title') as HTMLInputElement
+/// The rename field and its chips. One of these, living in whichever pane is
+/// active; the other pane shows its title in a plain strip of the same shape.
+const titleBarEl = document.getElementById('note-title-bar')!
 const dueEl = document.getElementById('note-due')!
 const tagsEl = document.getElementById('note-tags')!
 const folderChipEl = document.getElementById('note-folder')!
-const editorEl = document.getElementById('editor')!
+const editorElContainer = document.getElementById('editor')!
 const emptyEl = document.getElementById('empty-state')!
 
 /// The list, in display order — and, past one page, *sparse*.
@@ -172,28 +175,54 @@ function markOrderDirty() {
   orderDirty = true
 }
 let highlighted = 0
-let openNoteId: string | null = null
-/// The open note as last read or saved.
-///
-/// The title bar's tags, folder chip and due pill used to look it up in
-/// `results`. That worked while the whole list was in memory; past one page
-/// the open note's row may not be loaded at all, and a lookup that missed
-/// would silently blank the chips (or, in `commitRename`, compare the typed
-/// title against an empty string). Holding the note it already fetched costs
-/// one reference and removes the list from the question entirely.
-let openNoteDto: NoteDto | null = null
-/// The open note's text as last loaded from or written to disk.
-///
-/// Saving is guarded against this rather than fired unconditionally. Without
-/// the comparison, merely *opening* a note flushes the previous one — an
-/// identical rewrite that still stamps a new modified time, so clicking
-/// through the list reorders it under a date sort. The Mac guards the same
-/// way, in `scheduleSave`: `newValue != note.content`.
-let openNoteSavedContent = ''
-/// Saves are debounced rather than fired per keystroke — the store writes the
-/// whole file atomically, and doing that on every character would be pointless
-/// disk churn. 400ms matches the reload debounce in the Mac's NoteStore.
-let saveTimer: number | undefined
+/// One editor and the note it holds. The window shows one or two of these;
+/// everything that used to be "the open note" — its id, the DTO the title bar
+/// reads, the external document standing in for a note, the text as last
+/// written to disk, the pending save — is a field of the pane, and the
+/// window-level code reads them off `activePane`.
+interface Pane {
+  el: HTMLElement
+  captionEl: HTMLElement
+  editorEl: HTMLElement
+  view: EditorView
+  noteId: string | null
+  /// The open note as last read or saved.
+  ///
+  /// The title bar's tags, folder chip and due pill used to look it up in
+  /// `results`. That worked while the whole list was in memory; past one page
+  /// the open note's row may not be loaded at all, and a lookup that missed
+  /// would silently blank the chips (or, in `commitRename`, compare the typed
+  /// title against an empty string). Holding the note it already fetched costs
+  /// one reference and removes the list from the question entirely.
+  dto: NoteDto | null
+  external: ExternalDoc | null
+  /// The text as last loaded from or written to disk.
+  ///
+  /// Saving is guarded against this rather than fired unconditionally. Without
+  /// the comparison, merely *opening* a note flushes the previous one — an
+  /// identical rewrite that still stamps a new modified time, so clicking
+  /// through the list reorders it under a date sort. The Mac guards the same
+  /// way, in `scheduleSave`: `newValue != note.content`.
+  savedContent: string
+  /// Saves are debounced rather than fired per keystroke — the store writes
+  /// the whole file atomically, and doing that on every character would be
+  /// pointless disk churn. 400ms matches the reload debounce in the Mac's
+  /// NoteStore.
+  saveTimer: number | undefined
+}
+
+/// In screen order: left to right side by side, top to bottom stacked.
+const panes: Pane[] = []
+/// The pane the list opens into, the title bar and footer describe, and every
+/// shortcut acts on. Always one of `panes`.
+let activePane: Pane
+/// `activePane.view`, kept as its own binding because that is what nearly
+/// every editor call in this file reaches for.
+let view: EditorView
+
+/// Marks a transaction that copies a twin pane's edit, so the receiving pane
+/// neither saves it (the pane it was typed in does) nor mirrors it back.
+const mirrored = Annotation.define<boolean>()
 
 const editable = new Compartment()
 /// The emphasis bindings live in a compartment because they're remappable, and
@@ -225,7 +254,7 @@ function areaKeymap() {
 }
 
 function applyEditorKeymap() {
-  view.dispatch({
+  for (const p of panes) p.view.dispatch({
     effects: [
       emphasisKeys.reconfigure(
         keymap.of(emphasisKeymap(bindingFor('bold'), bindingFor('italic'))),
@@ -243,213 +272,427 @@ function applyEditorKeymap() {
 // and the ReferenceError would take the whole styler plugin down with it.
 let knownTitlesLower = new Set<string>()
 
-const view = new EditorView({
-  state: EditorState.create({
-    doc: '',
-    extensions: [
-      history(),
-      drawSelection(),
-      rectangularSelection(),
-      // Before the default keymap, so emphasis wins over the default binding
-      // for those chords. In a compartment because the bindings are
-      // remappable, and a facet can't be changed after the fact.
-      emphasisKeys.of(keymap.of(emphasisKeymap(bindingFor('bold'), bindingFor('italic')))),
-      // Ahead of the default keymap, which would otherwise claim Alt+Up/Down.
-      areaKeys.of(areaKeymap()),
-      // Enter/Tab/Shift-Tab continue and nest lists (and ordered lists
-      // renumber) — Prec.high inside, so this beats the default newline/indent.
-      listEditing,
-      tableEditing,
-      keymap.of([...defaultKeymap, ...historyKeymap]),
-      EditorView.lineWrapping,
-      // Ghost-text completion for [[links]] and #tags, drawing from the same
-      // title/tag lists the search box completes from. Read through a closure
-      // so it tracks edits without the editor being reconfigured.
-      editorCompletion,
-      completionSources.of(() => ({ titles: knownTitles, tags: knownTags })),
-      // The set the styler checks a [[link]]'s target against to decide whether
-      // it's a ghost. A getter, so it reads the live set without reconfiguring.
-      existingTitles.of(() => knownTitlesLower),
-      completionTransforms,
-      autoPairing,
-      searchQueryField,
-      plainTextField,
-      flashField,
-      embedHost.of({
-        // Resolved by title on every mount rather than handed a pre-fetched
-        // note, so "the source was renamed" and "the source doesn't exist
-        // yet" both fall out of the ordinary lookup instead of each needing
-        // their own handling.
-        resolve: async (title) => {
-          const note = await invoke<NoteDto | null>('resolve_title', { title })
-          return note && note.content !== null
-            ? { id: note.id, title: note.title, content: note.content }
-            : null
-        },
-        save: async (id, content) => {
-          await invoke('save_note', { id, content })
-          await runSearch()
-        },
-        currentNoteId: () => openNoteId,
-        // The command returns raw bytes as an IPC Response, which arrives here as
-        // an ArrayBuffer; the widget wraps it in an object URL.
-        readAttachment: (name) =>
-          invoke<ArrayBuffer>('read_attachment', { name }).catch(() => null),
-        openAttachment: (name) => void invoke('open_attachment', { name }),
-        onImageContextMenu: (raw, spec, x, y) =>
-          openImageMenu(raw, spec, x, y, view, (name) => void renameAttachment(name)),
-      }),
-      envyStyler,
-      EditorView.domEventHandlers({
-        mousedown: (event, v) => {
-          // Ctrl+click follows a link, the Windows spelling of ⌘-click. Envy
-          // requires a modifier by default (`requireModifierForLinkClick`) so
-          // an ordinary click can still place the cursor inside a link to
-          // edit it — the two gestures would otherwise fight.
-          // Turning the setting off trades that away for a plain click.
-          if (event.button !== 0) return false
-          // A click inside a rendered embed belongs to the widget — the image's
-          // own open/menu handlers, or a note embed's inner editor — never to a
-          // marker follow. Without this, clicking the empty space beside an
-          // image snaps to the marker line and "opens" the file, which for a
-          // missing one throws an OS "cannot find" error.
-          if ((event.target as HTMLElement | null)?.closest('.envy-image-embed, .envy-embed, .envy-md-table-wrap, .envy-md-pre-wrap')) {
-            return false
-          }
-          const pos = v.posAtCoords({ x: event.clientX, y: event.clientY })
-          if (pos === null) return false
+/// Builds a pane's editor. Everything an editor needs is here; the pane it
+/// belongs to is closed over so the handlers act on it rather than on
+/// whichever pane happens to be active.
+function createPaneEditor(pane: Pane): EditorView {
+  return new EditorView({
+    state: EditorState.create({
+      doc: '',
+      extensions: [
+        history(),
+        drawSelection(),
+        rectangularSelection(),
+        // Before the default keymap, so emphasis wins over the default binding
+        // for those chords. In a compartment because the bindings are
+        // remappable, and a facet can't be changed after the fact.
+        emphasisKeys.of(keymap.of(emphasisKeymap(bindingFor('bold'), bindingFor('italic')))),
+        // Ahead of the default keymap, which would otherwise claim Alt+Up/Down.
+        areaKeys.of(areaKeymap()),
+        // Enter/Tab/Shift-Tab continue and nest lists (and ordered lists
+        // renumber) — Prec.high inside, so this beats the default newline/indent.
+        listEditing,
+        tableEditing,
+        keymap.of([...defaultKeymap, ...historyKeymap]),
+        EditorView.lineWrapping,
+        // Ghost-text completion for [[links]] and #tags, drawing from the same
+        // title/tag lists the search box completes from. Read through a closure
+        // so it tracks edits without the editor being reconfigured.
+        editorCompletion,
+        completionSources.of(() => ({ titles: knownTitles, tags: knownTags })),
+        // The set the styler checks a [[link]]'s target against to decide whether
+        // it's a ghost. A getter, so it reads the live set without reconfiguring.
+        existingTitles.of(() => knownTitlesLower),
+        completionTransforms,
+        autoPairing,
+        searchQueryField,
+        plainTextField,
+        flashField,
+        embedHost.of({
+          // Resolved by title on every mount rather than handed a pre-fetched
+          // note, so "the source was renamed" and "the source doesn't exist
+          // yet" both fall out of the ordinary lookup instead of each needing
+          // their own handling.
+          resolve: async (title) => {
+            const note = await invoke<NoteDto | null>('resolve_title', { title })
+            return note && note.content !== null
+              ? { id: note.id, title: note.title, content: note.content }
+              : null
+          },
+          save: async (id, content) => {
+            await invoke('save_note', { id, content })
+            await runSearch()
+          },
+          currentNoteId: () => pane.noteId,
+          // The command returns raw bytes as an IPC Response, which arrives here as
+          // an ArrayBuffer; the widget wraps it in an object URL.
+          readAttachment: (name) =>
+            invoke<ArrayBuffer>('read_attachment', { name }).catch(() => null),
+          openAttachment: (name) => void invoke('open_attachment', { name }),
+          onImageContextMenu: (raw, spec, x, y) =>
+            openImageMenu(raw, spec, x, y, pane.view, (name) => void renameAttachment(name)),
+        }),
+        envyStyler,
+        EditorView.domEventHandlers({
+          mousedown: (event, v) => {
+            // Ctrl+click follows a link, the Windows spelling of ⌘-click. Envy
+            // requires a modifier by default (`requireModifierForLinkClick`) so
+            // an ordinary click can still place the cursor inside a link to
+            // edit it — the two gestures would otherwise fight.
+            // Turning the setting off trades that away for a plain click.
+            if (event.button !== 0) return false
+            // A click inside a rendered embed belongs to the widget — the image's
+            // own open/menu handlers, or a note embed's inner editor — never to a
+            // marker follow. Without this, clicking the empty space beside an
+            // image snaps to the marker line and "opens" the file, which for a
+            // missing one throws an OS "cannot find" error.
+            if ((event.target as HTMLElement | null)?.closest('.envy-image-embed, .envy-embed, .envy-md-table-wrap, .envy-md-pre-wrap')) {
+              return false
+            }
+            const pos = v.posAtCoords({ x: event.clientX, y: event.clientY })
+            if (pos === null) return false
 
-          // Alt-click previews a link instead of following it; Alt+Shift-click
-          // skips the peek and opens the note in its own window.
-          if (event.altKey && settings.linkPreview !== 'off') {
+            // Alt-click previews a link instead of following it; Alt+Shift-click
+            // skips the peek and opens the note in its own window.
+            if (event.altKey && settings.linkPreview !== 'off') {
+              const target = wikiLinkTargetAt(v, pos)
+              if (!target) return false
+              event.preventDefault()
+              if (event.shiftKey) void popOutLink(target, event.clientX, event.clientY)
+              else void showLinkPreview(target, event.clientX, event.clientY)
+              return true
+            }
+
+            // Clicking a due date retires it, or brings it back. Checked before
+            // links because the two never overlap, and before the modifier gate
+            // because retiring a date is a plain click.
+            //
+            // Guarded on the pointer's real x/y, like the wiki-link marker below:
+            // a date that ends a line has empty space to its right that
+            // posAtCoords snaps to the token's end, so without this a click well
+            // past the date would cross it off. Only a click actually over the
+            // token toggles it.
+            const dueToken = event.ctrlKey || event.altKey ? null : dueTokenAt(v.state.doc.toString(), pos)
+            if (dueToken) {
+              const a = v.coordsAtPos(dueToken.from, 1)
+              const b = v.coordsAtPos(dueToken.to, -1)
+              const onToken =
+                a &&
+                b &&
+                event.clientX >= a.left - 2 &&
+                event.clientX <= b.right + 2 &&
+                event.clientY >= Math.min(a.top, b.top) - 2 &&
+                event.clientY <= Math.max(a.bottom, b.bottom) + 2
+              if (onToken && toggleDueToken(v, pos)) {
+                event.preventDefault()
+                return true
+              }
+            }
+
+            // In-note jumps happen on a plain click, no modifier — there's
+            // nothing else a footnote reference or a heading anchor could mean.
+            if (!event.altKey) {
+              const footnote = footnoteRefAt(v, pos)
+              if (footnote) {
+                const range = footnoteDefinitionRange(v.state.doc.toString(), footnote)
+                if (range) {
+                  event.preventDefault()
+                  jumpToRange(range)
+                  return true
+                }
+              }
+              const mdLink = markdownLinkAt(v, pos)
+              if (mdLink?.url.startsWith('#')) {
+                const range = headingRangeForSlug(v.state.doc.toString(), mdLink.url.slice(1))
+                if (range) {
+                  event.preventDefault()
+                  jumpToRange(range)
+                  return true
+                }
+              }
+              // An outbound `[text](http…)` link opens externally, but honours the
+              // modifier gate the same as a wiki-link so a plain click can still
+              // land the caret to edit the URL.
+              if (mdLink && /^https?:\/\//i.test(mdLink.url)) {
+                if (settings.requireModifierForLinkClick && !event.ctrlKey) return false
+                event.preventDefault()
+                void invoke('open_external_url', { url: mdLink.url })
+                return true
+              }
+            }
+
+            if (settings.requireModifierForLinkClick && !event.ctrlKey) return false
             const target = wikiLinkTargetAt(v, pos)
             if (!target) return false
+            const range = wikiLinkRangeAt(v, pos)
+            // A collapsed `![[image]]` or `[[link]]` can fill its whole line, so a
+            // click in the empty space past it snaps to the line end — which
+            // posAtCoords reports as inside the marker. Guard on the pointer's real
+            // x: past the rendered end of the marker, place the caret rather than
+            // follow (and, for a missing image, throw an OS error).
+            if (range) {
+              const edge = v.coordsAtPos(range.to, -1)
+              if (edge && event.clientX > edge.right + 2) return false
+            }
+            // With plain click-to-follow on, a click inside the link the caret
+            // already sits in is an edit, not a navigation — otherwise a note
+            // that is only a link (or repositioning within any link you've
+            // entered) could never be clicked into. Ctrl still follows,
+            // unconditionally. Mirrors the Mac's caretIsInsideWikiLink carve-out.
+            if (!event.ctrlKey) {
+              const caret = v.state.selection.main.from
+              if (range && caret >= range.from && caret <= range.to) return false
+            }
             event.preventDefault()
-            if (event.shiftKey) void popOutLink(target, event.clientX, event.clientY)
-            else void showLinkPreview(target, event.clientX, event.clientY)
-            return true
-          }
-
-          // Clicking a due date retires it, or brings it back. Checked before
-          // links because the two never overlap, and before the modifier gate
-          // because retiring a date is a plain click.
-          //
-          // Guarded on the pointer's real x/y, like the wiki-link marker below:
-          // a date that ends a line has empty space to its right that
-          // posAtCoords snaps to the token's end, so without this a click well
-          // past the date would cross it off. Only a click actually over the
-          // token toggles it.
-          const dueToken = event.ctrlKey || event.altKey ? null : dueTokenAt(v.state.doc.toString(), pos)
-          if (dueToken) {
-            const a = v.coordsAtPos(dueToken.from, 1)
-            const b = v.coordsAtPos(dueToken.to, -1)
-            const onToken =
-              a &&
-              b &&
-              event.clientX >= a.left - 2 &&
-              event.clientX <= b.right + 2 &&
-              event.clientY >= Math.min(a.top, b.top) - 2 &&
-              event.clientY <= Math.max(a.bottom, b.bottom) + 2
-            if (onToken && toggleDueToken(v, pos)) {
-              event.preventDefault()
+            // An `![[image.png]]` target is an attachment, not a note — open the
+            // file rather than resolving (and ghost-creating) a note by that name.
+            if (isImageTarget(target)) {
+              void invoke('open_attachment', { name: target })
               return true
             }
-          }
-
-          // In-note jumps happen on a plain click, no modifier — there's
-          // nothing else a footnote reference or a heading anchor could mean.
-          if (!event.altKey) {
-            const footnote = footnoteRefAt(v, pos)
-            if (footnote) {
-              const range = footnoteDefinitionRange(v.state.doc.toString(), footnote)
-              if (range) {
-                event.preventDefault()
-                jumpToRange(range)
-                return true
-              }
-            }
-            const mdLink = markdownLinkAt(v, pos)
-            if (mdLink?.url.startsWith('#')) {
-              const range = headingRangeForSlug(v.state.doc.toString(), mdLink.url.slice(1))
-              if (range) {
-                event.preventDefault()
-                jumpToRange(range)
-                return true
-              }
-            }
-            // An outbound `[text](http…)` link opens externally, but honours the
-            // modifier gate the same as a wiki-link so a plain click can still
-            // land the caret to edit the URL.
-            if (mdLink && /^https?:\/\//i.test(mdLink.url)) {
-              if (settings.requireModifierForLinkClick && !event.ctrlKey) return false
-              event.preventDefault()
-              void invoke('open_external_url', { url: mdLink.url })
-              return true
-            }
-          }
-
-          if (settings.requireModifierForLinkClick && !event.ctrlKey) return false
-          const target = wikiLinkTargetAt(v, pos)
-          if (!target) return false
-          const range = wikiLinkRangeAt(v, pos)
-          // A collapsed `![[image]]` or `[[link]]` can fill its whole line, so a
-          // click in the empty space past it snaps to the line end — which
-          // posAtCoords reports as inside the marker. Guard on the pointer's real
-          // x: past the rendered end of the marker, place the caret rather than
-          // follow (and, for a missing image, throw an OS error).
-          if (range) {
-            const edge = v.coordsAtPos(range.to, -1)
-            if (edge && event.clientX > edge.right + 2) return false
-          }
-          // With plain click-to-follow on, a click inside the link the caret
-          // already sits in is an edit, not a navigation — otherwise a note
-          // that is only a link (or repositioning within any link you've
-          // entered) could never be clicked into. Ctrl still follows,
-          // unconditionally. Mirrors the Mac's caretIsInsideWikiLink carve-out.
-          if (!event.ctrlKey) {
-            const caret = v.state.selection.main.from
-            if (range && caret >= range.from && caret <= range.to) return false
-          }
-          event.preventDefault()
-          // An `![[image.png]]` target is an attachment, not a note — open the
-          // file rather than resolving (and ghost-creating) a note by that name.
-          if (isImageTarget(target)) {
-            void invoke('open_attachment', { name: target })
+            void followLink(target)
             return true
-          }
-          void followLink(target)
-          return true
-        },
-        // Pasting an image writes it to Attachments/ and drops in an `![[…]]`.
-        // Only claimed when the clipboard carries an image and no text — a
-        // copied text run pastes as text, matching the Mac's no-string guard.
-        paste: (event, v) => {
-          if (!openNoteId && !openExternal) return false
-          const dt = event.clipboardData
-          if (!dt || dt.getData('text/plain')) return false
-          const item = [...dt.items].find(
-            (it) => it.kind === 'file' && it.type.startsWith('image/'),
-          )
-          const file = item?.getAsFile()
-          if (!file) return false
-          event.preventDefault()
-          void importPastedImage(file, v)
-          return true
-        },
-      }),
-      editable.of(EditorView.editable.of(false)),
-      EditorView.updateListener.of((u) => {
-        if (u.docChanged && (openNoteId || openExternal)) {
-          scheduleSave()
+          },
+          // Pasting an image writes it to Attachments/ and drops in an `![[…]]`.
+          // Only claimed when the clipboard carries an image and no text — a
+          // copied text run pastes as text, matching the Mac's no-string guard.
+          paste: (event, v) => {
+            if (!pane.noteId && !pane.external) return false
+            const dt = event.clipboardData
+            if (!dt || dt.getData('text/plain')) return false
+            const item = [...dt.items].find(
+              (it) => it.kind === 'file' && it.type.startsWith('image/'),
+            )
+            const file = item?.getAsFile()
+            if (!file) return false
+            event.preventDefault()
+            void importPastedImage(file, v)
+            return true
+          },
+        }),
+        editable.of(EditorView.editable.of(false)),
+        EditorView.updateListener.of((u) => {
+          if (!u.docChanged || !(pane.noteId || pane.external)) return
+          // A twin's keystrokes arriving here: the twin saves them, and copying
+          // them back would bounce between the two forever.
+          if (u.transactions.some((tr) => tr.annotation(mirrored))) return
+          mirrorToTwins(pane, u)
+          scheduleSave(pane)
           // Counts track the buffer, not the saved file — they should move as
           // you type, not lag 400ms behind on the save debounce.
-          renderStats()
-        }
-      }),
-    ],
-  }),
-  parent: editorEl,
-})
+          if (pane === activePane) renderStats()
+        }),
+      ],
+    }),
+    parent: pane.editorEl,
+  })
+}
+
+// --- Panes -------------------------------------------------------------------
+// The editor area holds one pane, or two side by side (stacked when the list is
+// beside the editor). Splitting starts the second pane on the note you are
+// looking at, and the two mirror each other's edits while they show the same
+// note, so the split reads as two views of one file until you open something
+// else in one of them.
+
+function createPane(): Pane {
+  const el = document.createElement('div')
+  el.className = 'note-pane'
+  const captionEl = document.createElement('div')
+  captionEl.className = 'pane-caption'
+  const editorEl = document.createElement('div')
+  editorEl.className = 'pane-editor'
+  el.append(captionEl, editorEl)
+  const pane: Pane = {
+    el,
+    captionEl,
+    editorEl,
+    view: null as unknown as EditorView,
+    noteId: null,
+    dto: null,
+    external: null,
+    savedContent: '',
+    saveTimer: undefined,
+  }
+  pane.view = createPaneEditor(pane)
+  // Capture phase, so the pane is active before the editor handles the click
+  // that landed in it; focusin covers the keyboard routes (Alt+Down, Tab).
+  el.addEventListener('mousedown', () => activatePane(pane), true)
+  el.addEventListener('focusin', () => activatePane(pane))
+  panes.push(pane)
+  editorElContainer.append(el)
+  return pane
+}
+
+/// Makes `pane` the one the window describes: the title bar, footer and
+/// interlinks switch to its note. Nothing is saved or loaded — each pane keeps
+/// its own buffer and pending save.
+function activatePane(pane: Pane) {
+  if (pane === activePane) return
+  activePane = pane
+  view = pane.view
+  pane.el.prepend(titleBarEl)
+  titleEl.value = pane.dto?.title ?? pane.external?.name ?? ''
+  titleEl.disabled = pane.external !== null
+  renderDueBadge(pane.dto?.due ?? null)
+  renderTitleBarTags(pane.dto?.tags ?? [])
+  renderTitleBarFolder(pane.dto?.subfolder ?? null)
+  fleetingActionsEl.classList.toggle('hidden', !(pane.dto?.isInbox && settings.inboxEnabled))
+  applyFleetingSubmitShape()
+  templateActionsEl.classList.toggle('hidden', pane.external?.kind !== 'template')
+  syncEmptyState()
+  renderPaneCaptions()
+  renderStats()
+  void refreshInterlinks()
+}
+
+/// The inactive pane names its note in a strip where the active pane has the
+/// title bar, so the two bars sit level and nothing is said twice.
+function renderPaneCaptions() {
+  editorElContainer.classList.toggle('split', panes.length > 1)
+  for (const p of panes) {
+    p.el.classList.toggle('active', p === activePane)
+    p.captionEl.textContent = p.dto?.title ?? p.external?.name ?? 'No note open'
+  }
+}
+
+/// The "type to search" placeholder covers the whole editor area, so it is
+/// only right while a single, empty pane is showing.
+function syncEmptyState() {
+  const empty = activePane.noteId === null && activePane.external === null
+  emptyEl.classList.toggle('hidden', !empty || panes.length > 1)
+}
+
+/// The editor viewports just changed shape, and the styler decorates only
+/// what's visible.
+function measurePanes() {
+  for (const p of panes) p.view.requestMeasure()
+}
+
+/// The panes holding a given note, or a given external document.
+function panesShowing(noteId: string | null, external: ExternalDoc | null = null): Pane[] {
+  return panes.filter(
+    (p) =>
+      (noteId !== null && p.noteId === noteId) ||
+      (external !== null && p.external?.kind === external.kind && p.external.id === external.id),
+  )
+}
+
+/// Which way two panes split. Unset, it follows the layout: side by side
+/// under a wide editor (list above), stacked beside a tall one (list to the
+/// left). Set, it is whichever way you last asked for, remembered per machine
+/// like the divider positions.
+function splitStacked(): boolean {
+  const stored = localStorage.getItem('splitStacked')
+  if (stored === 'true' || stored === 'false') return stored === 'true'
+  return layoutMode !== 'vertical'
+}
+
+function applySplitAxis() {
+  editorElContainer.classList.toggle('side-by-side', !splitStacked())
+  measurePanes()
+}
+
+function flipSplit() {
+  localStorage.setItem('splitStacked', String(!splitStacked()))
+  applySplitAxis()
+}
+
+function paneAt(x: number, y: number): Pane | null {
+  const el = document.elementFromPoint(x, y)?.closest('.note-pane')
+  return panes.find((p) => p.el === el) ?? null
+}
+
+/// Copies an edit made in `pane` into every other pane showing the same note.
+/// Their documents are identical by construction — a twin starts as a copy
+/// and receives every edit since — so the change set applies as is; if they
+/// have somehow drifted, the whole text is put right instead.
+function mirrorToTwins(pane: Pane, u: ViewUpdate) {
+  for (const twin of panesShowing(pane.noteId, pane.external)) {
+    if (twin === pane) continue
+    const inStep = twin.view.state.doc.length === u.startState.doc.length
+    twin.view.dispatch({
+      changes: inStep
+        ? u.changes
+        : { from: 0, to: twin.view.state.doc.length, insert: u.state.doc.toString() },
+      annotations: mirrored.of(true),
+    })
+  }
+}
+
+/// Opens a second pane on the active note, or, with two showing, closes the
+/// one you are not in — so the same key takes the split down again.
+async function toggleSplit() {
+  if (panes.length > 1) {
+    await closePane(panes.find((p) => p !== activePane)!)
+    return
+  }
+  const source = activePane
+  const twin = createPane()
+  twin.noteId = source.noteId
+  twin.dto = source.dto
+  twin.external = source.external
+  twin.savedContent = source.savedContent
+  twin.view.dispatch({
+    changes: { from: 0, to: 0, insert: source.view.state.doc.toString() },
+    effects: editable.reconfigure(
+      EditorView.editable.of(source.noteId !== null || source.external !== null),
+    ),
+    selection: { anchor: source.view.state.selection.main.head },
+    annotations: mirrored.of(true),
+  })
+  activatePane(twin)
+  renderPaneCaptions()
+  measurePanes()
+  twin.view.focus()
+}
+
+/// Takes a pane down, its pending edit written first. The last pane never
+/// closes — closeEditor empties it instead.
+async function closePane(pane: Pane) {
+  if (panes.length < 2) return
+  cancelPendingSave(pane)
+  await savePane(pane)
+  panes.splice(panes.indexOf(pane), 1)
+  if (pane === activePane) activatePane(panes[0])
+  pane.view.destroy()
+  pane.el.remove()
+  renderPaneCaptions()
+  syncEmptyState()
+  measurePanes()
+  view.focus()
+}
+
+/// The note a pane was showing is gone (deleted, or turned into a template):
+/// the active pane is emptied, any other pane is closed.
+async function releasePanes(gone: Pane[]) {
+  for (const pane of gone) {
+    if (pane === activePane) closeEditor()
+    else await closePane(pane)
+  }
+}
+
+/// Opens a note beside what you are looking at: into the other pane, splitting
+/// first if there is only one. That pane becomes the active one, so the note
+/// is where the caret goes next.
+async function openInSplitPane(id: string) {
+  if (panes.length < 2) await toggleSplit()
+  else activatePane(panes.find((p) => p !== activePane)!)
+  await openNote(id)
+  renderList()
+  view.focus()
+}
+
+function focusOtherPane() {
+  const other = panes.find((p) => p !== activePane)
+  if (!other) return
+  activatePane(other)
+  other.view.focus()
+}
+
+activePane = createPane()
+view = activePane.view
+activePane.el.prepend(titleBarEl)
 
 // --- Footer: interlinks and counts ------------------------------------------
 
@@ -533,7 +776,7 @@ const footerCollapsed = new Set<FooterCount>()
 const footerEl = document.getElementById('footer')!
 
 function paintStats() {
-  if (!openNoteId && !openExternal) {
+  if (!activePane.noteId && !activePane.external) {
     statsEl.textContent = ''
     paintVaultLabel()
     return
@@ -638,7 +881,7 @@ function renderInterlinks() {
     currentInterlinks.backlinks.length +
     currentInterlinks.suggested.length
 
-  if (!openNoteId || total === 0 || !settings.showBacklinks) {
+  if (!activePane.noteId || total === 0 || !settings.showBacklinks) {
     interlinksToggleEl.classList.add('hidden')
     interlinksEl.classList.add('hidden')
     return
@@ -743,7 +986,7 @@ async function refreshInterlinks() {
     clearTimeout(interlinksTimer)
     interlinksTimer = undefined
   }
-  const id = openNoteId
+  const id = activePane.noteId
   if (!id) {
     currentInterlinks = { links: [], backlinks: [], suggested: [] }
     renderInterlinks()
@@ -752,7 +995,7 @@ async function refreshInterlinks() {
   const fetched = await invoke<InterlinksDto>('interlinks', { id })
   // Another note opened while the scan ran — showing its predecessor's links
   // is worse than showing none, and the open note has its own refresh coming.
-  if (openNoteId !== id) return
+  if (activePane.noteId !== id) return
   currentInterlinks = fetched
   renderInterlinks()
 }
@@ -761,7 +1004,7 @@ interlinksToggleEl.onclick = () => {
   interlinksExpanded = !interlinksExpanded
   localStorage.setItem('backlinksExpanded', String(interlinksExpanded))
   renderInterlinks()
-  view.requestMeasure()
+  measurePanes()
 }
 
 // --- Wiki-links -------------------------------------------------------------
@@ -837,19 +1080,24 @@ const OWN_WRITE_WINDOW_MS = 1500
 /// are in flight, since clobbering what someone is typing is worse than a
 /// moment's staleness.
 async function reloadOpenNoteFromDisk() {
-  if (!openNoteId || saveTimer !== undefined) return
-  const fresh = await invoke<NoteDto | null>('read_note', { id: openNoteId })
-  if (!fresh || fresh.content === null || fresh.content === view.state.doc.toString()) return
-  const cursor = view.state.selection.main.head
-  const changed = changedRange(view.state.doc.toString(), fresh.content)
-  view.dispatch({
-    changes: { from: 0, to: view.state.doc.length, insert: fresh.content },
-    selection: { anchor: Math.min(cursor, fresh.content.length) },
-  })
-  // What's on disk is now what's in the buffer, so a later save has nothing to
-  // write until the text actually changes again.
-  openNoteSavedContent = fresh.content
-  flashChangedRange(changed)
+  for (const pane of panes) {
+    if (!pane.noteId || pane.saveTimer !== undefined) continue
+    const fresh = await invoke<NoteDto | null>('read_note', { id: pane.noteId })
+    if (!fresh || fresh.content === null || fresh.content === pane.view.state.doc.toString()) continue
+    const cursor = pane.view.state.selection.main.head
+    const changed = changedRange(pane.view.state.doc.toString(), fresh.content)
+    pane.view.dispatch({
+      changes: { from: 0, to: pane.view.state.doc.length, insert: fresh.content },
+      selection: { anchor: Math.min(cursor, fresh.content.length) },
+      // Not an edit of this pane's making: the twin, if any, gets its own
+      // copy from disk on the next turn of this loop.
+      annotations: mirrored.of(true),
+    })
+    // What's on disk is now what's in the buffer, so a later save has nothing
+    // to write until the text actually changes again.
+    pane.savedContent = fresh.content
+    if (pane === activePane) flashChangedRange(changed)
+  }
 }
 
 /// Renames an attachment from the image's right-click menu. The shared flow does
@@ -895,7 +1143,10 @@ async function importPastedImage(file: File, v: EditorView) {
 // Attachments/ (leaving the original in place) and referenced at the drop point.
 void getCurrentWebview().onDragDropEvent(async (event) => {
   if (event.payload.type !== 'drop') return
-  if (!openNoteId && !openExternal) return
+  // The drop goes into the pane under the pointer, which becomes the active one.
+  const under = paneAt(event.payload.position.x, event.payload.position.y)
+  if (under) activatePane(under)
+  if (!activePane.noteId && !activePane.external) return
   const imagePath = event.payload.paths.find((p) => isImageTarget(p))
   if (!imagePath) return
   // The position is labelled physical, but on Linux it is GTK's own logical
@@ -1027,6 +1278,7 @@ if (localStorage.getItem('omarchyStackedLayout') !== '1') {
 
 function applyLayout() {
   panesEl.className = layoutMode
+  applySplitAxis()
   if (layoutMode === 'vertical') {
     const fraction = storedNumber('verticalSplitFraction', DEFAULT_TOP_FRACTION)
     listPaneEl.style.height = `${(fraction * 100).toFixed(3)}%`
@@ -1038,7 +1290,7 @@ function applyLayout() {
   }
   // The editor's viewport just changed shape, and the styler decorates only
   // what's visible.
-  view.requestMeasure()
+  measurePanes()
 }
 
 /// Applying and persisting are separate: `applyAllSettings` re-applies the
@@ -1084,45 +1336,54 @@ dividerEl.addEventListener('pointerdown', (e) => {
   dividerEl.addEventListener('pointerup', onUp)
 })
 
-function scheduleSave() {
-  cancelPendingSave()
-  saveTimer = window.setTimeout(() => {
-    saveTimer = undefined
-    void save()
+function scheduleSave(pane: Pane = activePane) {
+  cancelPendingSave(pane)
+  pane.saveTimer = window.setTimeout(() => {
+    pane.saveTimer = undefined
+    void savePane(pane)
   }, 400)
 }
 
 /// Clearing the handle is not bookkeeping pedantry: `saveTimer === undefined`
 /// is what "no unsaved keystrokes in flight" is read from, and a stale handle
 /// would make the watcher refuse to ever refresh the open note.
-function cancelPendingSave() {
-  window.clearTimeout(saveTimer)
-  saveTimer = undefined
+function cancelPendingSave(pane: Pane = activePane) {
+  window.clearTimeout(pane.saveTimer)
+  pane.saveTimer = undefined
 }
 
-async function save() {
-  const content = view.state.doc.toString()
+/// Writes the active pane's buffer — what every "flush before you do that"
+/// caller means.
+function save() {
+  return savePane(activePane)
+}
+
+async function savePane(pane: Pane) {
+  const content = pane.view.state.doc.toString()
   // Nothing changed — writing anyway would touch the modified time and
   // reorder the list for no reason.
-  if (content === openNoteSavedContent) return
+  if (content === pane.savedContent) return
 
-  if (openExternal) {
+  if (pane.external) {
     try {
-      await saveExternalDocument(openExternal, content)
-      openNoteSavedContent = content
+      await saveExternalDocument(pane.external, content)
+      pane.savedContent = content
+      for (const twin of panesShowing(null, pane.external)) twin.savedContent = content
     } catch (e) {
-      console.error(`could not save ${openExternal.name}`, e)
+      console.error(`could not save ${pane.external.name}`, e)
     }
     return
   }
 
-  if (!openNoteId) return
+  if (!pane.noteId) return
   try {
     const saved = await invoke<NoteDto>('save_note', {
-      id: openNoteId,
+      id: pane.noteId,
       content,
     })
-    openNoteSavedContent = content
+    // A twin showing the same note already holds this text, keystroke by
+    // keystroke, so it has nothing of its own to write either.
+    for (const twin of panesShowing(pane.noteId)) twin.savedContent = content
     // What the watcher is about to report, if the suppression window in Rust
     // misses it, is this write. `reloadOpenNoteFromDisk` would then re-read a
     // file it already has in the buffer, so the index-changed handler skips it.
@@ -1131,7 +1392,7 @@ async function save() {
     applySavedNote(saved)
     // Editing text can add or remove a [[link]], which changes what this note
     // points at and what it merely mentions. Debounced: see scheduleInterlinks.
-    scheduleInterlinks()
+    if (pane === activePane) scheduleInterlinks()
   } catch (e) {
     console.error('save failed', e)
   }
@@ -1148,15 +1409,13 @@ function applySavedNote(saved: NoteDto) {
     // and the row only reads derived values anyway.
     results[idx] = { ...saved, content: null }
   }
-  if (openNoteId === saved.id) {
-    openNoteDto = saved
-    renderDueBadge(saved.due)
-  }
+  for (const pane of panesShowing(saved.id)) pane.dto = saved
+  if (activePane.noteId === saved.id) renderDueBadge(saved.due)
   // A changed due date or modified time can move the row under the current
   // sort, so the order has to be recomputed — but resolve the highlight against
   // the *new* order before painting, rather than rendering once at the old
   // index and again at the corrected one.
-  const keepId = results[highlighted]?.id ?? openNoteId
+  const keepId = results[highlighted]?.id ?? activePane.noteId
   if (!fullyLoaded()) {
     // Paged: the row that moved shifts every index after it, so the order has
     // to come back from the backend rather than be recomputed from the pages
@@ -1207,7 +1466,7 @@ function setDomainEmoji(domain: string, emoji: string | null) {
 // Delegated rather than bound inside the widget: the widget is built by the
 // styler, which has no business knowing about commands or context menus, and
 // is rebuilt on every restyle anyway.
-editorEl.addEventListener('click', (e) => {
+editorElContainer.addEventListener('click', (e) => {
   const pill = (e.target as HTMLElement).closest('.envy-url-pill') as HTMLElement | null
   if (!pill?.dataset.url) return
   e.preventDefault()
@@ -1216,7 +1475,7 @@ editorEl.addEventListener('click', (e) => {
   )
 })
 
-editorEl.addEventListener('contextmenu', (e) => {
+editorElContainer.addEventListener('contextmenu', (e) => {
   // An image widget runs its own menu (size/rename/reveal); leave it be.
   if ((e.target as HTMLElement).closest('.envy-image-embed')) return
   const pill = (e.target as HTMLElement).closest('.envy-url-pill') as HTMLElement | null
@@ -1224,7 +1483,7 @@ editorEl.addEventListener('contextmenu', (e) => {
   // Off a pill, the plain editor menu — just "Insert Image…" for now, so the
   // picker has a discoverable home besides the shortcut.
   if (!domain) {
-    if (!openNoteId && !openExternal) return
+    if (!activePane.noteId && !activePane.external) return
     e.preventDefault()
     e.stopPropagation()
     openContextMenu(e.clientX, e.clientY, [
@@ -1233,6 +1492,15 @@ editorEl.addEventListener('contextmenu', (e) => {
         run: () => void openImagePicker((name) => insertImageReference(name, view)),
       },
       { label: 'Insert Table', run: () => void insertTable(view) },
+      { label: '', separator: true },
+      {
+        label: panes.length > 1 ? 'Close Split' : 'Split Editor',
+        run: () => void toggleSplit(),
+      },
+      {
+        label: splitStacked() ? 'Panes Side by Side' : 'Panes Stacked',
+        run: flipSplit,
+      },
     ])
     return
   }
@@ -1291,7 +1559,7 @@ function tagColors(): Record<string, string> {
 
 function setTagColor(tag: string, color: string | null) {
   config.setMapEntry('tag_colors', tag, color)
-  renderTitleBarTags(openNoteDto?.tags ?? [])
+  renderTitleBarTags(activePane.dto?.tags ?? [])
 }
 
 function tagColorMenu(tag: string): MenuItemSpec[] {
@@ -2513,7 +2781,7 @@ let editorZoom = settingNumber('editorZoom')
 
 function applyZoom() {
   applyEditorZoom(editorZoom)
-  view.requestMeasure()
+  measurePanes()
   // The list reads the same font size, so its row height and date column
   // are stale the moment the zoom moves — the same re-measure a font change
   // gets, or rows drift apart from their slots at larger sizes.
@@ -2547,7 +2815,7 @@ function setPlainTextMode(on: boolean) {
 function applyPlainTextMode() {
   // Nothing else to change: the styler simply stops emitting decorations, so
   // the text, cursor and scroll position all stay exactly where they were.
-  view.dispatch({ effects: setPlainText.of(plainTextMode) })
+  for (const p of panes) p.view.dispatch({ effects: setPlainText.of(plainTextMode) })
 }
 
 // --- Inbox ------------------------------------------------------------------
@@ -2623,8 +2891,8 @@ async function moveToNextFleeting(actedOnId: string) {
 /// the note that just left rather than the one on screen (the Mac's 1.8.6
 /// bug). Either way the same advance-to-the-next-capture flow follows.
 async function submitFleeting(subfolder: string | null) {
-  if (!openNoteId) return
-  const id = openNoteId
+  if (!activePane.noteId) return
+  const id = activePane.noteId
   cancelPendingSave()
   await save()
   let filed: NoteDto
@@ -2655,7 +2923,7 @@ document.getElementById('fleeting-submit')!.onclick = () => void submitFleeting(
 /// the same list Move to offers. Dropped below the button, not at the pointer,
 /// so it reads as the button's own menu.
 fleetingSubmitMenuEl.onclick = async () => {
-  if (!openNoteId) return
+  if (!activePane.noteId) return
   let folders: string[] = []
   try {
     folders = await invoke<string[]>('list_subfolders')
@@ -2675,10 +2943,10 @@ fleetingSubmitMenuEl.onclick = async () => {
 }
 
 document.getElementById('fleeting-delete')!.onclick = async () => {
-  if (!openNoteId) return
-  const id = openNoteId
+  if (!activePane.noteId) return
+  const id = activePane.noteId
   cancelPendingSave()
-  openNoteId = null
+  activePane.noteId = null
   await invoke('delete_note', { id })
   void refreshCompletionSources()
   await moveToNextFleeting(id)
@@ -2819,7 +3087,6 @@ interface ExternalDoc {
 /// Set while such a file is open, so saves route to it rather than the note
 /// store, and so everything that asks "is there something to type into?" can
 /// keep asking one question.
-let openExternal: ExternalDoc | null = null
 
 function renderTemplateList() {
   // Same as trash: a single trailing label in the value column.
@@ -2868,23 +3135,24 @@ function saveExternalDocument(doc: ExternalDoc, content: string): Promise<unknow
 async function openExternalDocument(doc: ExternalDoc, content: string) {
   cancelPendingSave()
   await save()
-  openNoteId = null
-  openNoteDto = null
-  openExternal = doc
-  openNoteSavedContent = content
+  activePane.noteId = null
+  activePane.dto = null
+  activePane.external = doc
+  activePane.savedContent = content
   titleEl.value = doc.name
   titleEl.disabled = true // these files are renamed on disk, not from here
   renderDueBadge(null)
   renderTitleBarTags([])
   renderTitleBarFolder(null)
   fleetingActionsEl.classList.add('hidden')
-  emptyEl.classList.add('hidden')
+  syncEmptyState()
+  renderPaneCaptions()
   view.dispatch({
     changes: { from: 0, to: view.state.doc.length, insert: content },
     effects: editable.reconfigure(EditorView.editable.of(true)),
     selection: { anchor: 0 },
   })
-  view.requestMeasure()
+  measurePanes()
   currentInterlinks = { links: [], backlinks: [], suggested: [] }
   renderInterlinks()
   renderStats()
@@ -2901,7 +3169,7 @@ async function openTemplate(t: TemplateDto) {
 const templateActionsEl = document.getElementById('template-actions')!
 
 document.getElementById('template-create')!.onclick = async () => {
-  const doc = openExternal
+  const doc = activePane.external
   if (doc?.kind !== 'template') return
   const name = templateResults.find((t) => t.id === doc.id)?.name ?? ''
   const created = await invoke<NoteDto>('create_note_from_template', {
@@ -3299,11 +3567,11 @@ async function openNote(id: string) {
 
   const note = await invoke<NoteDto | null>('read_note', { id })
   if (!note) return
-  openNoteId = note.id
+  activePane.noteId = note.id
   // Held for the title bar, which used to hunt for this row in `results`.
-  openNoteDto = note
-  openExternal = null
-  openNoteSavedContent = note.content ?? ''
+  activePane.dto = note
+  activePane.external = null
+  activePane.savedContent = note.content ?? ''
   titleEl.value = note.title
   titleEl.disabled = false
   renderDueBadge(note.due)
@@ -3314,7 +3582,8 @@ async function openNote(id: string) {
   fleetingActionsEl.classList.toggle('hidden', !(note.isInbox && settings.inboxEnabled))
   applyFleetingSubmitShape()
   templateActionsEl.classList.add('hidden')
-  emptyEl.classList.add('hidden')
+  syncEmptyState()
+  renderPaneCaptions()
   view.dispatch({
     changes: { from: 0, to: view.state.doc.length, insert: note.content ?? '' },
     effects: editable.reconfigure(EditorView.editable.of(true)),
@@ -3323,7 +3592,7 @@ async function openNote(id: string) {
   // The pane's size can change as the empty state is uncovered, and the
   // styler decorates only what's in view — without a re-measure the viewport
   // it computed a moment ago may not match what's actually on screen.
-  view.requestMeasure()
+  measurePanes()
   // Opening a result of a search lands on what matched, not on the top of the
   // note — the same jump typing in the box makes for the note already open.
   jumpToFirstSearchMatch(true)
@@ -3519,14 +3788,15 @@ async function deleteSelection() {
   // as last typed, so restoring it brings back everything.
   cancelPendingSave()
   await save()
-  if (ids.includes(openNoteId ?? '')) openNoteId = null
+  const gone = panes.filter((p) => ids.includes(p.noteId ?? ''))
+  for (const pane of gone) pane.noteId = null
   // One call, not a loop: the store treats a single delete as one undo step,
   // so a bulk delete restores as one action.
   await invoke('delete_notes', { ids })
   void refreshCompletionSources()
   multiSelected.clear()
   anchorId = null
-  if (openNoteId === null) closeEditor()
+  await releasePanes(gone)
   await runSearch()
 }
 
@@ -3592,7 +3862,7 @@ function setFolderColor(folder: string, color: string | null) {
 /// reopened.
 function repaintFolderColors() {
   renderList()
-  renderTitleBarFolder(openNoteDto?.subfolder ?? null)
+  renderTitleBarFolder(activePane.dto?.subfolder ?? null)
 }
 
 /// Every folder is born coloured, tag-style: any folder seen without a colour
@@ -3836,7 +4106,7 @@ async function moveNotes(ids: string[], subfolder: string | null) {
   }
   for (const [from, to] of moved) {
     migratePin(from, to)
-    if (openNoteId === from) openNoteId = to
+    for (const pane of panesShowing(from)) pane.noteId = to
     if (anchorId === from) anchorId = to
     if (multiSelected.delete(from)) multiSelected.add(to)
   }
@@ -3856,9 +4126,9 @@ async function moveNotes(ids: string[], subfolder: string | null) {
       renderList()
     }
   }
-  if (openNoteId && [...moved.values()].includes(openNoteId)) {
+  if (activePane.noteId && [...moved.values()].includes(activePane.noteId)) {
     // The title-bar chip names the folder the open note now sits in.
-    renderTitleBarFolder(openNoteDto?.subfolder ?? null)
+    renderTitleBarFolder(activePane.dto?.subfolder ?? null)
   }
   if (refused.length > 0) {
     void alertModal(
@@ -3926,6 +4196,10 @@ function noteMenuItems(note: NoteDto): MenuItemSpec[] {
       run: () => void invoke('pop_out_note', { id: note.id, innerSize: storedPopoutSize() }),
     },
     {
+      label: 'Send to Split Pane',
+      run: () => void openInSplitPane(note.id),
+    },
+    {
       label: 'Rename',
       run: async () => {
         await openNote(note.id)
@@ -3949,7 +4223,7 @@ function noteMenuItems(note: NoteDto): MenuItemSpec[] {
         await invoke('convert_to_template', { id: note.id })
         // It stops being a note at all, so the pin goes rather than moves.
         migratePin(note.id, null)
-        if (openNoteId === note.id) closeEditor()
+        await releasePanes(panesShowing(note.id))
         await runSearch()
       },
     },
@@ -4503,7 +4777,7 @@ type FocusArea = 'search' | 'list' | 'editor'
 const FOCUS_ORDER: FocusArea[] = ['search', 'list', 'editor']
 
 function currentArea(): FocusArea {
-  if (view.hasFocus) return 'editor'
+  if (panes.some((p) => p.view.hasFocus)) return 'editor'
   const active = document.activeElement
   if (active && listPaneEl.contains(active)) return 'list'
   // Anything else — the search box, the title field, or nothing at all —
@@ -4739,19 +5013,23 @@ async function restoreDeleted() {
 // across the Index.
 
 async function commitRename() {
-  if (!openNoteId) return
+  if (!activePane.noteId) return
   const next = titleEl.value.trim()
-  const current = openNoteDto?.title ?? ''
+  const current = activePane.dto?.title ?? ''
   if (!next || next === current) {
     titleEl.value = current
     return
   }
   try {
-    const renamed = await invoke<NoteDto>('rename_note', { id: openNoteId, title: next })
+    const renamed = await invoke<NoteDto>('rename_note', { id: activePane.noteId, title: next })
     // The file moved, so its id did too — carry any pin across with it.
-    migratePin(openNoteId, renamed.id)
-    openNoteId = renamed.id
-    openNoteDto = renamed
+    const twins = panesShowing(activePane.noteId)
+    migratePin(activePane.noteId, renamed.id)
+    for (const pane of twins) {
+      pane.noteId = renamed.id
+      pane.dto = renamed
+    }
+    renderPaneCaptions()
     // The sanitizer may have changed what was typed — a title Windows can't
     // represent as a filename comes back altered, and showing the typed text
     // would be a lie about what's on disk.
@@ -4777,7 +5055,7 @@ titleEl.addEventListener('keydown', (e) => {
     void commitRename().then(() => view.focus())
   } else if (e.key === 'Escape') {
     e.preventDefault()
-    titleEl.value = openNoteDto?.title ?? ''
+    titleEl.value = activePane.dto?.title ?? ''
     view.focus()
   }
 })
@@ -4812,10 +5090,10 @@ titleEl.addEventListener('mouseleave', () => {
 })
 
 function closeEditor() {
-  openNoteId = null
-  openNoteDto = null
-  openExternal = null
-  openNoteSavedContent = ''
+  activePane.noteId = null
+  activePane.dto = null
+  activePane.external = null
+  activePane.savedContent = ''
   titleEl.value = ''
   titleEl.disabled = false
   dueEl.textContent = ''
@@ -4823,7 +5101,8 @@ function closeEditor() {
   renderTitleBarFolder(null)
   fleetingActionsEl.classList.add('hidden')
   templateActionsEl.classList.add('hidden')
-  emptyEl.classList.remove('hidden')
+  syncEmptyState()
+  renderPaneCaptions()
   currentInterlinks = { links: [], backlinks: [], suggested: [] }
   renderInterlinks()
   renderStats()
@@ -4878,15 +5157,18 @@ const SHORTCUT_HANDLERS: Partial<Record<ShortcutId, () => void>> = {
   },
   extractToNote: () => void extractSelectionToNote(),
   insertImage: () => {
-    if (openNoteId || openExternal) {
+    if (activePane.noteId || activePane.external) {
       void openImagePicker((name) => insertImageReference(name, view))
     }
   },
   insertTable: () => {
-    if (openNoteId || openExternal) insertTable(view)
+    if (activePane.noteId || activePane.external) insertTable(view)
   },
   focusNextArea: () => cycleArea(1),
   focusPreviousArea: () => cycleArea(-1),
+  toggleSplit: () => void toggleSplit(),
+  switchPane: focusOtherPane,
+  flipSplit,
 
   // --- The editor actions that used to need a mouse ---------------------------
 
@@ -4906,18 +5188,18 @@ const SHORTCUT_HANDLERS: Partial<Record<ShortcutId, () => void>> = {
     void showLinkPreview(target, c?.left ?? 0, c?.bottom ?? 0)
   },
   toggleCheckbox: () => {
-    if (!openNoteId && !openExternal) return
+    if (!activePane.noteId && !activePane.external) return
     // Returns false when the caret line has no checkbox, which is a no-op
     // rather than an error — the same as clicking where there is no box.
     toggleTaskAtCursor(view)
   },
   retireDue: () => {
-    if (!openNoteId && !openExternal) return
+    if (!activePane.noteId && !activePane.external) return
     const pos = dueTokenPosForCaret()
     if (pos !== null) toggleDueToken(view, pos)
   },
   emojiForLink: () => {
-    if (!openNoteId && !openExternal) return
+    if (!activePane.noteId && !activePane.external) return
     const found = urlNearCaret(false)
     const domain = found ? urlDomain(found.url) : null
     if (!found || !domain) return
@@ -4928,7 +5210,7 @@ const SHORTCUT_HANDLERS: Partial<Record<ShortcutId, () => void>> = {
     // The open note first, then the highlight — with the editor focused the
     // note you mean is the one you are looking at, and the two are the same
     // note in every case but a list that has moved on without being opened.
-    const id = openNoteId ?? results[highlighted]?.id
+    const id = activePane.noteId ?? results[highlighted]?.id
     if (!id) return
     void invoke('pop_out_note', { id, innerSize: storedPopoutSize() })
   },
@@ -5106,7 +5388,7 @@ window.addEventListener('keydown', (e) => {
   }
 })
 
-window.addEventListener('resize', () => view.requestMeasure())
+window.addEventListener('resize', () => measurePanes())
 
 // The backend rescans and emits; the frontend re-runs its own query rather
 // than being handed results, so a reload can't clobber whatever has since been
@@ -5140,8 +5422,8 @@ async function handleIndexChanged() {
   // Our own save is the likeliest cause of this event, and re-reading a file
   // whose text is already in the buffer is a round trip for nothing.
   if (
-    openNoteId !== null &&
-    openNoteId === lastOwnWriteId &&
+    activePane.noteId !== null &&
+    activePane.noteId === lastOwnWriteId &&
     Date.now() - lastOwnWriteAt < OWN_WRITE_WINDOW_MS
   ) {
     return
@@ -5701,7 +5983,7 @@ bindToggle('setting-inbox-enabled', 'inboxEnabled', () => {
     // waiting for the note to be reopened.
     fleetingActionsEl.classList.toggle(
       'hidden',
-      !(openNoteDto?.isInbox && settings.inboxEnabled),
+      !(activePane.dto?.isInbox && settings.inboxEnabled),
     )
   })()
 })
@@ -5712,14 +5994,14 @@ bindToggle('setting-footer-characters', 'footerCharacters', renderStats)
 bindToggle('setting-footer-notes', 'footerNotes', () => void refreshVaultCounts())
 bindToggle('setting-footer-folders', 'footerFolders', () => void refreshVaultCounts())
 bindToggle('setting-show-tags', 'showTagsInTitleBar', () => {
-  renderTitleBarTags(openNoteDto?.tags ?? [])
+  renderTitleBarTags(activePane.dto?.tags ?? [])
 })
 bindToggle('setting-show-folder-titlebar', 'showFolderInTitleBar', () => {
-  renderTitleBarFolder(openNoteDto?.subfolder ?? null)
+  renderTitleBarFolder(activePane.dto?.subfolder ?? null)
 })
 bindToggle('setting-folder-trailing', 'folderDotTrailing', renderList)
 bindToggle('setting-show-due-pill', 'showDuePill', () => {
-  renderDueBadge(openNoteDto?.due ?? null)
+  renderDueBadge(activePane.dto?.due ?? null)
 })
 bindToggle('setting-domain-pills', 'linkDomainPills', () =>
   view.dispatch({ effects: restyle.of(null) }),
@@ -6162,9 +6444,9 @@ function applyAllSettings({ initial = false } = {}) {
   applyEditorKeymap()
   renderSortHeader()
   renderList()
-  renderTitleBarTags(openNoteDto?.tags ?? [])
-  renderTitleBarFolder(openNoteDto?.subfolder ?? null)
-  renderDueBadge(openNoteDto?.due ?? null)
+  renderTitleBarTags(activePane.dto?.tags ?? [])
+  renderTitleBarFolder(activePane.dto?.subfolder ?? null)
+  renderDueBadge(activePane.dto?.due ?? null)
   renderInterlinks()
   renderStats()
   // Tag colours, domain emojis and the link-pill switch are all read during
@@ -6529,7 +6811,7 @@ async function boot() {
   previewInterlinks(data: InterlinksDto, expanded = true) {
     currentInterlinks = data
     interlinksExpanded = expanded
-    openNoteId = openNoteId ?? 'preview'
+    activePane.noteId = activePane.noteId ?? 'preview'
     renderInterlinks()
   },
 }

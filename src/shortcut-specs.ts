@@ -40,6 +40,9 @@ export type ShortcutId =
   | 'retireDue'
   | 'emojiForLink'
   | 'toggleHelp'
+  | 'toggleSplit'
+  | 'switchPane'
+  | 'flipSplit'
 
 export interface ShortcutSpec {
   id: ShortcutId
@@ -103,6 +106,9 @@ export const SHORTCUT_SPECS: ShortcutSpec[] = [
   { id: 'retireDue', label: 'Retire/Restore Due Date', default: 'Ctrl+Shift+U' },
   { id: 'emojiForLink', label: 'Emoji for Link', default: 'Ctrl+Shift+E' },
   { id: 'popOut', label: 'Pop Out Note', default: 'Ctrl+Shift+O' },
+  { id: 'toggleSplit', label: 'Split Editor / Close Split', default: 'Ctrl+\\' },
+  { id: 'switchPane', label: 'Switch Editor Pane', default: 'Alt+\\' },
+  { id: 'flipSplit', label: 'Flip Split Direction', default: 'Ctrl+Alt+\\' },
   { id: 'moveToFolder', label: 'Move to Folder…', default: 'Ctrl+Shift+M' },
   { id: 'toggleHelp', label: 'Markup Help', default: 'Ctrl+/' },
   { id: 'zoomIn', label: 'Zoom In', default: 'Ctrl+=' },
