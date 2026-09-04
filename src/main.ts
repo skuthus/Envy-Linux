@@ -590,8 +590,92 @@ function splitStacked(): boolean {
 
 function applySplitAxis() {
   editorElContainer.classList.toggle('side-by-side', !splitStacked())
+  applySplitFraction()
   measurePanes()
 }
+
+// --- Pane divider -------------------------------------------------------------
+// The line between two panes is a handle: drag it, or with it focused use the
+// arrow keys along it, and the panes share the editor in the new proportion.
+// Each axis remembers its own share, per machine like the other divider.
+
+const DIVIDER_STEP_PX = 24
+
+const paneDividerEl = document.createElement('div')
+paneDividerEl.id = 'pane-divider'
+paneDividerEl.setAttribute('role', 'separator')
+paneDividerEl.setAttribute('aria-label', 'Resize editor panes')
+paneDividerEl.tabIndex = 0
+
+function splitFractionKey(): string {
+  return splitStacked() ? 'stackedSplitFraction' : 'sideBySideSplitFraction'
+}
+
+/// The first pane's share of the editor.
+function splitFraction(): number {
+  return storedNumber(splitFractionKey(), 0.5)
+}
+
+/// Clamped so neither pane can be dragged away — a pane with no width is a
+/// state there's no way back out of by dragging.
+function setSplitFraction(fraction: number) {
+  const clamped = Math.min(0.85, Math.max(0.15, fraction))
+  localStorage.setItem(splitFractionKey(), String(clamped))
+  applySplitFraction()
+}
+
+/// Flex-grow in the ratio of the shares, so the split is a proportion of
+/// whatever the editor is currently, not a pixel size that goes stale when
+/// the window or the other divider moves.
+function applySplitFraction() {
+  if (panes.length < 2) {
+    for (const p of panes) p.el.style.flex = ''
+    return
+  }
+  const fraction = splitFraction()
+  panes[0].el.style.flex = `${fraction} 1 0`
+  panes[1].el.style.flex = `${1 - fraction} 1 0`
+  measurePanes()
+}
+
+paneDividerEl.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0) return
+  e.preventDefault()
+  paneDividerEl.setPointerCapture(e.pointerId)
+  paneDividerEl.classList.add('dragging')
+  const onMove = (move: PointerEvent) => {
+    const box = editorElContainer.getBoundingClientRect()
+    setSplitFraction(
+      splitStacked()
+        ? (move.clientY - box.top) / Math.max(1, box.height)
+        : (move.clientX - box.left) / Math.max(1, box.width),
+    )
+  }
+  const onUp = () => {
+    paneDividerEl.classList.remove('dragging')
+    paneDividerEl.removeEventListener('pointermove', onMove)
+    paneDividerEl.removeEventListener('pointerup', onUp)
+  }
+  paneDividerEl.addEventListener('pointermove', onMove)
+  paneDividerEl.addEventListener('pointerup', onUp)
+})
+
+// Double-click puts the split back to even, the one position worth a gesture.
+paneDividerEl.addEventListener('dblclick', () => setSplitFraction(0.5))
+
+paneDividerEl.addEventListener('keydown', (e) => {
+  const box = editorElContainer.getBoundingClientRect()
+  const extent = Math.max(1, splitStacked() ? box.height : box.width)
+  const step = DIVIDER_STEP_PX / extent
+  const grow = splitStacked() ? 'ArrowDown' : 'ArrowRight'
+  const shrink = splitStacked() ? 'ArrowUp' : 'ArrowLeft'
+  if (e.key === grow) setSplitFraction(splitFraction() + step)
+  else if (e.key === shrink) setSplitFraction(splitFraction() - step)
+  else if (e.key === 'Home') setSplitFraction(0)
+  else if (e.key === 'End') setSplitFraction(1)
+  else return
+  e.preventDefault()
+})
 
 function flipSplit() {
   localStorage.setItem('splitStacked', String(!splitStacked()))
@@ -641,9 +725,10 @@ async function toggleSplit() {
     selection: { anchor: source.view.state.selection.main.head },
     annotations: mirrored.of(true),
   })
+  twin.el.before(paneDividerEl)
   activatePane(twin)
   renderPaneCaptions()
-  measurePanes()
+  applySplitFraction()
   twin.view.focus()
 }
 
@@ -657,9 +742,10 @@ async function closePane(pane: Pane) {
   if (pane === activePane) activatePane(panes[0])
   pane.view.destroy()
   pane.el.remove()
+  paneDividerEl.remove()
   renderPaneCaptions()
   syncEmptyState()
-  measurePanes()
+  applySplitFraction()
   view.focus()
 }
 
@@ -4961,7 +5047,6 @@ window.addEventListener('keydown', (e) => {
 // the divider in the Tab order it needs keys of its own or it is a focus stop
 // that does nothing.
 
-const DIVIDER_STEP_PX = 24
 
 /// Moves the split by `deltaPx`, positive meaning "give the list more room".
 /// Clamped exactly as the drag is, so neither pane can be keyed away entirely.

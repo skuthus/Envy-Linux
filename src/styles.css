@@ -870,8 +870,21 @@ body.bold-file-list .row-date { font-weight: 700; }
   overflow: hidden;
   text-overflow: ellipsis;
 }
-#editor.split.side-by-side > .note-pane + .note-pane { border-left: 1px solid var(--envy-marker); }
-#editor.split:not(.side-by-side) > .note-pane + .note-pane { border-top: 1px solid var(--envy-marker); }
+/* The line between two panes is the handle that resizes them: the same
+   one-pixel hairline as #divider, with the same invisible padding widening the
+   grab area (content-box for the same reason — see #divider). */
+#pane-divider {
+  flex: none;
+  box-sizing: content-box;
+  background-color: var(--envy-marker);
+  background-clip: content-box;
+  transition: background-color 120ms ease;
+}
+#pane-divider:hover,
+#pane-divider.dragging { background-color: var(--envy-link); }
+#editor.side-by-side > #pane-divider { width: 1px; cursor: col-resize; padding: 0 2px; }
+#editor:not(.side-by-side) > #pane-divider { height: 1px; cursor: row-resize; padding: 2px 0; }
+#pane-divider:focus-visible { outline: 2px solid var(--envy-link); outline-offset: 1px; }
 
 /* --- Pinned-note popover ----------------------------------------------------
    Its own window, undecorated and always on top, so it reads as a panel
