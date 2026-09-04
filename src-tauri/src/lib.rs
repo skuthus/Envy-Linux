@@ -2154,6 +2154,40 @@ pub(crate) fn toggle_window(window: &WebviewWindow) {
 }
 
 pub(crate) const PINNED_WINDOW: &str = "pinned";
+/// The panel's window title, which is also how Hyprland is asked about it.
+const PINNED_TITLE: &str = "Pinned note";
+
+/// Where the panel was last seen, so it can come back there. The Mac gets
+/// this for free from NSWindow's frame autosave; on Wayland a client cannot
+/// position itself, so the geometry is read from Hyprland when the panel
+/// hides (and at quit) and handed back to Hyprland when it shows.
+fn pinned_geometry_file(app: &tauri::AppHandle) -> Option<PathBuf> {
+    app.path().app_config_dir().ok().map(|d| d.join("pinned-window.json"))
+}
+
+pub(crate) fn remember_pinned_geometry(app: &tauri::AppHandle) {
+    let (Some(path), Some(g)) = (pinned_geometry_file(app), hyprland::geometry(PINNED_TITLE)) else {
+        return;
+    };
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let Ok(json) = serde_json::to_string(&g) {
+        let _ = std::fs::write(path, json);
+    }
+}
+
+fn saved_pinned_geometry(app: &tauri::AppHandle) -> Option<hyprland::Geometry> {
+    let text = std::fs::read_to_string(pinned_geometry_file(app)?).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
+/// The panel asks for this just before it hides itself, so what is saved is
+/// where the user left it, not where it was created.
+#[tauri::command]
+fn remember_pinned_window(app: tauri::AppHandle) {
+    remember_pinned_geometry(&app);
+}
 
 #[tauri::command]
 fn pinned_note_id(state: State<AppState>) -> Option<String> {
@@ -2194,6 +2228,9 @@ pub(crate) fn show_pinned_window(app: &tauri::AppHandle) {
         let _ = w.show();
         let _ = w.set_focus();
         let _ = w.emit("pinned-note-changed", ());
+        if let Some(g) = saved_pinned_geometry(app) {
+            hyprland::place_when_floating(PINNED_TITLE.to_string(), g);
+        }
         return;
     }
     let built = tauri::WebviewWindowBuilder::new(
@@ -2201,7 +2238,7 @@ pub(crate) fn show_pinned_window(app: &tauri::AppHandle) {
         PINNED_WINDOW,
         tauri::WebviewUrl::App("pinned.html".into()),
     )
-    .title("Pinned note")
+    .title(PINNED_TITLE)
     .inner_size(420.0, 460.0)
     .resizable(true)
     // Undecorated and always-on-top so it reads as a panel hanging off the
@@ -2218,6 +2255,9 @@ pub(crate) fn show_pinned_window(app: &tauri::AppHandle) {
             // so it hangs above every workspace the way the builder intends,
             // and lands centred, a short trip from anywhere.
             hyprland::float_when_mapped(&w, || true, Some(|| true));
+            if let Some(g) = saved_pinned_geometry(app) {
+                hyprland::place_when_floating(PINNED_TITLE.to_string(), g);
+            }
             tray::follow_window(app, &w)
         }
         Err(e) => eprintln!("could not open the pinned-note window: {e}"),
@@ -2227,6 +2267,7 @@ pub(crate) fn show_pinned_window(app: &tauri::AppHandle) {
 pub(crate) fn toggle_pinned_window(app: &tauri::AppHandle) {
     match app.get_webview_window(PINNED_WINDOW) {
         Some(w) if w.is_visible().unwrap_or(false) => {
+            remember_pinned_geometry(app);
             let _ = w.hide();
         }
         _ => show_pinned_window(app),
@@ -2787,6 +2828,7 @@ pub fn run() {
             reveal_attachment,
             list_image_attachments,
             check_for_updates,
+            remember_pinned_window,
             reveal_folder,
             set_index_directory,
             set_template_date_format,

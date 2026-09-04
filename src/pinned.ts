@@ -229,6 +229,12 @@ void listen('index-changed', () => void refreshCompletionSources())
 /// while the hide itself went on failing into this log line, which is precisely
 /// what a caught-and-logged error is for.
 async function hide() {
+  // Where it is now is where it should come back, and only Hyprland knows.
+  try {
+    await invoke('remember_pinned_window')
+  } catch {
+    // Outside Tauri, or the command is unavailable: nothing to remember.
+  }
   try {
     await getCurrentWindow().hide()
   } catch (e) {

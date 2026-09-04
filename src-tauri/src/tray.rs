@@ -244,7 +244,11 @@ impl ksni::Tray for EnvyTray {
             .into(),
             StandardItem {
                 label: "Quit Envy".into(),
-                activate: Box::new(|tray: &mut Self| tray.app.exit(0)),
+                activate: Box::new(|tray: &mut Self| {
+                    // The panel may still be up; its place is worth keeping.
+                    crate::remember_pinned_geometry(&tray.app);
+                    tray.app.exit(0)
+                }),
                 ..Default::default()
             }
             .into(),

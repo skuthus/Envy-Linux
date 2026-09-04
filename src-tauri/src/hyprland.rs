@@ -177,6 +177,91 @@ fn window_state(title: &str) -> Option<WindowState> {
     })
 }
 
+/// Where Hyprland has a window: logical position and size, as `hyprctl
+/// clients` reports them.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Geometry {
+    pub x: i64,
+    pub y: i64,
+    pub w: i64,
+    pub h: i64,
+}
+
+/// The geometry of one of this process's windows, found by title.
+pub fn geometry(title: &str) -> Option<Geometry> {
+    let pid = std::process::id() as i64;
+    let clients: serde_json::Value = serde_json::from_str(&crate::tray::hypr_query("j/clients")?).ok()?;
+    let pair = |v: &serde_json::Value| -> Option<(i64, i64)> {
+        let a = v.as_array()?;
+        Some((a.first()?.as_i64()?, a.get(1)?.as_i64()?))
+    };
+    clients.as_array()?.iter().find_map(|c| {
+        if c.get("pid").and_then(|v| v.as_i64()) != Some(pid)
+            || c.get("title").and_then(|v| v.as_str()) != Some(title)
+        {
+            return None;
+        }
+        let (x, y) = pair(c.get("at")?)?;
+        let (w, h) = pair(c.get("size")?)?;
+        Some(Geometry { x, y, w, h })
+    })
+}
+
+/// Whether a saved position still lands on a monitor that exists. A layout
+/// that changed since (a laptop unplugged from its screen) would otherwise
+/// put the window somewhere nobody can see.
+fn on_a_monitor(g: &Geometry) -> bool {
+    let Some(text) = crate::tray::hypr_query("j/monitors") else { return true };
+    let Ok(monitors) = serde_json::from_str::<serde_json::Value>(&text) else { return true };
+    let Some(list) = monitors.as_array() else { return true };
+    list.iter().any(|m| {
+        let num = |k: &str| m.get(k).and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let scale = if num("scale") > 0.0 { num("scale") } else { 1.0 };
+        let (mx, my) = (num("x"), num("y"));
+        let (mw, mh) = (num("width") / scale, num("height") / scale);
+        (g.x as f64) >= mx && (g.x as f64) < mx + mw && (g.y as f64) >= my && (g.y as f64) < my + mh
+    })
+}
+
+/// Puts the window with this title back at `g` once Hyprland has it
+/// floating. A hidden window is unmapped, and a window shown again is a new
+/// client to Hyprland, placed fresh — so "where I left it" has to be
+/// re-applied on every show, not just at launch. Polls the way
+/// `float_when_mapped` does, since the float itself is still landing.
+pub fn place_when_floating(title: String, g: Geometry) {
+    if !on_a_monitor(&g) {
+        return;
+    }
+    std::thread::spawn(move || {
+        for _ in 0..30 {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            if let Some(state) = window_state(&title) {
+                if state.floating {
+                    let address = state.address;
+                    dispatch_call(&format!(
+                        "hl.dsp.window.resize({{ x = {}, y = {}, window = \"address:{address}\" }})",
+                        g.w, g.h
+                    ));
+                    dispatch_call(&format!(
+                        "hl.dsp.window.move({{ x = {}, y = {}, window = \"address:{address}\" }})",
+                        g.x, g.y
+                    ));
+                    return;
+                }
+            }
+        }
+    });
+}
+
+fn dispatch_call(call: &str) {
+    let _ = std::process::Command::new("hyprctl")
+        .arg("dispatch")
+        .arg(call)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+}
+
 /// Runs one window dispatcher against an address. Failures are Hyprland's to
 /// report; there is nothing to do about one here.
 fn dispatch(verb: &str, address: &str) {
