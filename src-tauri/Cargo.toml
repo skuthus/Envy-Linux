@@ -1,6 +1,6 @@
 [package]
 name = "envynote"
-version = "1.0.1"
+version = "1.0.2"
 description = "A flat-file, frictionless note-taking application for Linux"
 authors = ["Skyler Schoos"]
 license = "MIT"

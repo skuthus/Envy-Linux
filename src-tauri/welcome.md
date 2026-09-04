@@ -75,6 +75,11 @@ list, Return opens, Escape backs out one step.
 - **Ctrl+Alt+P** pins a note into a strip under the list header, so it stays
   in reach however far the list scrolls. **Ctrl+Shift+O** pops the open note
   out into its own window.
+- **Ctrl+\** splits the editor into two panes and closes the split again;
+  **Alt+\** hops between them and **Ctrl+Alt+\** flips them between side
+  by side and stacked. Right-click a note in the list → **Send to Split
+  Pane** opens it beside the one you are in. Drag the line between the panes
+  to resize them; double-click it for an even split.
 
 ## Writing
 
@@ -228,6 +233,9 @@ is new.
 | Ctrl+Alt+P | Pin / unpin note |
 | Ctrl+Alt+T | Pin note to the bar |
 | Ctrl+Shift+O | Pop out note |
+| Ctrl+\ | Split editor / close split |
+| Alt+\ | Switch editor pane |
+| Ctrl+Alt+\ | Flip split direction |
 | Ctrl+Shift+M | Move to folder |
 | Ctrl+B / Ctrl+I | Bold / italic |
 | Ctrl+Alt+I | Insert image |

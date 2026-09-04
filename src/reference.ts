@@ -232,6 +232,22 @@ function renderAbout(version: string): HTMLElement {
 /// the GitHub release and the website carry.
 const WHATS_NEW: Array<{ title: string; body: string }> = [
   {
+    title: 'Split the editor',
+    body: 'Ctrl+\\ splits the editor into two panes and closes the split again. Alt+\\ hops between them; Ctrl+Alt+\\ flips them between side by side and stacked, and the choice is remembered. Right-click a note in the list → Send to Split Pane opens it beside the one you are in. The same note open in both panes mirrors every edit.',
+  },
+  {
+    title: 'A divider you can drag',
+    body: 'The line between the panes drags. Double-click it for an even split, or focus it and use the arrow keys along it. Each direction keeps its own share.',
+  },
+  {
+    title: 'A solid eye in the bar',
+    body: 'The bar eye is now solid in the bar’s text colour with the iris a see-through hole, drawn at the size of the shell’s own icons.',
+  },
+  {
+    title: 'The pinned panel stays put',
+    body: 'The pinned-note panel no longer vanishes while the pointer travels to it from the bar, and it reopens where you last put it.',
+  },
+  {
     title: 'Return creates unless the title exists',
     body: 'Return in the search box opens the note titled exactly what you typed, and otherwise creates one — even when other notes match the words, the Mac’s rule. A “Press ⏎ to create …” line under the list says which it is about to do. Arrow down to open a partial match instead.',
   },
